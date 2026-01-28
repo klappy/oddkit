@@ -11,7 +11,7 @@ export function applySupersedes(docs) {
   const supersedesMap = new Map(); // uri -> local doc path
 
   for (const doc of docs) {
-    if (doc.origin === 'local' && doc.supersedes) {
+    if (doc.origin === "local" && doc.supersedes) {
       const supersededUris = Array.isArray(doc.supersedes) ? doc.supersedes : [doc.supersedes];
 
       for (const uri of supersededUris) {
@@ -25,7 +25,7 @@ export function applySupersedes(docs) {
   const suppressed = {};
 
   for (const doc of docs) {
-    if (doc.origin === 'baseline' && doc.uri && supersedesMap.has(doc.uri)) {
+    if (doc.origin === "baseline" && doc.uri && supersedesMap.has(doc.uri)) {
       // This baseline doc is superseded
       suppressed[doc.uri] = supersedesMap.get(doc.uri);
     } else {

@@ -16,6 +16,9 @@ oddkit librarian --query "What is the definition of done?"
 
 # Validate a completion claim
 oddkit validate --message "Done with the UI update. Screenshot: ui.png"
+
+# Explain the last result in human-readable format
+oddkit explain --last
 ```
 
 ## Commands
@@ -37,6 +40,7 @@ oddkit librarian --query "What is the rule about visual proof?" --format json
 ```
 
 Options:
+
 - `-q, --query <text>` — The question to ask (required)
 - `-r, --repo <path>` — Repository root (default: current directory)
 - `-f, --format <type>` — Output format: `json` or `md` (default: `json`)
@@ -50,10 +54,33 @@ oddkit validate --message "Shipped the new feature" --format json
 ```
 
 Options:
+
 - `-m, --message <text>` — The completion claim (required)
 - `-r, --repo <path>` — Repository root (default: current directory)
 - `-a, --artifacts <path>` — Optional JSON file with additional artifacts
 - `-f, --format <type>` — Output format: `json` or `md` (default: `json`)
+
+### `oddkit explain`
+
+Explain the last oddkit result in human-readable format.
+
+```bash
+oddkit explain --last
+oddkit explain --last --format json
+```
+
+Options:
+
+- `--last` — Explain the last result (default: true)
+- `-f, --format <type>` — Output format: `md` or `json` (default: `md`)
+
+The explain command:
+
+- Shows what happened (status/verdict)
+- Explains why it happened (which rules fired)
+- Suggests what to do next
+- Lists evidence used (citations, origin)
+- Includes debug info (baseline ref, timestamp)
 
 ## Baseline Knowledge
 
@@ -90,9 +117,7 @@ The baseline doc with that URI will be suppressed from results.
       "origin": "baseline"
     }
   ],
-  "read_next": [
-    { "path": "canon/definition-of-done.md#DoD", "reason": "Primary source" }
-  ]
+  "read_next": [{ "path": "canon/definition-of-done.md#DoD", "reason": "Primary source" }]
 }
 ```
 

@@ -3,9 +3,31 @@ import { ensureBaselineRepo, getBaselineRef } from '../baseline/ensureBaselineRe
 import { applySupersedes } from '../resolve/applySupersedes.js';
 import { tokenize, scoreDocument, findBestHeading } from '../utils/scoring.js';
 import { extractQuote, formatCitation } from '../utils/slicing.js';
+import { writeLast } from '../state/last.js';
 
 const MIN_EVIDENCE_BULLETS = 2;
 const MAX_RESULTS = 5;
+
+/**
+ * Detect policy intent from query
+ */
+function detectPolicyIntent(query) {
+  const lower = query.toLowerCase();
+  const strongPatterns = [
+    /\b(?:odd|canon)\s+says\b/i,
+    /\b(?:rule|constraint|decision|definition|policy)\b/i,
+    /\bwhat\s+(?:is|are)\s+the\s+(?:rule|constraint|requirement)/i,
+  ];
+  const weakPatterns = [/\bmust\b/i, /\bshould\b/i, /\brequire/i, /\beverify/i, /\bevidence\b/i];
+
+  if (strongPatterns.some((p) => p.test(query))) {
+    return 'strong';
+  }
+  if (weakPatterns.some((p) => p.test(query))) {
+    return 'weak';
+  }
+  return 'none';
+}
 
 /**
  * Run the librarian command
@@ -63,11 +85,11 @@ export async function runLibrarian(options) {
   }
 
   // Determine status
-  const status = evidence.length >= MIN_EVIDENCE_BULLETS ? 'SUPPORTED' : 'INSUFFICIENT_EVIDENCE';
+  const status = evidence.length >= MIN_EVIDENCE_BULLETS ? "SUPPORTED" : "INSUFFICIENT_EVIDENCE";
 
   // Build answer
   let answer;
-  if (status === 'SUPPORTED') {
+  if (status === "SUPPORTED") {
     answer = `Found ${evidence.length} relevant document(s) for: "${query}"`;
   } else {
     answer = `Could not find sufficient evidence to answer: "${query}". Found ${evidence.length} partial match(es).`;
@@ -81,7 +103,7 @@ export async function runLibrarian(options) {
     if (heading) {
       readNext.push({
         path: formatCitation(topDoc, heading),
-        reason: 'Primary source',
+        reason: "Primary source",
       });
     }
 
@@ -91,26 +113,64 @@ export async function runLibrarian(options) {
       if (relatedHeading) {
         readNext.push({
           path: formatCitation(scored[1].doc, relatedHeading),
-          reason: 'Related context',
+          reason: "Related context",
         });
       }
     }
   }
 
-  return {
+  // Determine policy intent
+  const policyIntent = detectPolicyIntent(query);
+
+  // Build rules fired
+  const rulesFired = [];
+  rulesFired.push('SUPPORTED_REQUIRES_EVIDENCE_BULLETS');
+  rulesFired.push('QUOTE_LENGTH_ENFORCED');
+
+  if (status === 'INSUFFICIENT_EVIDENCE') {
+    rulesFired.push('INSUFFICIENT_EVIDENCE_RETURNED');
+  }
+  if (Object.keys(suppressed).length > 0) {
+    rulesFired.push('SUPERSEDES_APPLIED');
+  }
+  if (!baseline.root) {
+    rulesFired.push('BASELINE_UNAVAILABLE');
+  } else {
+    rulesFired.push('BASELINE_LOADED');
+  }
+  if (policyIntent === 'strong') {
+    rulesFired.push('POLICY_INTENT_STRONG');
+  } else if (policyIntent === 'weak') {
+    rulesFired.push('POLICY_INTENT_WEAK');
+  } else {
+    rulesFired.push('POLICY_INTENT_NONE');
+  }
+
+  const result = {
     status,
     answer,
     evidence,
     sources,
     read_next: readNext.slice(0, 2),
     debug: {
+      tool: 'librarian',
+      timestamp: new Date().toISOString(),
+      repo_root: repoRoot,
       query,
       queryTokens,
       baseline_ref: baselineRef,
       baseline_ref_source: baseline.refSource,
       baseline_available: !!baseline.root,
       docs_considered: scored.length,
-      suppressed: Object.keys(suppressed).length > 0 ? suppressed : null,
+      policy_intent: policyIntent,
+      suppressed: Object.keys(suppressed).length > 0 ? suppressed : {},
+      rules_fired: rulesFired,
+      notes: [],
     },
   };
+
+  // Write to last.json
+  writeLast(result);
+
+  return result;
 }

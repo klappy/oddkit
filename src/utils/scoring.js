@@ -5,7 +5,7 @@ export function tokenize(text) {
   if (!text) return [];
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
+    .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((t) => t.length > 2);
 }
@@ -55,9 +55,9 @@ export function scoreDocument(doc, queryTokens) {
   }
 
   // Authority band bias
-  if (doc.authority_band === 'governing') {
+  if (doc.authority_band === "governing") {
     score *= 1.5;
-  } else if (doc.authority_band === 'operational') {
+  } else if (doc.authority_band === "operational") {
     score *= 1.2;
   }
 

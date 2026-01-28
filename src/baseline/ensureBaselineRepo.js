@@ -1,10 +1,10 @@
-import { execSync } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { execSync } from "child_process";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
-const BASELINE_REPO_URL = 'https://github.com/klappy/klappy.dev.git';
-const DEFAULT_REF = 'main';
+const BASELINE_REPO_URL = "https://github.com/klappy/klappy.dev.git";
+const DEFAULT_REF = "main";
 
 /**
  * Get the baseline ref from environment or default
@@ -17,8 +17,8 @@ export function getBaselineRef() {
  * Get the cache directory for a specific ref
  */
 export function getCacheDir(ref) {
-  const cacheRoot = join(homedir(), '.oddkit', 'cache', 'klappy.dev');
-  return join(cacheRoot, ref.replace(/[^a-zA-Z0-9_-]/g, '_'));
+  const cacheRoot = join(homedir(), ".oddkit", "cache", "klappy.dev");
+  return join(cacheRoot, ref.replace(/[^a-zA-Z0-9_-]/g, "_"));
 }
 
 /**
@@ -28,35 +28,35 @@ export function getCacheDir(ref) {
 export async function ensureBaselineRepo() {
   const ref = getBaselineRef();
   const cacheDir = getCacheDir(ref);
-  const refSource = process.env.ODDKIT_BASELINE_REF ? 'environment' : 'defaulted';
+  const refSource = process.env.ODDKIT_BASELINE_REF ? "environment" : "defaulted";
 
   try {
     // Check if git is available
-    execSync('git --version', { stdio: 'pipe' });
+    execSync("git --version", { stdio: "pipe" });
   } catch {
     return {
       root: null,
       ref,
       refSource,
-      error: 'git not installed',
+      error: "git not installed",
     };
   }
 
   try {
     // Ensure cache directory exists
-    const parentDir = join(homedir(), '.oddkit', 'cache', 'klappy.dev');
+    const parentDir = join(homedir(), ".oddkit", "cache", "klappy.dev");
     if (!existsSync(parentDir)) {
       mkdirSync(parentDir, { recursive: true });
     }
 
-    if (existsSync(join(cacheDir, '.git'))) {
+    if (existsSync(join(cacheDir, ".git"))) {
       // Repo exists, fetch and checkout
       try {
-        execSync(`git fetch origin`, { cwd: cacheDir, stdio: 'pipe' });
-        execSync(`git checkout ${ref}`, { cwd: cacheDir, stdio: 'pipe' });
+        execSync(`git fetch origin`, { cwd: cacheDir, stdio: "pipe" });
+        execSync(`git checkout ${ref}`, { cwd: cacheDir, stdio: "pipe" });
         // If ref is a branch, pull latest
-        if (ref === 'main' || ref === 'master') {
-          execSync(`git pull origin ${ref}`, { cwd: cacheDir, stdio: 'pipe' });
+        if (ref === "main" || ref === "master") {
+          execSync(`git pull origin ${ref}`, { cwd: cacheDir, stdio: "pipe" });
         }
       } catch {
         // Fetch failed, but we have a cached version - use it
@@ -64,7 +64,7 @@ export async function ensureBaselineRepo() {
     } else {
       // Clone fresh
       execSync(`git clone --branch ${ref} --single-branch ${BASELINE_REPO_URL} ${cacheDir}`, {
-        stdio: 'pipe',
+        stdio: "pipe",
       });
     }
 
@@ -79,7 +79,7 @@ export async function ensureBaselineRepo() {
       root: null,
       ref,
       refSource,
-      error: err.message || 'Failed to clone baseline repo',
+      error: err.message || "Failed to clone baseline repo",
     };
   }
 }

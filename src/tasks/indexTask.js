@@ -1,5 +1,5 @@
-import { buildIndex, saveIndex, saveBaselineIndex } from '../index/buildIndex.js';
-import { ensureBaselineRepo, getBaselineRef } from '../baseline/ensureBaselineRepo.js';
+import { buildIndex, saveIndex, saveBaselineIndex } from "../index/buildIndex.js";
+import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRepo.js";
 
 /**
  * Run the index command

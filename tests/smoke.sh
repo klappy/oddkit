@@ -45,6 +45,29 @@ else
   exit 1
 fi
 
+# Test 4: Explain command
+echo ""
+echo "Test 4: Explain last result"
+RESULT=$(node bin/oddkit explain --last 2>&1)
+echo "$RESULT" | head -25
+
+if echo "$RESULT" | grep -q "Result"; then
+  echo "✅ Explain: PASS (rendered Result section)"
+else
+  echo "❌ Explain: FAIL (no Result section in output)"
+  exit 1
+fi
+
+# Test 5: Check last.json exists
+echo ""
+echo "Test 5: Check last.json exists"
+if [ -f ~/.oddkit/last.json ]; then
+  echo "✅ last.json: EXISTS"
+else
+  echo "❌ last.json: MISSING"
+  exit 1
+fi
+
 echo ""
 echo "===================="
 echo "🎉 All smoke tests passed!"

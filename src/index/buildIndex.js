@@ -1,20 +1,20 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
-import { join, relative, dirname } from 'path';
-import { homedir } from 'os';
-import fg from 'fast-glob';
-import matter from 'gray-matter';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
+import { join, relative, dirname } from "path";
+import { homedir } from "os";
+import fg from "fast-glob";
+import matter from "gray-matter";
 
 // Default include patterns
-const INCLUDE_PATTERNS = ['canon/**/*.md', 'odd/**/*.md', 'docs/**/*.md'];
+const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md"];
 
 // Default exclude patterns
-const EXCLUDE_PATTERNS = ['**/node_modules/**', '**/public/**', '**/.git/**', '**/.oddkit/**'];
+const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
 
 /**
  * Extract headings with line numbers from content
  */
 function extractHeadings(content) {
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   const headings = [];
   let currentHeading = null;
 
@@ -58,7 +58,7 @@ async function indexRoot(rootPath, origin) {
     const absolutePath = join(rootPath, filePath);
 
     try {
-      const raw = readFileSync(absolutePath, 'utf-8');
+      const raw = readFileSync(absolutePath, "utf-8");
       const { data: frontmatter, content } = matter(raw);
 
       const headings = extractHeadings(content);
@@ -96,39 +96,39 @@ function inferAuthorityBand(filePath, frontmatter) {
   }
 
   // Path-based inference
-  if (filePath.startsWith('canon/') || filePath.startsWith('odd/')) {
-    return 'governing';
+  if (filePath.startsWith("canon/") || filePath.startsWith("odd/")) {
+    return "governing";
   }
-  if (filePath.startsWith('docs/')) {
-    return 'operational';
+  if (filePath.startsWith("docs/")) {
+    return "operational";
   }
-  return 'non-governing';
+  return "non-governing";
 }
 
 /**
  * Build complete index for local repo + baseline
  */
 export async function buildIndex(repoRoot, baselineRoot = null) {
-  const localDocs = await indexRoot(repoRoot, 'local');
+  const localDocs = await indexRoot(repoRoot, "local");
 
   let baselineDocs = [];
   if (baselineRoot) {
-    baselineDocs = await indexRoot(baselineRoot, 'baseline');
+    baselineDocs = await indexRoot(baselineRoot, "baseline");
   }
 
   const allDocs = [...localDocs, ...baselineDocs];
 
   const index = {
-    version: '1.0.0',
+    version: "1.0.0",
     generated: new Date().toISOString(),
     stats: {
       total: allDocs.length,
       local: localDocs.length,
       baseline: baselineDocs.length,
       byAuthority: {
-        governing: allDocs.filter((d) => d.authority_band === 'governing').length,
-        operational: allDocs.filter((d) => d.authority_band === 'operational').length,
-        'non-governing': allDocs.filter((d) => d.authority_band === 'non-governing').length,
+        governing: allDocs.filter((d) => d.authority_band === "governing").length,
+        operational: allDocs.filter((d) => d.authority_band === "operational").length,
+        "non-governing": allDocs.filter((d) => d.authority_band === "non-governing").length,
       },
     },
     documents: allDocs,
@@ -141,12 +141,12 @@ export async function buildIndex(repoRoot, baselineRoot = null) {
  * Save index to disk
  */
 export function saveIndex(index, repoRoot) {
-  const indexDir = join(repoRoot, '.oddkit');
+  const indexDir = join(repoRoot, ".oddkit");
   if (!existsSync(indexDir)) {
     mkdirSync(indexDir, { recursive: true });
   }
 
-  const indexPath = join(indexDir, 'index.json');
+  const indexPath = join(indexDir, "index.json");
   writeFileSync(indexPath, JSON.stringify(index, null, 2));
 
   return indexPath;
@@ -156,12 +156,12 @@ export function saveIndex(index, repoRoot) {
  * Save baseline index to cache
  */
 export function saveBaselineIndex(index, ref) {
-  const cacheDir = join(homedir(), '.oddkit', 'cache', 'indexes');
+  const cacheDir = join(homedir(), ".oddkit", "cache", "indexes");
   if (!existsSync(cacheDir)) {
     mkdirSync(cacheDir, { recursive: true });
   }
 
-  const indexPath = join(cacheDir, `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+  const indexPath = join(cacheDir, `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`);
   writeFileSync(indexPath, JSON.stringify(index, null, 2));
 
   return indexPath;
@@ -171,14 +171,14 @@ export function saveBaselineIndex(index, ref) {
  * Load index from disk if it exists and is fresh
  */
 export function loadIndex(repoRoot) {
-  const indexPath = join(repoRoot, '.oddkit', 'index.json');
+  const indexPath = join(repoRoot, ".oddkit", "index.json");
 
   if (!existsSync(indexPath)) {
     return null;
   }
 
   try {
-    const raw = readFileSync(indexPath, 'utf-8');
+    const raw = readFileSync(indexPath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -191,10 +191,10 @@ export function loadIndex(repoRoot) {
 export function loadBaselineIndex(ref) {
   const indexPath = join(
     homedir(),
-    '.oddkit',
-    'cache',
-    'indexes',
-    `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+    ".oddkit",
+    "cache",
+    "indexes",
+    `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`,
   );
 
   if (!existsSync(indexPath)) {
@@ -202,7 +202,7 @@ export function loadBaselineIndex(ref) {
   }
 
   try {
-    const raw = readFileSync(indexPath, 'utf-8');
+    const raw = readFileSync(indexPath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return null;

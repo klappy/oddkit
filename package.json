@@ -18,7 +18,13 @@
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3"
   },
-  "keywords": ["odd", "agents", "cli", "documentation", "governance"],
+  "keywords": [
+    "odd",
+    "agents",
+    "cli",
+    "documentation",
+    "governance"
+  ],
   "author": "",
   "license": "MIT"
 }
