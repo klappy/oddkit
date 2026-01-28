@@ -1,0 +1,24 @@
+{
+  "name": "oddkit",
+  "version": "0.1.0",
+  "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
+  "type": "module",
+  "bin": {
+    "oddkit": "./bin/oddkit"
+  },
+  "main": "src/cli.js",
+  "scripts": {
+    "test": "bash tests/smoke.sh",
+    "librarian": "node bin/oddkit librarian --query",
+    "validate": "node bin/oddkit validate --message",
+    "index": "node bin/oddkit index"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "fast-glob": "^3.3.2",
+    "gray-matter": "^4.0.3"
+  },
+  "keywords": ["odd", "agents", "cli", "documentation", "governance"],
+  "author": "",
+  "license": "MIT"
+}
