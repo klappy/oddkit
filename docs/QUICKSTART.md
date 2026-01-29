@@ -37,9 +37,18 @@ After init, Cursor should show the `oddkit_orchestrate` tool. You can also verif
 npx oddkit librarian -q "What is epistemic challenge?" -r .
 ```
 
-### Cursor Usage
+### Compass Prompts (Recommended)
 
-When using oddkit in Cursor:
+oddkit provides MCP prompts that teach agents when to consult oddkit — without preinjecting documentation.
+
+1. In Cursor chat, select `oddkit_compass` (for coding) or `oddkit_compass_prd` (for PRD work)
+2. Then talk normally — the agent automatically consults oddkit at decision points
+
+See [docs/MCP.md](MCP.md#compass-prompts) for details.
+
+### Manual Cursor Usage
+
+When using oddkit in Cursor without prompts:
 
 1. **Call `oddkit_orchestrate`** with the user's question or message
 2. **Extract `assistant_text`** from the response

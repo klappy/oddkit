@@ -19,11 +19,17 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { runOrchestrate } from "./orchestrate.js";
+import { listPrompts, getPrompt } from "./prompts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -151,6 +157,7 @@ async function main() {
     {
       capabilities: {
         tools: {},
+        prompts: {},
       },
     },
   );
@@ -160,6 +167,23 @@ async function main() {
     return {
       tools: getTools(),
     };
+  });
+
+  // Handle list prompts request
+  server.setRequestHandler(ListPromptsRequestSchema, async () => {
+    return {
+      prompts: listPrompts(),
+    };
+  });
+
+  // Handle get prompt request
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name } = request.params;
+    const prompt = getPrompt(name);
+    if (!prompt) {
+      throw new Error(`Unknown prompt: ${name}`);
+    }
+    return prompt;
   });
 
   // Handle tool calls (normalize repo_root / repoRoot for backward compatibility)

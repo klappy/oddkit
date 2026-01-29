@@ -40,6 +40,42 @@ npx oddkit init --print
 
 This writes config to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--project`). The `init` command safely merges with existing config—it won't overwrite other MCP servers.
 
+## Compass Prompts
+
+oddkit provides MCP prompts called **Compass prompts** that teach agents _when_ to call oddkit, _what_ to ask for, and _how_ to apply results — without preinjecting any documentation content.
+
+### Available Prompts
+
+| Prompt               | Description                                      |
+| -------------------- | ------------------------------------------------ |
+| `oddkit_compass`     | Triggers for calling oddkit during normal coding |
+| `oddkit_compass_prd` | Triggers for discovery and PRD creation          |
+
+### Using Compass Prompts in Cursor
+
+1. In Cursor chat, select the prompt `oddkit_compass` (for coding) or `oddkit_compass_prd` (for discovery/PRD)
+2. Then talk normally — "Implement QR login", "Draft a PRD for X", "I think this is done"
+
+The agent now has a standing internal habit: consult oddkit at decision points — without you writing "call oddkit".
+
+### What Compass Prompts Teach
+
+**Coding loop (`oddkit_compass`):**
+
+- Consult oddkit at policy/process uncertainty
+- Validate with oddkit when claiming completion
+- Ask oddkit when hitting confusion or conflicting guidance
+
+**PRD loop (`oddkit_compass_prd`):**
+
+- Retrieve definition of done before defining success metrics
+- Query constraints before proposing requirements
+- Validate PRD completion with artifacts
+
+**Key principle:** Prompts contain no canon text — they only tell the agent when to consult oddkit. The doctrine stays in the baseline; the agent retrieves it on-demand.
+
+---
+
 ## Available Tools
 
 **By default, only `oddkit_orchestrate` is exposed.** This reduces tool-choice burden and ensures Cursor uses the complete answer format.
