@@ -17,6 +17,7 @@
     "test:smoke": "bash tests/smoke.sh",
     "test:mcp": "bash tests/mcp-smoke.sh",
     "test:tooljson": "bash tests/tooljson.sh",
+    "test:antifragile": "bash tests/orchestrate-antifragile.sh",
     "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",
