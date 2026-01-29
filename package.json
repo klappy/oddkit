@@ -20,6 +20,7 @@
     "test:antifragile": "bash tests/orchestrate-antifragile.sh",
     "test:catalog": "bash tests/orchestrate-catalog.test.sh",
     "test:preflight": "bash tests/orchestrate-preflight.test.sh",
+    "test:policy": "bash tests/policy-tools.test.sh",
     "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",

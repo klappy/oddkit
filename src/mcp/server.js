@@ -34,6 +34,8 @@ import { readFileSync } from "fs";
 import { runOrchestrate } from "./orchestrate.js";
 import { listPrompts, getPrompt } from "./prompts.js";
 import { getOddkitInstructions } from "./instructions.js";
+import { resolveCanonTarget } from "../policy/canonTarget.js";
+import { getDocByUri } from "../policy/docFetch.js";
 
 // Read version from package.json to keep MCP server version in sync
 const __filename = fileURLToPath(import.meta.url);
@@ -142,6 +144,44 @@ Use when:
       properties: {
         repo_root: { type: "string" },
       },
+    },
+  },
+  {
+    name: "oddkit_policy_version",
+    description: `Returns oddkit version and the authoritative canon target (commit/mode).
+Use this to check if a derived subagent prompt is stale before proposing updates.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+    },
+  },
+  {
+    name: "oddkit_policy_get",
+    description: `Fetches a canonical doc by klappy:// URI at the current canon target.
+Returns content, commit, and content hash.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        uri: {
+          type: "string",
+          description: "Canonical URI (e.g., klappy://canon/agents/odd-epistemic-guide)",
+        },
+        format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "Output format (default: markdown)",
+        },
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+      required: ["uri"],
     },
   },
 ];
@@ -324,6 +364,94 @@ async function main() {
             },
           ],
         };
+      }
+
+      case "oddkit_policy_version": {
+        const { baseline } = args;
+        try {
+          const canonTarget = await resolveCanonTarget(baseline);
+          const result = {
+            oddkit_version: VERSION,
+            policy_schema: "1.0.0",
+            canon_target: {
+              mode: canonTarget.mode,
+              commit: canonTarget.commit,
+              commit_full: canonTarget.commitFull || null,
+              tag: canonTarget.tag || null,
+              source: canonTarget.source,
+              ref: canonTarget.ref || null,
+              baseline_url: canonTarget.baselineUrl || null,
+            },
+          };
+          if (canonTarget.error) {
+            result.error = {
+              code: "CANON_TARGET_UNKNOWN",
+              message: canonTarget.error,
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    oddkit_version: VERSION,
+                    policy_schema: "1.0.0",
+                    error: {
+                      code: "CANON_TARGET_UNKNOWN",
+                      message: err.message || "Failed to resolve canon target",
+                    },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_policy_get": {
+        const { uri, format = "markdown", baseline } = args;
+        try {
+          const result = await getDocByUri(uri, { format, baseline });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    uri,
+                    error: {
+                      code: "DOC_FETCH_ERROR",
+                      message: err.message || "Failed to fetch document",
+                    },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
       }
 
       default:

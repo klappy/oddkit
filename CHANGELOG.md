@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Policy tools** — New MCP tools for canon target freshness checks:
+  - `oddkit_policy_version` — Returns oddkit version and authoritative canon target (commit/mode)
+  - `oddkit_policy_get` — Fetches canonical doc by klappy:// URI at current canon target
+  - New module `src/policy/canonTarget.js` — Resolves authoritative canon target
+  - New module `src/policy/docFetch.js` — Fetches docs by URI with content hash
+  - New test `tests/policy-tools.test.sh`
+
 - **Docs pointer** — `docs/getting-started/odd-agents-and-mcp.md` now points to canonical orientation doc at klappy.dev (`klappy://odd/getting-started/agents-and-mcp`)
 
 ## [0.3.0] - 2026-01-29
