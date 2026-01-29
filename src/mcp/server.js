@@ -66,11 +66,10 @@ function runOddkit(args) {
 /**
  * Tool definitions (tool-grade contracts; repo_root in schema for MCP clients)
  */
-const TOOLS = [
+const ALL_TOOLS = [
   {
     name: "oddkit_orchestrate",
-    description:
-      "Routes a message to librarian/validate/explain and returns tool-grade JSON.",
+    description: "Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.",
     inputSchema: {
       type: "object",
       properties: {
@@ -127,6 +126,19 @@ const TOOLS = [
 ];
 
 /**
+ * Get tools to expose based on environment
+ * Default: only oddkit_orchestrate
+ * ODDKIT_DEV_TOOLS=1: all tools
+ */
+function getTools() {
+  const devTools = process.env.ODDKIT_DEV_TOOLS === "1";
+  if (devTools) {
+    return ALL_TOOLS;
+  }
+  return [ALL_TOOLS[0]]; // Only oddkit_orchestrate
+}
+
+/**
  * Create and start the MCP server
  */
 async function main() {
@@ -145,7 +157,7 @@ async function main() {
   // Handle list tools request
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: TOOLS,
+      tools: getTools(),
     };
   });
 

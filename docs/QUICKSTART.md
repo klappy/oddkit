@@ -31,13 +31,31 @@ This writes to `<repo>/.cursor/mcp.json` instead.
 
 ### Verify
 
-After init, Cursor should show oddkit tools. You can also verify from CLI:
+After init, Cursor should show the `oddkit_orchestrate` tool. You can also verify from CLI:
 
 ```bash
 npx oddkit librarian -q "What is epistemic challenge?" -r .
 ```
 
-If Cursor shows the oddkit tools (`oddkit_orchestrate`, `oddkit_librarian`, etc.), you're wired.
+### Cursor Usage
+
+When using oddkit in Cursor:
+
+1. **Call `oddkit_orchestrate`** with the user's question or message
+2. **Extract `assistant_text`** from the response
+3. **Print it verbatim** — it's already a complete answer with quotes and citations
+
+Example:
+- User asks: "What is epistemic challenge?"
+- Cursor calls: `oddkit_orchestrate({ message: "What is epistemic challenge?", repo_root: "." })`
+- Cursor prints: the `assistant_text` field directly (no extra narration needed)
+
+The `assistant_text` includes:
+- Complete answer with 2-4 substantial quotes
+- Citations (path#anchor format)
+- Advisory messaging if confidence is low
+
+**Note:** By default, only `oddkit_orchestrate` is exposed. Set `ODDKIT_DEV_TOOLS=1` in your MCP server environment to see all tools for debugging.
 
 ---
 

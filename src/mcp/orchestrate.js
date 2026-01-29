@@ -13,6 +13,8 @@
 import { runLibrarian } from "../tasks/librarian.js";
 import { runValidate } from "../tasks/validate.js";
 import { explainLast } from "../explain/explain-last.js";
+import { readExcerpt } from "../tools/readExcerpt.js";
+import { countWords } from "../utils/slicing.js";
 
 /**
  * Action types
@@ -132,6 +134,113 @@ export async function runOrchestrate(options) {
           baseline,
         });
         result.result = taskResult;
+
+        // Upgrade quotes if advisory or too short
+        if (taskResult.evidence && taskResult.evidence.length > 0) {
+          const needsUpgrade =
+            taskResult.advisory === true ||
+            taskResult.confidence < 0.6 ||
+            (taskResult.evidence[0] && (taskResult.evidence[0].wordCount || 0) < 12);
+
+          if (needsUpgrade && taskResult.read_next && taskResult.read_next.length > 0) {
+            // Parse primary source citation (format: path#anchor)
+            const primarySource = taskResult.read_next[0].path;
+            const [path, anchor] = primarySource.includes("#")
+              ? primarySource.split("#")
+              : [primarySource, null];
+
+            // Determine origin from evidence
+            const primaryEvidence = taskResult.evidence.find((e) => e.citation === primarySource);
+            const origin = primaryEvidence?.origin || "local";
+
+            // Read excerpt from primary source
+            const excerptResult = await readExcerpt({
+              repo_root: repoRoot || process.cwd(),
+              origin,
+              path,
+              anchor,
+              max_words: 25,
+            });
+
+            if (excerptResult && excerptResult.excerpt) {
+              // Replace or prepend first evidence with excerpt
+              if (taskResult.evidence[0]) {
+                taskResult.evidence[0] = {
+                  ...taskResult.evidence[0],
+                  quote: excerptResult.excerpt,
+                  citation: excerptResult.citation,
+                  wordCount: countWords(excerptResult.excerpt),
+                };
+              }
+
+              // Optionally upgrade second evidence if available
+              if (
+                taskResult.read_next.length > 1 &&
+                taskResult.evidence.length > 1 &&
+                (taskResult.evidence[1].wordCount || 0) < 12
+              ) {
+                const secondarySource = taskResult.read_next[1].path;
+                const [secPath, secAnchor] = secondarySource.includes("#")
+                  ? secondarySource.split("#")
+                  : [secondarySource, null];
+                const secEvidence = taskResult.evidence.find((e) => e.citation === secondarySource);
+                const secOrigin = secEvidence?.origin || "local";
+
+                const secExcerpt = await readExcerpt({
+                  repo_root: repoRoot || process.cwd(),
+                  origin: secOrigin,
+                  path: secPath,
+                  anchor: secAnchor,
+                  max_words: 25,
+                });
+
+                if (secExcerpt && secExcerpt.excerpt) {
+                  taskResult.evidence[1] = {
+                    ...taskResult.evidence[1],
+                    quote: secExcerpt.excerpt,
+                    citation: secExcerpt.citation,
+                    wordCount: countWords(secExcerpt.excerpt),
+                  };
+                }
+              }
+            }
+          }
+        }
+
+        // Build assistant_text for Cursor to print verbatim
+        if (taskResult.evidence && taskResult.evidence.length > 0) {
+          let assistantText = "";
+
+          // Add advisory message if needed
+          if (taskResult.advisory) {
+            assistantText += `Advisory: confidence ${taskResult.confidence} because `;
+            if (taskResult.confidence < 0.6) {
+              assistantText += "evidence quality is low";
+            } else if (taskResult.arbitration?.warnings?.some((w) => w.type === "URI_COLLISION")) {
+              assistantText += "identity collision detected";
+            } else {
+              assistantText += "uncertainty in results";
+            }
+            assistantText += ".\n\n";
+          }
+
+          // Add answer
+          assistantText += taskResult.answer + "\n\n";
+
+          // Add evidence quotes with citations
+          for (const ev of taskResult.evidence.slice(0, 4)) {
+            // Strip leading ">" if quote already has it (from extractQuote)
+            const cleanQuote = ev.quote.startsWith("> ") ? ev.quote.slice(2) : ev.quote;
+            assistantText += `> ${cleanQuote}\n\n`;
+            assistantText += `— ${ev.citation}\n\n`;
+          }
+
+          result.assistant_text = assistantText.trim();
+        } else {
+          // No evidence - just return the answer
+          result.assistant_text = taskResult.answer || "Could not find sufficient evidence.";
+        }
+
         break;
       }
 

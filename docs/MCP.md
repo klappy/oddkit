@@ -42,20 +42,26 @@ This writes config to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--
 
 ## Available Tools
 
+**By default, only `oddkit_orchestrate` is exposed.** This reduces tool-choice burden and ensures Cursor uses the complete answer format.
+
+To expose all tools for debugging, set `ODDKIT_DEV_TOOLS=1` in your MCP server environment.
+
 | Tool                 | Description                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------- |
-| `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and routes to the right tool |
-| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation                     |
-| `oddkit_validate`    | Validate a completion claim with verdict and gaps                                   |
-| `oddkit_explain`     | Explain the last oddkit result                                                      |
+| `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and returns ready-to-send `assistant_text` |
+| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation (dev only)         |
+| `oddkit_validate`    | Validate a completion claim with verdict and gaps (dev only)                        |
+| `oddkit_explain`     | Explain the last oddkit result (dev only)                                           |
 
 ## Recommended: Use `oddkit_orchestrate`
 
-For most use cases, call `oddkit_orchestrate` with the user message. It will automatically route to:
+For all use cases, call `oddkit_orchestrate` with the user message. It will automatically route to:
 
 - **librarian** — for questions ("What is the definition of done?")
 - **validate** — for completion claims ("Done with feature X")
 - **explain** — for explain requests ("explain last")
+
+**Key feature:** `oddkit_orchestrate` returns `assistant_text` — a complete, cited answer ready to paste. Cursor should print this verbatim without adding extra narration.
 
 Example:
 
@@ -63,8 +69,8 @@ Example:
 {
   "name": "oddkit_orchestrate",
   "arguments": {
-    "message": "Done with the UI update. Screenshot: ui.png",
-    "repoRoot": "/path/to/repo"
+    "message": "What is epistemic challenge?",
+    "repo_root": "/path/to/repo"
   }
 }
 ```
@@ -73,17 +79,17 @@ Response:
 
 ```json
 {
-  "action": "validate",
+  "action": "librarian",
+  "assistant_text": "Found 2 relevant document(s) for: \"What is epistemic challenge?\"\n\n> The epistemic challenge refers to the fundamental difficulty of knowing what we know and verifying claims in complex systems. When working with distributed systems, multiple stakeholders, and evolving requirements, it becomes increasingly difficult to maintain certainty about the current state of knowledge.\n\n— canon/epistemic-challenge.md#Core Problem\n\n> The primary mitigation strategy involves creating explicit documentation that captures decisions, constraints, and evidence.\n\n— canon/epistemic-challenge.md#Mitigation Strategies",
   "result": {
-    "verdict": "NEEDS_ARTIFACTS",
-    "claims": ["Done with the UI update"],
-    "gaps": ["recording"]
-  },
-  "debug": {
-    "reason": "COMPLETION_CLAIM"
+    "status": "SUPPORTED",
+    "confidence": 0.85,
+    "evidence": [...]
   }
 }
 ```
+
+**Cursor usage:** After calling `oddkit_orchestrate`, extract and print the `assistant_text` field verbatim. No need to add "I'm going to read..." or other narration — the answer is already complete with quotes and citations.
 
 ## Manual Setup (without init)
 
@@ -245,6 +251,7 @@ echo "Done with the UI update" | oddkit tool validate -m @stdin
 | --------------------- | ---------------------------------------- |
 | `ODDKIT_BASELINE`     | Override baseline repo (path or git URL) |
 | `ODDKIT_BASELINE_REF` | Pin baseline to specific branch/tag      |
+| `ODDKIT_DEV_TOOLS`    | Set to `1` to expose all tools (default: only `oddkit_orchestrate`) |
 
 ## Output Contract
 
