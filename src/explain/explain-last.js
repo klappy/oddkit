@@ -224,9 +224,12 @@ function renderMarkdown(result) {
   }
   if (result.confidence !== undefined) {
     lines.push(`- Confidence: ${Math.round(result.confidence * 100)}%`);
-    if (!result.is_confident) {
-      lines.push(`- ⚠️ **Advisory**: Low confidence — result is not authoritative`);
-    }
+  }
+  if (result.advisory) {
+    lines.push(`- ⚠️ **Advisory**: Low confidence — result is not authoritative`);
+  }
+  if (result.arbitration?.outcome) {
+    lines.push(`- Arbitration outcome: **${result.arbitration.outcome}**`);
   }
   if (result.answer) {
     lines.push(`- Answer: ${result.answer}`);
@@ -252,6 +255,20 @@ function renderMarkdown(result) {
     lines.push("");
   }
 
+  // Confidence factors (explainability)
+  if (result.confidence_factors) {
+    const cf = result.confidence_factors;
+    lines.push("## Confidence breakdown");
+    lines.push(`- Margin (top vs second): ${Math.round(cf.margin * 100)}%`);
+    lines.push(`- Coverage (evidence count): ${Math.round(cf.coverage * 100)}%`);
+    lines.push(`- Evidence quality: ${Math.round(cf.evidence_quality * 100)}%`);
+    lines.push(`- Intent quality: ${Math.round(cf.intent_quality * 100)}%`);
+    if (cf.conflict_penalty > 0) {
+      lines.push(`- Conflict penalty: -${Math.round(cf.conflict_penalty * 100)}%`);
+    }
+    lines.push("");
+  }
+
   // Arbitration contradictions (per canon/weighted-relevance-and-arbitration.md: no silent resolution)
   if (result.arbitration?.contradictions && result.arbitration.contradictions.length > 0) {
     lines.push("## ⚠️ Contradictions detected");
@@ -260,13 +277,27 @@ function renderMarkdown(result) {
     );
     lines.push("");
     for (const c of result.arbitration.contradictions) {
-      lines.push(`- **${c.type}**: ${c.message}`);
+      lines.push(`- **${c.type}** (${c.subtype || "untyped"}): ${c.message}`);
+    }
+    lines.push("");
+  }
+
+  // Vetoed items (hard veto enforcement)
+  if (result.arbitration?.vetoed && result.arbitration.vetoed.length > 0) {
+    lines.push("## Items demoted by intent veto");
+    lines.push("*Per Canon: these low-intent items were forcibly demoted below high-intent items.*");
+    lines.push("");
+    for (const v of result.arbitration.vetoed) {
+      lines.push(`- \`${v}\``);
     }
     lines.push("");
   }
 
   // Candidates considered (arbitration transparency)
-  if (result.arbitration?.candidates_considered && result.arbitration.candidates_considered.length > 0) {
+  if (
+    result.arbitration?.candidates_considered &&
+    result.arbitration.candidates_considered.length > 0
+  ) {
     lines.push("## Candidates considered");
     for (const c of result.arbitration.candidates_considered) {
       const intentBadge = c.intent ? `[${c.intent}]` : "";

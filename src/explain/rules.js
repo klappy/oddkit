@@ -52,19 +52,34 @@ export const RULES = {
 
   // Arbitration rules (per canon/weighted-relevance-and-arbitration.md)
   INTENT_GATED_PRECEDENCE: {
-    title: "Intent-gated precedence active",
+    title: "Intent-gated precedence active (hard veto)",
     meaning:
-      "Per Canon: workaround/experiment cannot outrank promoted/pattern without explicit supersedes.",
+      "Per Canon: workaround/experiment cannot outrank promoted/pattern without explicit supersedes. Enforced as post-filter veto, not multiplier.",
   },
   INTENT_PRECEDENCE_VIOLATED: {
     title: "Intent precedence violation detected",
     meaning:
       "A lower-intent document (workaround/experiment) ranked above a higher-intent document without supersedes. See contradictions.",
   },
+  INTENT_PRECEDENCE_VETOED: {
+    title: "Items demoted by intent veto",
+    meaning:
+      "One or more low-intent items were forcibly demoted below high-intent items to enforce Canon invariant.",
+  },
   LOW_CONFIDENCE_ADVISORY: {
     title: "Low confidence — advisory result",
     meaning:
-      "Per Canon: confidence is low due to weak evidence or low-intent sources. Result is advisory, not authoritative.",
+      "Per Canon: confidence is low due to weak margin, weak evidence, or conflicts. Result is advisory, not authoritative.",
+  },
+  ESCALATION_REQUIRED: {
+    title: "Escalation required",
+    meaning:
+      "Per Canon: contradictions exist and confidence is low. Human judgment is required to resolve.",
+  },
+  PROMOTION_CANDIDATE: {
+    title: "Promotion candidate detected",
+    meaning:
+      "Per Canon: contradictions exist but confidence is sufficient. This pattern may warrant promotion to Canon.",
   },
 
   // Validation rules

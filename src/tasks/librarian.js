@@ -31,82 +31,148 @@ function detectPolicyIntent(query) {
 }
 
 /**
- * Apply intent-gated precedence (per canon/weighted-relevance-and-arbitration.md)
- * A newer workaround/experiment MUST NOT outrank an older promoted/pattern
- * unless it explicitly supersedes it
+ * Apply intent-gated precedence as HARD VETO (per canon/weighted-relevance-and-arbitration.md)
+ *
+ * INVARIANT: If any candidate has intent: promoted|pattern, then any candidate
+ * with intent: workaround|experiment MUST NOT rank above it unless supersedes
+ * explicitly applies.
+ *
+ * This is a post-filter veto, not a multiplier - multipliers are easy to bypass.
+ *
+ * Returns: { reordered: candidates[], violations: [], vetoed: [] }
  */
-function applyIntentGatedPrecedence(candidates, supersededUris) {
+function applyIntentGatedPrecedence(candidates) {
   const violations = [];
+  const vetoed = [];
 
-  // Find the highest-intent item
-  const maxIntent = Math.max(...candidates.map((c) => INTENT_HIERARCHY[c.doc.intent] || 3));
+  // Separate by intent tier
+  const highIntent = []; // promoted, pattern (intent >= 4)
+  const lowIntent = []; // workaround, experiment (intent <= 2)
+  const midIntent = []; // operational (intent == 3)
 
-  // Check for violations: low-intent items ranked above high-intent items
-  for (let i = 0; i < candidates.length; i++) {
-    const current = candidates[i];
-    const currentIntent = INTENT_HIERARCHY[current.doc.intent] || 3;
+  for (const c of candidates) {
+    const intentLevel = INTENT_HIERARCHY[c.doc.intent] || 3;
+    if (intentLevel >= 4) {
+      highIntent.push(c);
+    } else if (intentLevel <= 2) {
+      lowIntent.push(c);
+    } else {
+      midIntent.push(c);
+    }
+  }
 
-    // Low intent items (workaround, experiment) cannot outrank high intent (pattern, promoted)
-    if (currentIntent <= 2) {
-      // workaround or experiment
-      const higherIntentBelow = candidates.slice(i + 1).find((c) => {
-        const intent = INTENT_HIERARCHY[c.doc.intent] || 3;
-        return intent >= 4; // pattern or promoted
-      });
+  // Check if any low-intent items were originally ranked above high-intent items
+  for (const low of lowIntent) {
+    const lowOriginalRank = candidates.indexOf(low);
 
-      if (higherIntentBelow) {
-        // Check if current explicitly supersedes the higher-intent item
-        const currentSupersedes = current.doc.supersedes;
-        const higherUri = higherIntentBelow.doc.uri;
+    for (const high of highIntent) {
+      const highOriginalRank = candidates.indexOf(high);
 
-        if (!currentSupersedes || currentSupersedes !== higherUri) {
+      // If low-intent was ranked higher (lower index) than high-intent
+      if (lowOriginalRank < highOriginalRank) {
+        // Check if low explicitly supersedes high
+        const lowSupersedes = low.doc.supersedes;
+        const highUri = high.doc.uri;
+
+        if (!lowSupersedes || lowSupersedes !== highUri) {
           violations.push({
-            lowIntent: current.doc.path,
-            lowIntentType: current.doc.intent,
-            highIntent: higherIntentBelow.doc.path,
-            highIntentType: higherIntentBelow.doc.intent,
+            lowIntent: low.doc.path,
+            lowIntentType: low.doc.intent,
+            highIntent: high.doc.path,
+            highIntentType: high.doc.intent,
+            original_rank_low: lowOriginalRank,
+            original_rank_high: highOriginalRank,
           });
+
+          // VETO: Mark this low-intent item for demotion
+          if (!vetoed.includes(low)) {
+            vetoed.push(low);
+          }
         }
       }
     }
   }
 
-  return violations;
+  // HARD REORDER: high-intent first, then mid, then low (preserving internal order)
+  // But only demote items that violated - don't reorder everything
+  const reordered = [];
+  for (const c of candidates) {
+    if (!vetoed.includes(c)) {
+      reordered.push(c);
+    }
+  }
+  // Add vetoed items at the end
+  reordered.push(...vetoed);
+
+  return { reordered, violations, vetoed: vetoed.map((v) => v.doc.path) };
 }
 
 /**
- * Calculate confidence level based on evidence quality and consistency
- * Per canon/weighted-relevance-and-arbitration.md: low confidence = advisory
+ * Calculate confidence level based on visible, reproducible factors
+ * Per canon/weighted-relevance-and-arbitration.md: confidence must be:
+ * - Computed from visible factors only (no hidden heuristics)
+ * - Reproducible given same index + query + baseline ref
+ * - Explainable by listing dominant terms
+ *
+ * Formula: margin-based + coverage penalties + conflict penalties
  */
-function calculateConfidence(scored, evidence) {
-  if (evidence.length === 0) return 0;
-  if (scored.length === 0) return 0;
+function calculateConfidence(scored, evidence, contradictions = []) {
+  const factors = {
+    margin: 0,
+    coverage: 0,
+    conflict_penalty: 0,
+    evidence_quality: 0,
+    intent_quality: 0,
+  };
 
-  // Factors that reduce confidence
-  let confidence = 1.0;
-
-  // Few evidence bullets
-  if (evidence.length < MIN_EVIDENCE_BULLETS) {
-    confidence *= 0.5;
+  if (evidence.length === 0 || scored.length === 0) {
+    return { confidence: 0, confidenceFactors: factors };
   }
 
-  // Weak evidence strength in sources
-  const avgEvidence =
-    scored.slice(0, evidence.length).reduce((sum, s) => {
-      const evWeight = { none: 0.5, weak: 0.7, medium: 1.0, strong: 1.0 }[s.doc.evidence] || 0.8;
-      return sum + evWeight;
-    }, 0) / evidence.length;
-  confidence *= avgEvidence;
+  // 1. MARGIN-BASED: separation between top candidates
+  // If top score is much higher than second, we're more confident
+  if (scored.length >= 2) {
+    const topScore = scored[0].score;
+    const secondScore = scored[1].score;
+    factors.margin = topScore > 0 ? (topScore - secondScore) / topScore : 0;
+  } else {
+    factors.margin = 1.0; // Only one candidate = high margin by default
+  }
 
-  // Low-intent sources dominating
-  const avgIntent =
-    scored.slice(0, evidence.length).reduce((sum, s) => {
-      const intWeight = INTENT_HIERARCHY[s.doc.intent] || 3;
-      return sum + intWeight / 5;
-    }, 0) / evidence.length;
-  confidence *= avgIntent;
+  // 2. COVERAGE: do we have enough evidence bullets?
+  factors.coverage = Math.min(1.0, evidence.length / MIN_EVIDENCE_BULLETS);
 
-  return Math.min(1.0, Math.max(0, confidence));
+  // 3. CONFLICT PENALTY: contradictions reduce confidence
+  factors.conflict_penalty = contradictions.length > 0 ? 0.3 * contradictions.length : 0;
+
+  // 4. EVIDENCE QUALITY: strong evidence increases confidence
+  const evidenceWeights = { none: 0.5, weak: 0.7, medium: 0.9, strong: 1.0 };
+  const avgEvidenceQuality =
+    scored.slice(0, evidence.length).reduce((sum, s) => {
+      return sum + (evidenceWeights[s.doc.evidence] || 0.7);
+    }, 0) / Math.max(1, evidence.length);
+  factors.evidence_quality = avgEvidenceQuality;
+
+  // 5. INTENT QUALITY: higher intent (promoted/pattern) increases confidence
+  const avgIntentQuality =
+    scored.slice(0, evidence.length).reduce((sum, s) => {
+      const intLevel = INTENT_HIERARCHY[s.doc.intent] || 3;
+      return sum + intLevel / 5; // Normalize to 0-1
+    }, 0) / Math.max(1, evidence.length);
+  factors.intent_quality = avgIntentQuality;
+
+  // Final confidence: weighted combination
+  // margin (40%) + coverage (20%) + evidence_quality (20%) + intent_quality (20%) - conflicts
+  const rawConfidence =
+    factors.margin * 0.4 +
+    factors.coverage * 0.2 +
+    factors.evidence_quality * 0.2 +
+    factors.intent_quality * 0.2 -
+    factors.conflict_penalty;
+
+  const confidence = Math.min(1.0, Math.max(0, rawConfidence));
+
+  return { confidence: Math.round(confidence * 100) / 100, confidenceFactors: factors };
 }
 
 /**
@@ -175,11 +241,15 @@ export async function runLibrarian(options) {
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_RESULTS);
 
-  // Check for intent-gated precedence violations (per canon/weighted-relevance-and-arbitration.md)
-  const precedenceViolations = applyIntentGatedPrecedence(scored, suppressed);
+  // Apply intent-gated precedence as HARD VETO (per canon/weighted-relevance-and-arbitration.md)
+  const { reordered: reorderedScored, violations: precedenceViolations, vetoed } =
+    applyIntentGatedPrecedence(scored);
+
+  // Use reordered list for evidence building
+  const finalScored = reorderedScored;
 
   // Build candidates considered (for output contract 2.3)
-  const candidatesConsidered = scored.map((s) => ({
+  const candidatesConsidered = finalScored.map((s) => ({
     path: s.doc.path,
     origin: s.doc.origin,
     score: Math.round(s.score * 100) / 100,
@@ -203,7 +273,7 @@ export async function runLibrarian(options) {
   // Track seen paths for diversity preference (soft dedup when we have enough)
   const seenPaths = new Set();
 
-  for (const { doc } of scored) {
+  for (const { doc } of finalScored) {
     const heading = findBestHeading(doc, queryTokens);
     if (!heading) {
       rejectionReasons.NO_HEADING++;
@@ -257,37 +327,101 @@ export async function runLibrarian(options) {
     Object.entries(rejectionReasons).filter(([, v]) => v > 0),
   );
 
-  // Calculate confidence (per canon/weighted-relevance-and-arbitration.md)
-  const confidence = calculateConfidence(scored, evidence);
+  // Calculate confidence using margin-based approach (per canon/weighted-relevance-and-arbitration.md)
+  // Confidence must be computed from visible factors only, reproducible, and explainable
+  const { confidence, confidenceFactors } = calculateConfidence(
+    finalScored,
+    evidence,
+    precedenceViolations,
+  );
   const isConfident = confidence >= MIN_CONFIDENCE_THRESHOLD;
 
-  // Determine status
+  // Determine status (SUPPORTED or INSUFFICIENT_EVIDENCE only - no third state)
+  // Advisory flag is separate to prevent "basically supported" laundering
   let status;
   if (evidence.length >= MIN_EVIDENCE_BULLETS) {
-    status = isConfident ? "SUPPORTED" : "SUPPORTED_ADVISORY";
+    status = "SUPPORTED";
   } else {
     status = "INSUFFICIENT_EVIDENCE";
   }
 
-  // Build answer
+  // Advisory flag - separate from status to prevent misuse
+  const advisory = !isConfident;
+
+  // Build answer (advisory is a separate flag, not a status)
   let answer;
   if (status === "SUPPORTED") {
-    answer = `Found ${evidence.length} relevant document(s) for: "${query}"`;
-  } else if (status === "SUPPORTED_ADVISORY") {
-    answer = `Found ${evidence.length} relevant document(s) for: "${query}" (advisory: confidence is low)`;
+    if (advisory) {
+      answer = `Found ${evidence.length} relevant document(s) for: "${query}" [advisory: low confidence]`;
+    } else {
+      answer = `Found ${evidence.length} relevant document(s) for: "${query}"`;
+    }
   } else {
     answer = `Could not find sufficient evidence to answer: "${query}". Found ${evidence.length} partial match(es).`;
   }
 
-  // Detect contradictions (per canon/weighted-relevance-and-arbitration.md: no silent resolution)
+  // Detect contradictions with TYPED categories (per canon/weighted-relevance-and-arbitration.md)
+  // Types: AUTHORITY_CONTRADICTION, EVIDENCE_CONTRADICTION, SCOPE_CONTRADICTION, TEMPORAL_DRIFT, STATE_CONTRADICTION
   const contradictions = [];
+
+  // Authority contradictions: intent precedence violations
   if (precedenceViolations.length > 0) {
     for (const v of precedenceViolations) {
       contradictions.push({
-        type: "INTENT_PRECEDENCE_VIOLATION",
+        type: "AUTHORITY_CONTRADICTION",
+        subtype: "INTENT_PRECEDENCE_VIOLATION",
+        low_path: v.lowIntent,
+        low_intent: v.lowIntentType,
+        high_path: v.highIntent,
+        high_intent: v.highIntentType,
         message: `${v.lowIntentType} (${v.lowIntent}) ranked above ${v.highIntentType} (${v.highIntent}) without explicit supersedes`,
+        vetoed: vetoed.includes(v.lowIntent),
       });
     }
+  }
+
+  // Evidence contradictions: conflicting claims with no resolution
+  const evidenceStrengths = evidence.map((e) => e.evidence_strength);
+  if (evidenceStrengths.includes("strong") && evidenceStrengths.includes("none")) {
+    contradictions.push({
+      type: "EVIDENCE_CONTRADICTION",
+      subtype: "MIXED_EVIDENCE_STRENGTH",
+      message: "Evidence includes both strong and unsupported sources",
+    });
+  }
+
+  // Scope contradictions: local and baseline sources disagree
+  const hasLocal = evidence.some((e) => e.origin === "local");
+  const hasBaseline = evidence.some((e) => e.origin === "baseline");
+  if (hasLocal && hasBaseline && evidence.length >= 2) {
+    // Check if they have conflicting intents
+    const localIntents = evidence.filter((e) => e.origin === "local").map((e) => e.intent);
+    const baselineIntents = evidence.filter((e) => e.origin === "baseline").map((e) => e.intent);
+    if (
+      localIntents.some((i) => i === "workaround" || i === "experiment") &&
+      baselineIntents.some((i) => i === "promoted" || i === "pattern")
+    ) {
+      contradictions.push({
+        type: "SCOPE_CONTRADICTION",
+        subtype: "LOCAL_BASELINE_INTENT_MISMATCH",
+        message: "Local workaround/experiment may conflict with baseline promoted/pattern",
+      });
+    }
+  }
+
+  // Determine arbitration outcome (per canon/weighted-relevance-and-arbitration.md)
+  // prefer | defer | escalate | propose_promotion
+  let arbitrationOutcome;
+  if (status === "INSUFFICIENT_EVIDENCE") {
+    arbitrationOutcome = "defer";
+  } else if (contradictions.length > 0 && !isConfident) {
+    arbitrationOutcome = "escalate";
+  } else if (contradictions.length > 0 && isConfident) {
+    arbitrationOutcome = "propose_promotion"; // Repeated pattern = promotion candidate
+  } else if (isConfident) {
+    arbitrationOutcome = "prefer";
+  } else {
+    arbitrationOutcome = "defer";
   }
 
   // Build read_next
@@ -321,12 +455,12 @@ export async function runLibrarian(options) {
   const rulesFired = [];
   rulesFired.push("SUPPORTED_REQUIRES_EVIDENCE_BULLETS");
   rulesFired.push("QUOTE_LENGTH_ENFORCED");
-  rulesFired.push("INTENT_GATED_PRECEDENCE"); // Always active
+  rulesFired.push("INTENT_GATED_PRECEDENCE"); // Always active as hard veto
 
   if (status === "INSUFFICIENT_EVIDENCE") {
     rulesFired.push("INSUFFICIENT_EVIDENCE_RETURNED");
   }
-  if (status === "SUPPORTED_ADVISORY") {
+  if (advisory) {
     rulesFired.push("LOW_CONFIDENCE_ADVISORY");
   }
   if (Object.keys(suppressed).length > 0) {
@@ -334,6 +468,15 @@ export async function runLibrarian(options) {
   }
   if (precedenceViolations.length > 0) {
     rulesFired.push("INTENT_PRECEDENCE_VIOLATED");
+  }
+  if (vetoed.length > 0) {
+    rulesFired.push("INTENT_PRECEDENCE_VETOED"); // Items were actually demoted
+  }
+  if (arbitrationOutcome === "escalate") {
+    rulesFired.push("ESCALATION_REQUIRED");
+  }
+  if (arbitrationOutcome === "propose_promotion") {
+    rulesFired.push("PROMOTION_CANDIDATE");
   }
   if (!baselineAvailable) {
     rulesFired.push("BASELINE_UNAVAILABLE");
@@ -358,17 +501,21 @@ export async function runLibrarian(options) {
 
   const result = {
     status,
+    advisory, // Separate from status to prevent "basically supported" laundering
     answer,
-    confidence: Math.round(confidence * 100) / 100,
+    confidence,
+    confidence_factors: confidenceFactors, // Explainable components
     is_confident: isConfident,
     evidence,
     sources,
     read_next: readNext.slice(0, 2),
     // Arbitration data (per canon/weighted-relevance-and-arbitration.md section 2.3)
     arbitration: {
+      outcome: arbitrationOutcome, // prefer | defer | escalate | propose_promotion
       candidates_considered: candidatesConsidered,
-      contradictions,
+      contradictions, // Typed: AUTHORITY_, EVIDENCE_, SCOPE_, TEMPORAL_, STATE_
       precedence_violations: precedenceViolations,
+      vetoed, // Items that were demoted by hard veto
     },
     debug: {
       tool: "librarian",
