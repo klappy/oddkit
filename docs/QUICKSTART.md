@@ -2,6 +2,29 @@
 
 Get running in 60 seconds.
 
+## What's in the Box
+
+oddkit has three layers:
+
+| Layer      | What It Is                                                | Setup                       |
+| ---------- | --------------------------------------------------------- | --------------------------- |
+| **CLI**    | Command-line tools (`oddkit librarian`, `validate`, etc.) | `npx oddkit <command>`      |
+| **MCP**    | Model Context Protocol server for IDE integration         | `npx oddkit init`           |
+| **Agents** | Subagent prompts (Epistemic Guide, Scribe)                | Copy to `~/.cursor/agents/` |
+
+**New to ODD?** Start with [ODD Agents](getting-started/agents.md) to understand the system.
+
+---
+
+## Quick Links
+
+- [Agents Guide](getting-started/agents.md) — Set up Epistemic Guide + Scribe
+- [Ledger Guide](getting-started/ledger.md) — Capture learnings and decisions
+- [MCP.md](MCP.md) — Full MCP integration details
+- [klappy.dev/odd](https://klappy.dev/odd) — ODD methodology docs
+
+---
+
 ## Cursor Setup
 
 To use oddkit as an MCP server in Cursor (or Claude Code / Codex), see **[docs/MCP.md](MCP.md)**. You can run oddkit from anywhere via:

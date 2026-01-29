@@ -2,6 +2,16 @@
 
 Agent-first CLI for ODD-governed repos. Portable Librarian + Validation with baseline knowledge.
 
+## Documentation
+
+| Doc                                                               | What It Covers                  |
+| ----------------------------------------------------------------- | ------------------------------- |
+| [**System Overview**](docs/getting-started/odd-agents-and-mcp.md) | How all the pieces fit together |
+| [**Agents Guide**](docs/getting-started/agents.md)                | Set up Epistemic Guide + Scribe |
+| [**Ledger Guide**](docs/getting-started/ledger.md)                | Learnings and decisions capture |
+| [**QUICKSTART**](docs/QUICKSTART.md)                              | CLI and MCP setup in 60 seconds |
+| [**MCP Reference**](docs/MCP.md)                                  | Full MCP integration details    |
+
 ## Quick Start
 
 ```bash

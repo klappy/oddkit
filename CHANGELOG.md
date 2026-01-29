@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-29
+
 ### Added
+
+- **ODD Agents documentation** — Comprehensive setup guide for Epistemic Guide and Scribe subagents:
+  - `docs/getting-started/agents.md` — Full agent setup and usage guide
+  - `docs/getting-started/ledger.md` — Learnings and decisions capture guide
+  - `docs/getting-started/odd-agents-and-mcp.md` — System overview showing how all pieces connect
+
+- **Ledger system** — Per-project memory for learnings and decisions:
+  - `odd/ledger/learnings.jsonl` — Append-only ledger for discoveries
+  - `odd/ledger/decisions.jsonl` — Append-only ledger for choices with rationale
+  - `odd/ledger/README.md` — Quick reference for ledger format and schemas
+  - Seeded with initial entries for canon-target-first freshness and system decisions
 
 - **Policy tools** — New MCP tools for canon target freshness checks:
   - `oddkit_policy_version` — Returns oddkit version and authoritative canon target (commit/mode)
@@ -16,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New module `src/policy/docFetch.js` — Fetches docs by URI with content hash
   - New test `tests/policy-tools.test.sh`
 
-- **Docs pointer** — `docs/getting-started/odd-agents-and-mcp.md` now points to canonical orientation doc at klappy.dev (`klappy://odd/getting-started/agents-and-mcp`)
+### Changed
+
+- **README.md** — Added documentation table linking to all guides
+- **QUICKSTART.md** — Added "What's in the Box" section explaining the three layers (CLI, MCP, Agents)
 
 ## [0.3.0] - 2026-01-29
 
