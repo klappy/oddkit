@@ -51,14 +51,14 @@ oddkit explain --last --format json
 
 `oddkit explain --last` renders the last result into these sections:
 
-| Section | Purpose |
-| ------- | ------- |
-| **Result** | Tool + status/verdict + (optional) short answer |
-| **Why this happened** | Rule codes that fired, mapped to human meaning |
-| **What to do next** | Actionable suggestions based on the outcome |
-| **Evidence used** | Quotes with citations and origin (local vs baseline) |
-| **Read next** | Navigation pointers to deepen understanding |
-| **Debug** | Repo root, baseline ref, timestamp, policy intent |
+| Section               | Purpose                                              |
+| --------------------- | ---------------------------------------------------- |
+| **Result**            | Tool + status/verdict + (optional) short answer      |
+| **Why this happened** | Rule codes that fired, mapped to human meaning       |
+| **What to do next**   | Actionable suggestions based on the outcome          |
+| **Evidence used**     | Quotes with citations and origin (local vs baseline) |
+| **Read next**         | Navigation pointers to deepen understanding          |
+| **Debug**             | Repo root, baseline ref, timestamp, policy intent    |
 
 ---
 

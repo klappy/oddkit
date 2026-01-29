@@ -1,9 +1,9 @@
-import { buildIndex, loadIndex, saveIndex } from '../index/buildIndex.js';
-import { ensureBaselineRepo, getBaselineRef } from '../baseline/ensureBaselineRepo.js';
-import { applySupersedes } from '../resolve/applySupersedes.js';
-import { tokenize, scoreDocument, findBestHeading } from '../utils/scoring.js';
-import { extractQuote, formatCitation } from '../utils/slicing.js';
-import { writeLast } from '../state/last.js';
+import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
+import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRepo.js";
+import { applySupersedes } from "../resolve/applySupersedes.js";
+import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
+import { extractQuote, formatCitation } from "../utils/slicing.js";
+import { writeLast } from "../state/last.js";
 
 const MIN_EVIDENCE_BULLETS = 2;
 const MAX_RESULTS = 5;
@@ -21,12 +21,12 @@ function detectPolicyIntent(query) {
   const weakPatterns = [/\bmust\b/i, /\bshould\b/i, /\brequire/i, /\beverify/i, /\bevidence\b/i];
 
   if (strongPatterns.some((p) => p.test(query))) {
-    return 'strong';
+    return "strong";
   }
   if (weakPatterns.some((p) => p.test(query))) {
-    return 'weak';
+    return "weak";
   }
-  return 'none';
+  return "none";
 }
 
 /**
@@ -38,16 +38,47 @@ export async function runLibrarian(options) {
   // Ensure baseline
   const baseline = await ensureBaselineRepo();
   const baselineRef = getBaselineRef();
+  const baselineAvailable = !!baseline.root;
 
-  // Load or build index
+  // Load or build index with strict baseline gating
   let index = loadIndex(repoRoot);
+  let indexRebuildReason = null;
+
+  // Check if cached index is valid for current baseline state
+  if (index) {
+    const hasBaselineDocs = index.documents.some((d) => d.origin === "baseline");
+
+    if (!baselineAvailable && hasBaselineDocs) {
+      // Cached index has baseline docs but baseline is now unavailable
+      // Must rebuild with local-only
+      index = null;
+      indexRebuildReason = "baseline_now_unavailable";
+    } else if (baselineAvailable && !hasBaselineDocs) {
+      // Cached index is local-only but baseline is now available
+      // Rebuild to include baseline
+      index = null;
+      indexRebuildReason = "baseline_now_available";
+    }
+  }
+
   if (!index) {
-    index = await buildIndex(repoRoot, baseline.root);
+    // Build fresh index - only include baseline if available
+    index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
     saveIndex(index, repoRoot);
   }
 
   // Apply supersedes
   const { filtered: docs, suppressed } = applySupersedes(index.documents);
+
+  // INVARIANT: If baseline unavailable, no docs should have origin:"baseline"
+  if (!baselineAvailable) {
+    const baselineDocsPresent = docs.some((d) => d.origin === "baseline");
+    if (baselineDocsPresent) {
+      throw new Error(
+        "Invariant violated: baseline documents present in index while baseline is unavailable"
+      );
+    }
+  }
 
   // Tokenize query
   const queryTokens = tokenize(query);
@@ -62,18 +93,37 @@ export async function runLibrarian(options) {
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_RESULTS);
 
-  // Build evidence bullets
+  // Build evidence bullets with rejection tracking
   const evidence = [];
   const sources = [];
+  const rejectionReasons = {
+    NO_HEADING: 0,
+    TOO_SHORT: 0,
+    DUPLICATE_SOURCE: 0,
+  };
+  const seenPaths = new Set();
 
   for (const { doc } of scored) {
     const heading = findBestHeading(doc, queryTokens);
-    if (!heading) continue;
+    if (!heading) {
+      rejectionReasons.NO_HEADING++;
+      continue;
+    }
 
     const quote = extractQuote(doc, heading);
-    if (!quote || quote.length < 20) continue;
+    if (!quote || quote.length < 20) {
+      rejectionReasons.TOO_SHORT++;
+      continue;
+    }
 
     const citation = formatCitation(doc, heading);
+
+    // Check for duplicate source (same path, different origin)
+    if (seenPaths.has(doc.path)) {
+      rejectionReasons.DUPLICATE_SOURCE++;
+      continue;
+    }
+    seenPaths.add(doc.path);
 
     evidence.push({
       quote,
@@ -83,6 +133,14 @@ export async function runLibrarian(options) {
 
     sources.push(citation);
   }
+
+  // Calculate evidence stats
+  const evidenceAcceptedCount = evidence.length;
+  const evidenceRejectedCount = Object.values(rejectionReasons).reduce((a, b) => a + b, 0);
+  // Filter out zero counts
+  const evidenceRejectedReasons = Object.fromEntries(
+    Object.entries(rejectionReasons).filter(([, v]) => v > 0)
+  );
 
   // Determine status
   const status = evidence.length >= MIN_EVIDENCE_BULLETS ? "SUPPORTED" : "INSUFFICIENT_EVIDENCE";
@@ -124,26 +182,34 @@ export async function runLibrarian(options) {
 
   // Build rules fired
   const rulesFired = [];
-  rulesFired.push('SUPPORTED_REQUIRES_EVIDENCE_BULLETS');
-  rulesFired.push('QUOTE_LENGTH_ENFORCED');
+  rulesFired.push("SUPPORTED_REQUIRES_EVIDENCE_BULLETS");
+  rulesFired.push("QUOTE_LENGTH_ENFORCED");
 
-  if (status === 'INSUFFICIENT_EVIDENCE') {
-    rulesFired.push('INSUFFICIENT_EVIDENCE_RETURNED');
+  if (status === "INSUFFICIENT_EVIDENCE") {
+    rulesFired.push("INSUFFICIENT_EVIDENCE_RETURNED");
   }
   if (Object.keys(suppressed).length > 0) {
-    rulesFired.push('SUPERSEDES_APPLIED');
+    rulesFired.push("SUPERSEDES_APPLIED");
   }
-  if (!baseline.root) {
-    rulesFired.push('BASELINE_UNAVAILABLE');
+  if (!baselineAvailable) {
+    rulesFired.push("BASELINE_UNAVAILABLE");
+
+    // INVARIANT: No evidence should have baseline origin when baseline unavailable
+    const baselineEvidence = evidence.filter((e) => e.origin === "baseline");
+    if (baselineEvidence.length > 0) {
+      throw new Error(
+        `Invariant violated: ${baselineEvidence.length} evidence items have origin:"baseline" while baseline is unavailable`
+      );
+    }
   } else {
-    rulesFired.push('BASELINE_LOADED');
+    rulesFired.push("BASELINE_LOADED");
   }
-  if (policyIntent === 'strong') {
-    rulesFired.push('POLICY_INTENT_STRONG');
-  } else if (policyIntent === 'weak') {
-    rulesFired.push('POLICY_INTENT_WEAK');
+  if (policyIntent === "strong") {
+    rulesFired.push("POLICY_INTENT_STRONG");
+  } else if (policyIntent === "weak") {
+    rulesFired.push("POLICY_INTENT_WEAK");
   } else {
-    rulesFired.push('POLICY_INTENT_NONE');
+    rulesFired.push("POLICY_INTENT_NONE");
   }
 
   const result = {
@@ -153,15 +219,20 @@ export async function runLibrarian(options) {
     sources,
     read_next: readNext.slice(0, 2),
     debug: {
-      tool: 'librarian',
+      tool: "librarian",
       timestamp: new Date().toISOString(),
       repo_root: repoRoot,
       query,
       queryTokens,
       baseline_ref: baselineRef,
       baseline_ref_source: baseline.refSource,
-      baseline_available: !!baseline.root,
+      baseline_available: baselineAvailable,
+      baseline_cache_used: !indexRebuildReason,
+      index_rebuild_reason: indexRebuildReason,
       docs_considered: scored.length,
+      evidence_accepted_count: evidenceAcceptedCount,
+      evidence_rejected_count: evidenceRejectedCount,
+      evidence_rejected_reasons: evidenceRejectedReasons,
       policy_intent: policyIntent,
       suppressed: Object.keys(suppressed).length > 0 ? suppressed : {},
       rules_fired: rulesFired,
