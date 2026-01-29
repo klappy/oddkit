@@ -2,19 +2,85 @@
 
 oddkit exposes an MCP (Model Context Protocol) server that allows Cursor, Claude Code, and other MCP-compatible hosts to use oddkit as a tool.
 
+## Quick Setup with `oddkit init`
+
+The easiest way to set up oddkit MCP:
+
+```bash
+# Global Cursor config (recommended)
+npx oddkit init
+
+# Project-local config
+npx oddkit init --project
+
+# Just print the JSON snippet (no file write)
+npx oddkit init --print
+```
+
+This writes the following to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--project`):
+
+```json
+{
+  "mcpServers": {
+    "oddkit": {
+      "command": "npx",
+      "args": ["oddkit-mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+The `init` command safely merges with existing config—it won't overwrite other MCP servers.
+
 ## Available Tools
 
-| Tool | Description |
-|------|-------------|
-| `oddkit_librarian` | Ask a policy/lookup question against ODD-governed documentation |
-| `oddkit_validate` | Validate a completion claim with verdict and gaps |
-| `oddkit_explain` | Explain the last oddkit result |
+| Tool                 | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
+| `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and routes to the right tool |
+| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation            |
+| `oddkit_validate`    | Validate a completion claim with verdict and gaps                          |
+| `oddkit_explain`     | Explain the last oddkit result                                             |
 
-## Setup for Cursor
+## Recommended: Use `oddkit_orchestrate`
 
-### Option 1: Add to MCP settings (recommended)
+For most use cases, call `oddkit_orchestrate` with the user message. It will automatically route to:
 
-Add to your Cursor MCP configuration:
+- **librarian** — for questions ("What is the definition of done?")
+- **validate** — for completion claims ("Done with feature X")
+- **explain** — for explain requests ("explain last")
+
+Example:
+
+```json
+{
+  "name": "oddkit_orchestrate",
+  "arguments": {
+    "message": "Done with the UI update. Screenshot: ui.png",
+    "repoRoot": "/path/to/repo"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "action": "validate",
+  "result": {
+    "verdict": "NEEDS_ARTIFACTS",
+    "claims": ["Done with the UI update"],
+    "gaps": ["recording"]
+  },
+  "debug": {
+    "reason": "COMPLETION_CLAIM"
+  }
+}
+```
+
+## Manual Setup (without init)
+
+### For Cursor
 
 **macOS/Linux:** `~/.cursor/mcp.json`
 **Windows:** `%USERPROFILE%\.cursor\mcp.json`
@@ -31,22 +97,20 @@ Add to your Cursor MCP configuration:
 }
 ```
 
-Or if you have oddkit installed globally:
+### For Claude Code
 
 ```json
 {
   "mcpServers": {
     "oddkit": {
-      "command": "oddkit-mcp",
-      "env": {}
+      "command": "npx",
+      "args": ["oddkit-mcp"]
     }
   }
 }
 ```
 
-### Option 2: From local clone
-
-If you've cloned oddkit locally:
+### From local clone
 
 ```json
 {
@@ -55,21 +119,6 @@ If you've cloned oddkit locally:
       "command": "node",
       "args": ["/path/to/oddkit/src/mcp/server.js"],
       "env": {}
-    }
-  }
-}
-```
-
-## Setup for Claude Code
-
-Add to your Claude Code MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "oddkit": {
-      "command": "npx",
-      "args": ["oddkit-mcp"]
     }
   }
 }
@@ -108,9 +157,7 @@ Response:
         "origin": "baseline"
       }
     ],
-    "read_next": [
-      { "path": "canon/definition-of-done.md", "reason": "Primary source" }
-    ]
+    "read_next": [{ "path": "canon/definition-of-done.md", "reason": "Primary source" }]
   }
 }
 ```
@@ -185,10 +232,10 @@ echo "Done with the UI update" | oddkit tool validate -m @stdin
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `ODDKIT_BASELINE` | Override baseline repo (path or git URL) |
-| `ODDKIT_BASELINE_REF` | Pin baseline to specific branch/tag |
+| Variable              | Description                              |
+| --------------------- | ---------------------------------------- |
+| `ODDKIT_BASELINE`     | Override baseline repo (path or git URL) |
+| `ODDKIT_BASELINE_REF` | Pin baseline to specific branch/tag      |
 
 ## Output Contract
 
@@ -221,11 +268,11 @@ On error:
 
 ### Exit Codes (CLI)
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success (even if verdict is NEEDS_ARTIFACTS) |
-| 2 | Invalid arguments |
-| 3 | Runtime error |
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| 0    | Success (even if verdict is NEEDS_ARTIFACTS) |
+| 2    | Invalid arguments                            |
+| 3    | Runtime error                                |
 
 Note: In `tooljson` mode, errors are returned in the JSON envelope with exit code 0, since the tool executed successfully even if the operation failed.
 

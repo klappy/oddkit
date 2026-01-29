@@ -2,7 +2,38 @@
 
 Get running in 60 seconds.
 
-## Installation
+## Use in Cursor (recommended)
+
+### Option A: One command (global)
+
+```bash
+npx oddkit init
+# Restart Cursor if prompted
+```
+
+This writes MCP config to `~/.cursor/mcp.json` and wires oddkit as a tool.
+
+### Option B: Project-local config
+
+```bash
+npx oddkit init --project
+```
+
+This writes to `<repo>/.cursor/mcp.json` instead.
+
+### Verify
+
+After init, Cursor should show oddkit tools. You can also verify from CLI:
+
+```bash
+npx oddkit librarian -q "What is epistemic challenge?" -r .
+```
+
+If Cursor shows the oddkit tools (`oddkit_orchestrate`, `oddkit_librarian`, etc.), you're wired.
+
+---
+
+## Manual Installation
 
 ### Option A: Run via npx from GitHub (no install)
 

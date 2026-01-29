@@ -2,30 +2,28 @@
 
 /**
  * oddkit MCP Server
- * 
+ *
  * Exposes oddkit as MCP tools for Cursor, Claude Code, and other MCP-compatible hosts.
- * 
+ *
  * Tools:
  *   - oddkit_librarian: Ask a policy/lookup question
  *   - oddkit_validate: Validate a completion claim
  *   - oddkit_explain: Explain the last oddkit result
- * 
+ *
  * Usage:
  *   node src/mcp/server.js
- * 
+ *
  * Or via npx:
  *   npx oddkit mcp
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { runOrchestrate } from "./orchestrate.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -69,6 +67,31 @@ function runOddkit(args) {
  * Tool definitions
  */
 const TOOLS = [
+  {
+    name: "oddkit_orchestrate",
+    description:
+      "Smart router for oddkit - automatically detects intent and routes to librarian (questions), validate (completion claims), or explain (explain requests). Recommended entrypoint for agents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description:
+            "The user message. Orchestrate will detect if it's a question, completion claim, or explain request.",
+        },
+        repoRoot: {
+          type: "string",
+          description: "Path to the repository root. Defaults to current working directory.",
+        },
+        baseline: {
+          type: "string",
+          description:
+            "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline.",
+        },
+      },
+      required: ["message"],
+    },
+  },
   {
     name: "oddkit_librarian",
     description:
@@ -162,6 +185,42 @@ async function main() {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case "oddkit_orchestrate": {
+        const { message, repoRoot, baseline } = args;
+        try {
+          const result = await runOrchestrate({
+            message,
+            repoRoot: repoRoot || process.cwd(),
+            baseline,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "error",
+                    result: null,
+                    debug: { error: err.message },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
       case "oddkit_librarian": {
         const { query, repoRoot, baseline } = args;
         let cmd = `tool librarian -q "${query.replace(/"/g, '\\"')}"`;

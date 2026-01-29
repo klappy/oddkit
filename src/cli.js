@@ -4,6 +4,7 @@ import { runLibrarian } from "./tasks/librarian.js";
 import { runValidate } from "./tasks/validate.js";
 import { runIndex } from "./tasks/indexTask.js";
 import { explainLast } from "./explain/explain-last.js";
+import { runInit, getOddkitMcpSnippet } from "./cli/init.js";
 
 const SCHEMA_VERSION = "1.0";
 
@@ -229,7 +230,7 @@ export function run() {
       try {
         // For explain, get JSON result always, then format
         const result = explainLast({ format: "json" });
-        
+
         if (format === "tooljson") {
           outputResult("explain", result, format, quiet);
         } else if (format === "json") {
@@ -243,6 +244,62 @@ export function run() {
       } catch (err) {
         outputError("explain", err, format, quiet);
         process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
+      }
+    });
+
+  // Init command - setup MCP configuration
+  program
+    .command("init")
+    .description("Set up MCP configuration for Cursor")
+    .option("--project", "Write to project-local config (<repo>/.cursor/mcp.json)")
+    .option("--cursor", "Write to global Cursor config (default)")
+    .option("--print", "Print JSON snippet only (no file writes)")
+    .option("--force", "Replace existing oddkit entry if different")
+    .option("-r, --repo <path>", "Repository root path (for --project)")
+    .action(async (options, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const quiet = globalOpts.quiet;
+
+      try {
+        const result = await runInit(options);
+
+        if (options.print) {
+          // Print mode: just output the JSON snippet
+          console.log(JSON.stringify(result.snippet, null, 2));
+          process.exit(EXIT_OK);
+          return;
+        }
+
+        if (!result.success) {
+          if (result.action === "conflict") {
+            if (!quiet) {
+              console.error(result.message);
+            }
+            process.exit(EXIT_BAD_ARGS);
+          } else {
+            if (!quiet) {
+              console.error("Init error:", result.error || result.message);
+            }
+            process.exit(EXIT_RUNTIME_ERROR);
+          }
+          return;
+        }
+
+        // Success
+        if (!quiet) {
+          if (result.action === "wrote") {
+            const typeLabel = result.targetType === "project" ? "project" : "Cursor";
+            console.log(`Wrote ${typeLabel} MCP config: ${result.targetPath}`);
+          } else if (result.action === "unchanged") {
+            console.log(result.message);
+          }
+        }
+        process.exit(EXIT_OK);
+      } catch (err) {
+        if (!quiet) {
+          console.error("Init error:", err.message);
+        }
+        process.exit(EXIT_RUNTIME_ERROR);
       }
     });
 
