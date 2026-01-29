@@ -636,9 +636,18 @@ function calculateConfidence(scored, evidence, contradictions = []) {
 
 /**
  * Run the librarian command
+ * Per CHARTER.md: epistemic context shapes retrieval as soft bias, not hard filter
+ *
+ * @param {Object} options
+ * @param {string} options.query - The query to answer
+ * @param {string} options.repo - Repository root path
+ * @param {string} [options.baseline] - Baseline override
+ * @param {Object} [options.epistemic] - Epistemic context from upstream
+ * @param {string} [options.epistemic.mode_ref] - Canon-derived mode URI
+ * @param {string} [options.epistemic.confidence] - Caller-declared confidence
  */
 export async function runLibrarian(options) {
-  const { query, repo: repoRoot, baseline: baselineOverride } = options;
+  const { query, repo: repoRoot, baseline: baselineOverride, epistemic } = options;
 
   // Ensure baseline (CLI flag overrides env var overrides default)
   const baseline = await ensureBaselineRepo(baselineOverride);
@@ -701,8 +710,9 @@ export async function runLibrarian(options) {
   const queryTokens = tokenize(query);
 
   // Score all documents (returns { score, signals })
+  // Per CHARTER.md: epistemic context shapes retrieval as soft bias
   const allScored = docs.map((doc) => {
-    const { score, signals } = scoreDocument(doc, queryTokens);
+    const { score, signals } = scoreDocument(doc, queryTokens, epistemic);
     return { doc, score, signals };
   });
 
@@ -1195,6 +1205,20 @@ export async function runLibrarian(options) {
       policy_intent: policyIntent,
       suppressed: Object.keys(suppressed).length > 0 ? suppressed : {},
       rules_fired: rulesFired,
+      // Epistemic retrieval policy (per CHARTER.md: observability before trust)
+      retrieval_policy: epistemic
+        ? {
+            mode_ref: epistemic.mode_ref,
+            confidence: epistemic.confidence,
+            boosts_applied: finalScored
+              .filter((s) => s.signals.epistemic_reason)
+              .map((s) => ({
+                path: s.doc.path,
+                reason: s.signals.epistemic_reason,
+                multiplier: s.signals.epistemic_multiplier,
+              })),
+          }
+        : null,
       // Reference to governing doctrine
       governing_canon: "canon/weighted-relevance-and-arbitration.md",
       notes: [],

@@ -323,6 +323,7 @@ export async function runOrchestrate(options) {
           query: message || "help",
           repo: repoRoot || process.cwd(),
           baseline,
+          epistemic, // Per CHARTER.md: pass epistemic context for retrieval bias
         });
         result.result = taskResult;
 
