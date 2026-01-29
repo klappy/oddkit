@@ -1,0 +1,6 @@
+node_modules/
+.oddkit/
+*.log
+.DS_Store
+.git/
+tests/
