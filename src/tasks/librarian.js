@@ -11,6 +11,32 @@ const MIN_CONFIDENCE_THRESHOLD = 0.6; // Below this, result is advisory
 const EXCESSIVE_DUPLICATE_THRESHOLD = 0.25; // >25% duplicates is a smell
 
 /**
+ * Compute drift magnitude between two content versions
+ * Returns: small | medium | large
+ *
+ * Based on content length difference as proxy for semantic change.
+ * Small drift = likely formatting/typo
+ * Large drift = potentially new rule masquerading as same URI
+ */
+function computeDriftMagnitude(localDoc, baselineDoc) {
+  const localLen = localDoc?.contentLength || 0;
+  const baselineLen = baselineDoc?.contentLength || 0;
+
+  if (localLen === 0 || baselineLen === 0) {
+    return "large"; // One is missing/empty = major change
+  }
+
+  // Compute relative difference
+  const diff = Math.abs(localLen - baselineLen);
+  const avgLen = (localLen + baselineLen) / 2;
+  const ratio = diff / avgLen;
+
+  if (ratio < 0.1) return "small"; // <10% change
+  if (ratio < 0.3) return "medium"; // 10-30% change
+  return "large"; // >30% change
+}
+
+/**
  * Compute candidate identity key for dedup
  *
  * Identity key rules (per user critique: path-only is unsafe across repos):
@@ -84,15 +110,22 @@ function deduplicateCandidates(docs) {
             // Different origins (local vs baseline) = DRIFT (expected, not an error)
             const localDoc = groupDocs.find((d) => d.origin === "local");
             const baselineDoc = groupDocs.find((d) => d.origin === "baseline");
+            const magnitude = computeDriftMagnitude(localDoc, baselineDoc);
+            const isGoverning =
+              localDoc?.authority_band === "governing" ||
+              baselineDoc?.authority_band === "governing";
+
             drifts.push({
               uri: key,
               local: localDoc
-                ? { path: localDoc.path, hash: localDoc.content_hash }
+                ? { path: localDoc.path, hash: localDoc.content_hash, length: localDoc.contentLength }
                 : null,
               baseline: baselineDoc
-                ? { path: baselineDoc.path, hash: baselineDoc.content_hash }
+                ? { path: baselineDoc.path, hash: baselineDoc.content_hash, length: baselineDoc.contentLength }
                 : null,
-              message: `URI '${key}' has local/baseline version drift (expected if local is ahead)`,
+              magnitude, // small | medium | large
+              isGoverning,
+              message: `URI '${key}' has ${magnitude} drift${magnitude === "large" ? " (review recommended)" : ""}`,
             });
           } else {
             // SAME origin but different content = TRUE COLLISION (metadata error)
@@ -576,16 +609,34 @@ export async function runLibrarian(options) {
     }
   }
 
-  // URI_DRIFT: Same URI, DIFFERENT origins, different content (expected evolution - low severity)
+  // URI_DRIFT: Same URI, DIFFERENT origins, different content (expected evolution)
   // This is normal when local is ahead of baseline
+  // Severity depends on magnitude: small=low, medium=low, large=medium (review recommended)
   if (uriDrifts.length > 0) {
+    const largeDrifts = uriDrifts.filter((d) => d.magnitude === "large");
+    const governingLargeDrifts = largeDrifts.filter((d) => d.isGoverning);
+
+    // Elevate severity if large drifts exist, especially for governing docs
+    let severity = "low";
+    if (governingLargeDrifts.length > 0) {
+      severity = "medium"; // Governing + large = worth reviewing
+    } else if (largeDrifts.length > 0) {
+      severity = "low"; // Large but non-governing = still informational
+    }
+
     warnings.push({
       type: "URI_DRIFT",
       count: uriDrifts.length,
       drifts: uriDrifts.slice(0, 10), // Limit for readability
       total_drifts: uriDrifts.length,
-      message: `${uriDrifts.length} URI(s) have local/baseline version drift (using local versions)`,
-      severity: "low", // Expected, not an error
+      by_magnitude: {
+        small: uriDrifts.filter((d) => d.magnitude === "small").length,
+        medium: uriDrifts.filter((d) => d.magnitude === "medium").length,
+        large: largeDrifts.length,
+      },
+      governing_large_drifts: governingLargeDrifts.length,
+      message: `${uriDrifts.length} URI(s) have version drift (${largeDrifts.length} large${governingLargeDrifts.length > 0 ? `, ${governingLargeDrifts.length} governing` : ""})`,
+      severity,
     });
   }
 
@@ -612,18 +663,28 @@ export async function runLibrarian(options) {
     });
   }
 
-  // MISSING_URI_FOR_POLICY_DOC: Governing docs should have URI for stable identity
-  // If identity changes every time content changes, doc can't be tracked over time
-  const governingWithoutUri = docs.filter(
-    (d) => d.authority_band === "governing" && !d.uri && d.origin === "local",
-  );
-  if (governingWithoutUri.length > 0) {
+  // MISSING_URI_FOR_POLICY_DOC: Policy docs should have URI for stable identity
+  // More precise than just "governing folder" - check actual policy signals:
+  // - authority_band: governing
+  // - intent: promoted or pattern (durable intents need stable identity)
+  // - evidence: strong or medium (evidence-backed docs need tracking)
+  const isPolicyDoc = (d) => {
+    if (d.uri) return false; // Already has URI
+    if (d.origin !== "local") return false; // Only warn for local docs
+    // Check policy signals
+    if (d.authority_band === "governing") return true;
+    if (d.intent === "promoted" || d.intent === "pattern") return true;
+    if (d.evidence === "strong" || d.evidence === "medium") return true;
+    return false;
+  };
+  const policyDocsWithoutUri = docs.filter(isPolicyDoc);
+  if (policyDocsWithoutUri.length > 0) {
     warnings.push({
       type: "MISSING_URI_FOR_POLICY_DOC",
-      count: governingWithoutUri.length,
-      paths: governingWithoutUri.slice(0, 5).map((d) => d.path),
-      total: governingWithoutUri.length,
-      message: `${governingWithoutUri.length} governing doc(s) lack URI. Add uri frontmatter to stabilize identity.`,
+      count: policyDocsWithoutUri.length,
+      paths: policyDocsWithoutUri.slice(0, 5).map((d) => d.path),
+      total: policyDocsWithoutUri.length,
+      message: `${policyDocsWithoutUri.length} policy doc(s) lack URI. Add uri frontmatter to stabilize identity.`,
       severity: "medium", // Smell, not error
     });
   }
@@ -655,8 +716,13 @@ export async function runLibrarian(options) {
   // Reserve "defer" for actual competing hypotheses (different docs, different claims).
   let arbitrationOutcome;
   const hasRealContradictions = contradictions.length > 0; // True conflicts, not hygiene warnings
+  const hasUriCollision = uriCollisions.length > 0; // Metadata error = must escalate
 
-  if (status === "INSUFFICIENT_EVIDENCE") {
+  if (hasUriCollision) {
+    // URI_COLLISION is a metadata error that MUST be escalated
+    // Cannot confidently prefer when identity is broken
+    arbitrationOutcome = "escalate";
+  } else if (status === "INSUFFICIENT_EVIDENCE") {
     arbitrationOutcome = "defer";
   } else if (hasRealContradictions && !isConfident) {
     arbitrationOutcome = "escalate"; // True conflict + low confidence = need human
@@ -719,8 +785,8 @@ export async function runLibrarian(options) {
   if (uriDrifts.length > 0) {
     rulesFired.push("URI_DRIFT_DETECTED"); // Expected drift: different origins (normal)
   }
-  if (governingWithoutUri.length > 0) {
-    rulesFired.push("MISSING_URI_FOR_POLICY_DOC"); // Governing docs need stable identity
+  if (policyDocsWithoutUri.length > 0) {
+    rulesFired.push("MISSING_URI_FOR_POLICY_DOC"); // Policy docs need stable identity
   }
 
   if (status === "INSUFFICIENT_EVIDENCE") {

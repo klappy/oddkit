@@ -348,8 +348,80 @@ else
   echo "⚠️ Rule not fired (check if collision detection working)"
 fi
 
-# Cleanup fixture directories
+# Cleanup fixture directories D and E
 rm -rf "$FIXTURE_DIR_D" "$FIXTURE_DIR_E"
+
+echo ""
+echo "=========================================="
+echo "TEST F: URI collision (same origin) must escalate"
+echo "=========================================="
+echo ""
+
+# Create fixture with URI collision in same origin (local vs local)
+FIXTURE_DIR_F=$(mktemp -d)
+mkdir -p "$FIXTURE_DIR_F/canon"
+mkdir -p "$FIXTURE_DIR_F/docs"
+
+# Two LOCAL docs with SAME URI but DIFFERENT content and DIFFERENT paths
+cat > "$FIXTURE_DIR_F/canon/auth-rules.md" << 'EOF'
+---
+uri: klappy://test/auth-rules
+title: "Auth Rules (Canon)"
+intent: promoted
+---
+# Auth Rules
+
+This is the CANON version of auth rules.
+All authentication must use MFA.
+EOF
+
+cat > "$FIXTURE_DIR_F/docs/auth-rules.md" << 'EOF'
+---
+uri: klappy://test/auth-rules
+title: "Auth Rules (Docs)"
+intent: operational
+---
+# Auth Rules
+
+This is the DOCS version - DIFFERENT CONTENT.
+Password-only auth is acceptable for internal tools.
+EOF
+
+echo "Created fixture with URI collision: canon/auth-rules.md and docs/auth-rules.md (same URI, different content)"
+
+# Disable baseline
+export ODDKIT_BASELINE_REF="invalid-ref-to-disable"
+node bin/oddkit index -r "$FIXTURE_DIR_F" 2>/dev/null
+
+RESULT_F=$(node bin/oddkit librarian -q "What are the auth rules?" -r "$FIXTURE_DIR_F" 2>/dev/null)
+unset ODDKIT_BASELINE_REF
+
+# Check for URI_COLLISION warning
+if echo "$RESULT_F" | grep -q "URI_COLLISION"; then
+  echo "✅ URI_COLLISION warning detected"
+else
+  echo "❌ FAIL: Expected URI_COLLISION warning"
+fi
+
+# Check arbitration outcome MUST be escalate
+OUTCOME_F=$(echo "$RESULT_F" | grep -o '"outcome":\s*"[^"]*"' | head -1)
+echo "📋 Arbitration outcome: $OUTCOME_F"
+
+if echo "$OUTCOME_F" | grep -q '"escalate"'; then
+  echo "✅ Outcome is escalate (correct for URI collision)"
+else
+  echo "❌ FAIL: Outcome should be escalate for URI collision, got: $OUTCOME_F"
+fi
+
+# Check for URI_COLLISION_DETECTED rule
+if echo "$RESULT_F" | grep -q "URI_COLLISION_DETECTED"; then
+  echo "✅ URI_COLLISION_DETECTED rule fired"
+else
+  echo "⚠️ Rule not fired"
+fi
+
+# Cleanup
+rm -rf "$FIXTURE_DIR_F"
 
 echo ""
 echo "=========================================="
@@ -361,5 +433,6 @@ echo "✅ Test B: Low Confidence Handling - PASSED"
 echo "✅ Test C: Duplicate Handling - PASSED"
 echo "✅ Test D: Path+Hash Identity - PASSED"
 echo "✅ Test E: URI Collision Detection - PASSED"
+echo "✅ Test F: URI Collision Escalation - PASSED"
 echo ""
 echo "🎉 All adversarial tests passed!"

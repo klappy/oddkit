@@ -355,19 +355,45 @@ function renderMarkdown(result) {
       lines.push("");
     }
 
-    // LOW: URI_DRIFT - informational, expected when local is ahead
-    const driftWarning = lowSeverity.find((w) => w.type === "URI_DRIFT");
+    // URI_DRIFT - informational, expected when local is ahead
+    // Can be low or medium severity depending on magnitude
+    const driftWarning = [...lowSeverity, ...mediumSeverity].find((w) => w.type === "URI_DRIFT");
     if (driftWarning) {
-      lines.push("## ℹ️ URI version drift (expected)");
-      lines.push(
-        `*${driftWarning.count} URI(s) have local/baseline version differences. Using local versions.*`,
-      );
+      const icon = driftWarning.severity === "medium" ? "⚠️" : "ℹ️";
+      lines.push(`## ${icon} URI version drift`);
+
+      // Show magnitude breakdown if available
+      if (driftWarning.by_magnitude) {
+        const { small, medium, large } = driftWarning.by_magnitude;
+        lines.push(
+          `*${driftWarning.count} URI(s) drifted: ${small} small, ${medium} medium, ${large} large. Using local versions.*`,
+        );
+      } else {
+        lines.push(
+          `*${driftWarning.count} URI(s) have local/baseline version differences. Using local versions.*`,
+        );
+      }
+
+      if (driftWarning.governing_large_drifts > 0) {
+        lines.push(
+          `*⚠️ ${driftWarning.governing_large_drifts} governing doc(s) have large drift — consider review.*`,
+        );
+      }
       lines.push("");
+
       if (driftWarning.drifts && driftWarning.drifts.length > 0) {
         for (const d of driftWarning.drifts.slice(0, 5)) {
-          lines.push(`- **${d.uri}**`);
-          if (d.local) lines.push(`  - local: \`${d.local.path}\` (${d.local.hash})`);
-          if (d.baseline) lines.push(`  - baseline: \`${d.baseline.path}\` (${d.baseline.hash})`);
+          const magBadge = d.magnitude ? `[${d.magnitude}]` : "";
+          const govBadge = d.isGoverning ? " 🏛️" : "";
+          lines.push(`- **${d.uri}** ${magBadge}${govBadge}`);
+          if (d.local) {
+            const lenInfo = d.local.length ? ` ${d.local.length} chars` : "";
+            lines.push(`  - local: \`${d.local.path}\` (${d.local.hash}${lenInfo})`);
+          }
+          if (d.baseline) {
+            const lenInfo = d.baseline.length ? ` ${d.baseline.length} chars` : "";
+            lines.push(`  - baseline: \`${d.baseline.path}\` (${d.baseline.hash}${lenInfo})`);
+          }
         }
         if (driftWarning.total_drifts > 5) {
           lines.push(`- *...and ${driftWarning.total_drifts - 5} more*`);
