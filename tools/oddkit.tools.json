@@ -1,0 +1,144 @@
+{
+  "name": "oddkit",
+  "version": "0.1.0",
+  "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
+  "tools": [
+    {
+      "name": "oddkit_librarian",
+      "description": "Ask a policy or lookup question against ODD-governed documentation. Returns citations with quotes from governing documents.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The question to ask (e.g., 'What is the definition of done?')"
+          },
+          "repoRoot": {
+            "type": "string",
+            "description": "Path to the repository root. Defaults to current working directory."
+          },
+          "baseline": {
+            "type": "string",
+            "description": "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline."
+          }
+        },
+        "required": ["query"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tool": { "type": "string", "const": "librarian" },
+          "schema_version": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string", "enum": ["SUPPORTED", "INSUFFICIENT_EVIDENCE"] },
+              "advisory": { "type": "boolean" },
+              "answer": { "type": "string" },
+              "confidence": { "type": "number" },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "quote": { "type": "string" },
+                    "citation": { "type": "string" },
+                    "origin": { "type": "string", "enum": ["local", "baseline"] }
+                  }
+                }
+              },
+              "read_next": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" },
+                    "reason": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "oddkit_validate",
+      "description": "Validate a completion claim. Returns verdict (PASS, NEEDS_ARTIFACTS, CLARIFY) with required evidence and gaps.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The completion claim message (e.g., 'Done with the UI update. Screenshot: ui.png')"
+          },
+          "repoRoot": {
+            "type": "string",
+            "description": "Path to the repository root. Defaults to current working directory."
+          },
+          "baseline": {
+            "type": "string",
+            "description": "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline."
+          },
+          "artifacts": {
+            "type": "string",
+            "description": "Path to artifacts JSON file with additional evidence."
+          }
+        },
+        "required": ["message"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tool": { "type": "string", "const": "validate" },
+          "schema_version": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "result": {
+            "type": "object",
+            "properties": {
+              "verdict": { "type": "string", "enum": ["PASS", "NEEDS_ARTIFACTS", "CLARIFY"] },
+              "claims": { "type": "array", "items": { "type": "string" } },
+              "types": { "type": "array", "items": { "type": "string" } },
+              "required_evidence": { "type": "array", "items": { "type": "string" } },
+              "provided_artifacts": { "type": "array", "items": { "type": "string" } },
+              "matched_evidence": { "type": "array", "items": { "type": "string" } },
+              "gaps": { "type": "array", "items": { "type": "string" } },
+              "next_steps": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "oddkit_explain",
+      "description": "Explain the last oddkit result in human-readable format. Shows what happened, why, and what to do next.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tool": { "type": "string", "const": "explain" },
+          "schema_version": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "result": {
+            "type": "object",
+            "properties": {
+              "tool": { "type": "string" },
+              "status": { "type": "string" },
+              "verdict": { "type": "string" },
+              "what_happened": { "type": "string" },
+              "why": { "type": "array", "items": { "type": "string" } },
+              "what_to_do": { "type": "array", "items": { "type": "string" } },
+              "evidence_used": { "type": "array" },
+              "gaps": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

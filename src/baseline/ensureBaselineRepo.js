@@ -22,7 +22,9 @@ function isGitUrl(str) {
  * Check if a string is a local path (absolute or relative)
  */
 function isLocalPath(str) {
-  return str.startsWith("/") || str.startsWith("./") || str.startsWith("../") || str.startsWith("~");
+  return (
+    str.startsWith("/") || str.startsWith("./") || str.startsWith("../") || str.startsWith("~")
+  );
 }
 
 /**
@@ -70,12 +72,12 @@ export function getCacheDir(baselineUrl, ref) {
 
 /**
  * Ensure the baseline repo is available
- * 
+ *
  * Resolution order:
  *   1. cliOverride parameter (from --baseline flag)
  *   2. ODDKIT_BASELINE environment variable
  *   3. Default: https://github.com/klappy/klappy.dev.git
- * 
+ *
  * Returns { root, ref, source, baselineUrl, commitSha } or { root: null, error }
  */
 export async function ensureBaselineRepo(cliOverride = null) {

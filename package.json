@@ -4,7 +4,8 @@
   "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
   "type": "module",
   "bin": {
-    "oddkit": "./bin/oddkit"
+    "oddkit": "./bin/oddkit",
+    "oddkit-mcp": "./src/mcp/server.js"
   },
   "main": "src/cli.js",
   "repository": {
@@ -14,11 +15,14 @@
   "scripts": {
     "test": "bash tests/smoke.sh",
     "test:smoke": "bash tests/smoke.sh",
+    "test:tooljson": "bash tests/tooljson.sh",
+    "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",
     "index": "node bin/oddkit index"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "commander": "^12.0.0",
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3"
@@ -28,7 +32,9 @@
     "agents",
     "cli",
     "documentation",
-    "governance"
+    "governance",
+    "mcp",
+    "tools"
   ],
   "author": "klappy",
   "license": "MIT"
