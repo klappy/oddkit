@@ -102,9 +102,19 @@ export const RULES = {
       "Multiple docs in the SAME origin share the same URI but have different content. This is a metadata error — URIs must be unique identities. Fix the conflicting documents.",
   },
   URI_DRIFT_DETECTED: {
-    title: "URI version drift detected (expected)",
+    title: "URI version drift detected",
     meaning:
-      "Same URI has different content in local vs baseline. This is normal when local is ahead of baseline — using local version. Not an error.",
+      "Same URI has different content in local vs baseline. Volatility is size-based, not semantic. See NORMATIVE_DRIFT for rule changes.",
+  },
+  NORMATIVE_DRIFT_DETECTED: {
+    title: "Normative drift detected (semantic change)",
+    meaning:
+      "Normative language (MUST, MUST NOT, SHOULD, etc.) has changed between versions. This indicates potential rule changes, not just formatting.",
+  },
+  POLARITY_FLIP_DETECTED: {
+    title: "Polarity flip detected (critical)",
+    meaning:
+      "Rule direction has INVERTED (e.g., MUST → MUST NOT). This is a high-severity semantic change that requires review.",
   },
   MISSING_URI_FOR_POLICY_DOC: {
     title: "Governing doc lacks URI",

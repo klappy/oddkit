@@ -11,19 +11,21 @@ const MIN_CONFIDENCE_THRESHOLD = 0.6; // Below this, result is advisory
 const EXCESSIVE_DUPLICATE_THRESHOLD = 0.25; // >25% duplicates is a smell
 
 /**
- * Compute drift magnitude between two content versions
- * Returns: small | medium | large
+ * Compute drift volatility between two content versions
+ * Returns: low | medium | high
  *
- * Based on content length difference as proxy for semantic change.
- * Small drift = likely formatting/typo
- * Large drift = potentially new rule masquerading as same URI
+ * IMPORTANT: This is SIZE-BASED volatility, NOT semantic change.
+ * A 30% char change could be a big example block (low semantic)
+ * or a single MUST → MUST NOT (high semantic, tiny char change).
+ *
+ * Use NORMATIVE_DRIFT for semantic change detection.
  */
-function computeDriftMagnitude(localDoc, baselineDoc) {
+function computeDriftVolatility(localDoc, baselineDoc) {
   const localLen = localDoc?.contentLength || 0;
   const baselineLen = baselineDoc?.contentLength || 0;
 
   if (localLen === 0 || baselineLen === 0) {
-    return "large"; // One is missing/empty = major change
+    return "high"; // One is missing/empty = high volatility
   }
 
   // Compute relative difference
@@ -31,9 +33,76 @@ function computeDriftMagnitude(localDoc, baselineDoc) {
   const avgLen = (localLen + baselineLen) / 2;
   const ratio = diff / avgLen;
 
-  if (ratio < 0.1) return "small"; // <10% change
+  if (ratio < 0.1) return "low"; // <10% change
   if (ratio < 0.3) return "medium"; // 10-30% change
-  return "large"; // >30% change
+  return "high"; // >30% change
+}
+
+/**
+ * Normative tokens that carry policy weight
+ * Changes in these tokens indicate potential rule changes, not just edits
+ */
+const NORMATIVE_TOKENS = {
+  positive: ["MUST", "REQUIRED", "SHALL", "ALWAYS", "MANDATORY"],
+  negative: ["MUST NOT", "MUST NEVER", "SHALL NOT", "NEVER", "FORBIDDEN", "PROHIBITED"],
+  conditional: ["SHOULD", "SHOULD NOT", "MAY", "OPTIONAL", "RECOMMENDED"],
+};
+
+/**
+ * Count normative tokens in content
+ */
+function countNormativeTokens(content) {
+  if (!content) return { positive: 0, negative: 0, conditional: 0 };
+
+  const upper = content.toUpperCase();
+  return {
+    positive: NORMATIVE_TOKENS.positive.reduce((sum, t) => sum + (upper.split(t).length - 1), 0),
+    negative: NORMATIVE_TOKENS.negative.reduce((sum, t) => sum + (upper.split(t).length - 1), 0),
+    conditional: NORMATIVE_TOKENS.conditional.reduce(
+      (sum, t) => sum + (upper.split(t).length - 1),
+      0,
+    ),
+  };
+}
+
+/**
+ * Detect normative drift between two content versions
+ * Returns: { hasNormativeDrift, polarityFlip, details }
+ *
+ * This catches "MUST → MUST NOT" changes that char-delta misses.
+ * A polarity flip (positive→negative or vice versa) is HIGH severity.
+ */
+function detectNormativeDrift(localDoc, baselineDoc) {
+  const localContent = localDoc?.contentPreview || "";
+  const baselineContent = baselineDoc?.contentPreview || "";
+
+  const localCounts = countNormativeTokens(localContent);
+  const baselineCounts = countNormativeTokens(baselineContent);
+
+  // Check for polarity flip: was positive-heavy, now negative-heavy (or vice versa)
+  const localPolarity = localCounts.positive - localCounts.negative;
+  const baselinePolarity = baselineCounts.positive - baselineCounts.negative;
+  const polarityFlip =
+    (localPolarity > 0 && baselinePolarity < 0) || (localPolarity < 0 && baselinePolarity > 0);
+
+  // Check for material change in normative token counts
+  const totalLocalNormative = localCounts.positive + localCounts.negative + localCounts.conditional;
+  const totalBaselineNormative =
+    baselineCounts.positive + baselineCounts.negative + baselineCounts.conditional;
+  const normativeCountChange = Math.abs(totalLocalNormative - totalBaselineNormative);
+
+  // Normative drift if: polarity flip OR significant count change
+  const hasNormativeDrift = polarityFlip || normativeCountChange >= 2;
+
+  return {
+    hasNormativeDrift,
+    polarityFlip,
+    details: {
+      local: localCounts,
+      baseline: baselineCounts,
+      countChange: normativeCountChange,
+    },
+  };
 }
 
 /**
@@ -110,7 +179,8 @@ function deduplicateCandidates(docs) {
             // Different origins (local vs baseline) = DRIFT (expected, not an error)
             const localDoc = groupDocs.find((d) => d.origin === "local");
             const baselineDoc = groupDocs.find((d) => d.origin === "baseline");
-            const magnitude = computeDriftMagnitude(localDoc, baselineDoc);
+            const volatility = computeDriftVolatility(localDoc, baselineDoc);
+            const normative = detectNormativeDrift(localDoc, baselineDoc);
             const isGoverning =
               localDoc?.authority_band === "governing" ||
               baselineDoc?.authority_band === "governing";
@@ -118,14 +188,28 @@ function deduplicateCandidates(docs) {
             drifts.push({
               uri: key,
               local: localDoc
-                ? { path: localDoc.path, hash: localDoc.content_hash, length: localDoc.contentLength }
+                ? {
+                    path: localDoc.path,
+                    hash: localDoc.content_hash,
+                    length: localDoc.contentLength,
+                  }
                 : null,
               baseline: baselineDoc
-                ? { path: baselineDoc.path, hash: baselineDoc.content_hash, length: baselineDoc.contentLength }
+                ? {
+                    path: baselineDoc.path,
+                    hash: baselineDoc.content_hash,
+                    length: baselineDoc.contentLength,
+                  }
                 : null,
-              magnitude, // small | medium | large
+              volatility, // low | medium | high (size-based, NOT semantic)
+              normativeDrift: normative.hasNormativeDrift,
+              polarityFlip: normative.polarityFlip,
               isGoverning,
-              message: `URI '${key}' has ${magnitude} drift${magnitude === "large" ? " (review recommended)" : ""}`,
+              message: normative.polarityFlip
+                ? `URI '${key}' has POLARITY FLIP — normative change detected`
+                : normative.hasNormativeDrift
+                  ? `URI '${key}' has normative drift (rule language changed)`
+                  : `URI '${key}' has ${volatility} volatility drift`,
             });
           } else {
             // SAME origin but different content = TRUE COLLISION (metadata error)
@@ -547,7 +631,8 @@ export async function runLibrarian(options) {
   }
 
   // Advisory flag - separate from status to prevent misuse
-  const advisory = !isConfident;
+  // Also true if URI collision exists (cannot trust result when identity is broken)
+  const advisory = !isConfident || uriCollisions.length > 0;
 
   // Build answer (advisory is a separate flag, not a status)
   let answer;
@@ -595,7 +680,7 @@ export async function runLibrarian(options) {
   const warnings = [];
 
   // URI_COLLISION: Same URI, SAME origin, different content (metadata error - high severity)
-  // This is a TRUE collision that must be fixed
+  // This is a TRUE collision that must be fixed - escalation is REQUIRED
   if (uriCollisions.length > 0) {
     for (const collision of uriCollisions) {
       warnings.push({
@@ -605,38 +690,62 @@ export async function runLibrarian(options) {
         paths: collision.paths,
         message: collision.message,
         severity: "high", // Metadata error, requires fix
+        required_action:
+          "Fix duplicate URI: choose one canonical path, change one URI, or add explicit supersedes",
+        blocks_prefer: true, // Cannot "prefer" when identity is broken
       });
     }
   }
 
   // URI_DRIFT: Same URI, DIFFERENT origins, different content (expected evolution)
-  // This is normal when local is ahead of baseline
-  // Severity depends on magnitude: small=low, medium=low, large=medium (review recommended)
+  // Volatility is SIZE-BASED (low/medium/high), not semantic
+  // NORMATIVE_DRIFT is SEMANTIC (MUST/MUST NOT changes)
   if (uriDrifts.length > 0) {
-    const largeDrifts = uriDrifts.filter((d) => d.magnitude === "large");
-    const governingLargeDrifts = largeDrifts.filter((d) => d.isGoverning);
+    // Separate normative drifts (semantic) from volatility-only drifts (size)
+    const normativeDrifts = uriDrifts.filter((d) => d.normativeDrift);
+    const polarityFlips = normativeDrifts.filter((d) => d.polarityFlip);
+    const governingNormative = normativeDrifts.filter((d) => d.isGoverning);
+    const highVolatility = uriDrifts.filter((d) => d.volatility === "high");
 
-    // Elevate severity if large drifts exist, especially for governing docs
-    let severity = "low";
-    if (governingLargeDrifts.length > 0) {
-      severity = "medium"; // Governing + large = worth reviewing
-    } else if (largeDrifts.length > 0) {
-      severity = "low"; // Large but non-governing = still informational
+    // NORMATIVE_DRIFT warnings (semantic changes) - higher severity
+    if (normativeDrifts.length > 0) {
+      let normativeSeverity = "medium";
+      if (polarityFlips.length > 0) {
+        normativeSeverity = "high"; // Polarity flip = rule inversion
+      } else if (governingNormative.length > 0) {
+        normativeSeverity = "high"; // Governing + normative = critical
+      }
+
+      warnings.push({
+        type: "NORMATIVE_DRIFT",
+        count: normativeDrifts.length,
+        polarity_flips: polarityFlips.length,
+        governing_count: governingNormative.length,
+        drifts: normativeDrifts.slice(0, 5),
+        message:
+          polarityFlips.length > 0
+            ? `${polarityFlips.length} URI(s) have POLARITY FLIP — rule direction changed`
+            : `${normativeDrifts.length} URI(s) have normative drift (MUST/SHOULD language changed)`,
+        severity: normativeSeverity,
+      });
     }
 
+    // URI_DRIFT warnings (volatility-based, size changes)
+    // Severity: low for volatility-only, since it's not semantic
     warnings.push({
       type: "URI_DRIFT",
       count: uriDrifts.length,
       drifts: uriDrifts.slice(0, 10), // Limit for readability
       total_drifts: uriDrifts.length,
-      by_magnitude: {
-        small: uriDrifts.filter((d) => d.magnitude === "small").length,
-        medium: uriDrifts.filter((d) => d.magnitude === "medium").length,
-        large: largeDrifts.length,
+      by_volatility: {
+        low: uriDrifts.filter((d) => d.volatility === "low").length,
+        medium: uriDrifts.filter((d) => d.volatility === "medium").length,
+        high: highVolatility.length,
       },
-      governing_large_drifts: governingLargeDrifts.length,
-      message: `${uriDrifts.length} URI(s) have version drift (${largeDrifts.length} large${governingLargeDrifts.length > 0 ? `, ${governingLargeDrifts.length} governing` : ""})`,
-      severity,
+      normative_drifts: normativeDrifts.length,
+      message: `${uriDrifts.length} URI(s) have version drift (volatility: ${highVolatility.length} high, ${normativeDrifts.length} normative)`,
+      severity: "low", // Volatility alone is informational
+      note: "Volatility is size-based, not semantic. See NORMATIVE_DRIFT for rule changes.",
     });
   }
 
@@ -784,6 +893,14 @@ export async function runLibrarian(options) {
   }
   if (uriDrifts.length > 0) {
     rulesFired.push("URI_DRIFT_DETECTED"); // Expected drift: different origins (normal)
+    const normativeDrifts = uriDrifts.filter((d) => d.normativeDrift);
+    if (normativeDrifts.length > 0) {
+      rulesFired.push("NORMATIVE_DRIFT_DETECTED"); // Semantic change: MUST/SHOULD language
+      const polarityFlips = normativeDrifts.filter((d) => d.polarityFlip);
+      if (polarityFlips.length > 0) {
+        rulesFired.push("POLARITY_FLIP_DETECTED"); // Critical: rule direction changed
+      }
+    }
   }
   if (policyDocsWithoutUri.length > 0) {
     rulesFired.push("MISSING_URI_FOR_POLICY_DOC"); // Policy docs need stable identity

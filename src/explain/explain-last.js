@@ -333,6 +333,12 @@ function renderMarkdown(result) {
             lines.push(`  - \`${p.path}\` (hash: ${p.hash || "none"})`);
           }
         }
+        if (w.required_action) {
+          lines.push(`  - **Required action**: ${w.required_action}`);
+        }
+        if (w.blocks_prefer) {
+          lines.push(`  - ⚠️ *This blocks "prefer" outcome — escalation required*`);
+        }
       }
       lines.push("");
     }
@@ -355,18 +361,40 @@ function renderMarkdown(result) {
       lines.push("");
     }
 
-    // URI_DRIFT - informational, expected when local is ahead
-    // Can be low or medium severity depending on magnitude
-    const driftWarning = [...lowSeverity, ...mediumSeverity].find((w) => w.type === "URI_DRIFT");
-    if (driftWarning) {
-      const icon = driftWarning.severity === "medium" ? "⚠️" : "ℹ️";
-      lines.push(`## ${icon} URI version drift`);
+    // NORMATIVE_DRIFT - semantic changes in rule language (higher priority)
+    const normativeWarning = [...highSeverity, ...mediumSeverity].find(
+      (w) => w.type === "NORMATIVE_DRIFT",
+    );
+    if (normativeWarning) {
+      const icon = normativeWarning.polarity_flips > 0 ? "🚨" : "⚠️";
+      lines.push(`## ${icon} Normative drift (semantic change)`);
+      lines.push(`*${normativeWarning.message}*`);
+      if (normativeWarning.governing_count > 0) {
+        lines.push(`*⚠️ ${normativeWarning.governing_count} governing doc(s) affected.*`);
+      }
+      lines.push("");
 
-      // Show magnitude breakdown if available
-      if (driftWarning.by_magnitude) {
-        const { small, medium, large } = driftWarning.by_magnitude;
+      if (normativeWarning.drifts && normativeWarning.drifts.length > 0) {
+        for (const d of normativeWarning.drifts.slice(0, 3)) {
+          const flipBadge = d.polarityFlip ? " ⚡ POLARITY FLIP" : "";
+          const govBadge = d.isGoverning ? " 🏛️" : "";
+          lines.push(`- **${d.uri}**${flipBadge}${govBadge}`);
+          lines.push(`  - ${d.message}`);
+        }
+      }
+      lines.push("");
+    }
+
+    // URI_DRIFT - volatility-based (size changes), informational
+    const driftWarning = lowSeverity.find((w) => w.type === "URI_DRIFT");
+    if (driftWarning) {
+      lines.push("## ℹ️ URI version drift (volatility)");
+
+      // Show volatility breakdown
+      if (driftWarning.by_volatility) {
+        const { low, medium, high } = driftWarning.by_volatility;
         lines.push(
-          `*${driftWarning.count} URI(s) drifted: ${small} small, ${medium} medium, ${large} large. Using local versions.*`,
+          `*${driftWarning.count} URI(s) drifted: ${low} low, ${medium} medium, ${high} high volatility. Using local versions.*`,
         );
       } else {
         lines.push(
@@ -374,18 +402,17 @@ function renderMarkdown(result) {
         );
       }
 
-      if (driftWarning.governing_large_drifts > 0) {
-        lines.push(
-          `*⚠️ ${driftWarning.governing_large_drifts} governing doc(s) have large drift — consider review.*`,
-        );
+      if (driftWarning.note) {
+        lines.push(`*Note: ${driftWarning.note}*`);
       }
       lines.push("");
 
       if (driftWarning.drifts && driftWarning.drifts.length > 0) {
         for (const d of driftWarning.drifts.slice(0, 5)) {
-          const magBadge = d.magnitude ? `[${d.magnitude}]` : "";
+          const volBadge = d.volatility ? `[${d.volatility}]` : "";
+          const normBadge = d.normativeDrift ? " 📜" : "";
           const govBadge = d.isGoverning ? " 🏛️" : "";
-          lines.push(`- **${d.uri}** ${magBadge}${govBadge}`);
+          lines.push(`- **${d.uri}** ${volBadge}${normBadge}${govBadge}`);
           if (d.local) {
             const lenInfo = d.local.length ? ` ${d.local.length} chars` : "";
             lines.push(`  - local: \`${d.local.path}\` (${d.local.hash}${lenInfo})`);
