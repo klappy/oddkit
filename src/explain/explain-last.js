@@ -314,35 +314,63 @@ function renderMarkdown(result) {
 
   // Warnings (hygiene issues, not blocking)
   if (result.arbitration?.warnings && result.arbitration.warnings.length > 0) {
-    // Separate high-severity warnings (errors) from low-severity (info)
+    // Separate by severity: high (errors), medium (warnings), low (info)
     const highSeverity = result.arbitration.warnings.filter((w) => w.severity === "high");
-    const normalWarnings = result.arbitration.warnings.filter((w) => w.severity !== "high");
+    const mediumSeverity = result.arbitration.warnings.filter((w) => w.severity === "medium");
+    const lowSeverity = result.arbitration.warnings.filter((w) => w.severity === "low");
+    const otherWarnings = result.arbitration.warnings.filter(
+      (w) => !["high", "medium", "low"].includes(w.severity),
+    );
 
+    // HIGH: Metadata errors that must be fixed
     if (highSeverity.length > 0) {
       lines.push("## 🚨 Metadata errors (fix required)");
       lines.push("");
       for (const w of highSeverity) {
-        lines.push(`- **${w.type}** (${w.subtype || ""}): ${w.message}`);
+        lines.push(`- **${w.type}**: ${w.message}`);
         if (w.paths) {
           for (const p of w.paths) {
-            lines.push(`  - \`${p.path}\` (${p.origin}, hash: ${p.hash || "none"})`);
+            lines.push(`  - \`${p.path}\` (hash: ${p.hash || "none"})`);
           }
         }
       }
       lines.push("");
     }
 
-    if (normalWarnings.length > 0) {
+    // MEDIUM/OTHER: Hygiene warnings (smells)
+    const hygieneWarnings = [...mediumSeverity, ...otherWarnings];
+    if (hygieneWarnings.length > 0) {
       lines.push("## ⚠️ Hygiene warnings");
       lines.push(
         "*These are not blocking contradictions, but smells to track for promotion pipeline.*",
       );
       lines.push("");
-      for (const w of normalWarnings) {
+      for (const w of hygieneWarnings) {
         if (w.type === "EXCESSIVE_DUPLICATES") {
           lines.push(`- **${w.type}**: ${w.message} (threshold: ${w.threshold}%)`);
         } else {
           lines.push(`- **${w.type}**: ${w.message}`);
+        }
+      }
+      lines.push("");
+    }
+
+    // LOW: URI_DRIFT - informational, expected when local is ahead
+    const driftWarning = lowSeverity.find((w) => w.type === "URI_DRIFT");
+    if (driftWarning) {
+      lines.push("## ℹ️ URI version drift (expected)");
+      lines.push(
+        `*${driftWarning.count} URI(s) have local/baseline version differences. Using local versions.*`,
+      );
+      lines.push("");
+      if (driftWarning.drifts && driftWarning.drifts.length > 0) {
+        for (const d of driftWarning.drifts.slice(0, 5)) {
+          lines.push(`- **${d.uri}**`);
+          if (d.local) lines.push(`  - local: \`${d.local.path}\` (${d.local.hash})`);
+          if (d.baseline) lines.push(`  - baseline: \`${d.baseline.path}\` (${d.baseline.hash})`);
+        }
+        if (driftWarning.total_drifts > 5) {
+          lines.push(`- *...and ${driftWarning.total_drifts - 5} more*`);
         }
       }
       lines.push("");

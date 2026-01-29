@@ -49,7 +49,8 @@ function computeIdentityKey(doc) {
  */
 function deduplicateCandidates(docs) {
   const groups = new Map(); // key -> { docs[], idType }
-  const collisions = []; // URI collisions where content differs
+  const collisions = []; // TRUE collisions: same URI, same origin, different content
+  const drifts = []; // Expected drift: same URI, different origins, different content
 
   // Group by identity key
   for (const doc of docs) {
@@ -70,17 +71,41 @@ function deduplicateCandidates(docs) {
     } else {
       // Multiple docs with same identity key
 
-      // SAFETY CHECK: For URI-based identity, verify content hashes match
-      // If they don't, this is IDENTITY_COLLISION (bad metadata)
+      // For URI-based identity, distinguish DRIFT from COLLISION
+      // DRIFT: same URI, different origins, different content (expected evolution)
+      // COLLISION: same URI, SAME origin, different content (metadata error)
       if (idType === "uri") {
         const hashes = [...new Set(groupDocs.map((d) => d.content_hash || "no-hash"))];
+        const origins = [...new Set(groupDocs.map((d) => d.origin))];
+
         if (hashes.length > 1) {
-          // URI collision with different content — this is a metadata problem
-          collisions.push({
-            uri: key,
-            paths: groupDocs.map((d) => ({ path: d.path, origin: d.origin, hash: d.content_hash })),
-            message: `URI '${key}' has ${hashes.length} different content versions`,
-          });
+          // Content differs - is this drift or collision?
+          if (origins.length > 1) {
+            // Different origins (local vs baseline) = DRIFT (expected, not an error)
+            const localDoc = groupDocs.find((d) => d.origin === "local");
+            const baselineDoc = groupDocs.find((d) => d.origin === "baseline");
+            drifts.push({
+              uri: key,
+              local: localDoc
+                ? { path: localDoc.path, hash: localDoc.content_hash }
+                : null,
+              baseline: baselineDoc
+                ? { path: baselineDoc.path, hash: baselineDoc.content_hash }
+                : null,
+              message: `URI '${key}' has local/baseline version drift (expected if local is ahead)`,
+            });
+          } else {
+            // SAME origin but different content = TRUE COLLISION (metadata error)
+            collisions.push({
+              uri: key,
+              origin: origins[0],
+              paths: groupDocs.map((d) => ({
+                path: d.path,
+                hash: d.content_hash,
+              })),
+              message: `URI '${key}' has ${groupDocs.length} different docs in ${origins[0]} (metadata error)`,
+            });
+          }
         }
       }
 
@@ -131,7 +156,8 @@ function deduplicateCandidates(docs) {
     collapsedGroups,
     duplicateCount,
     duplicateRatio,
-    collisions, // URI collisions where content differs
+    collisions, // TRUE collisions: same URI, same origin, different content (metadata error)
+    drifts, // Expected drift: same URI, different origins, different content (normal)
     isExcessive: duplicateRatio > EXCESSIVE_DUPLICATE_THRESHOLD,
   };
 }
@@ -350,7 +376,8 @@ export async function runLibrarian(options) {
     collapsedGroups,
     duplicateCount,
     duplicateRatio,
-    collisions: uriCollisions,
+    collisions: uriCollisions, // TRUE collisions: same origin, different content (error)
+    drifts: uriDrifts, // Expected drift: different origins, different content (normal)
     isExcessive: isExcessiveDuplicates,
   } = deduplicateCandidates(afterSupersedes);
 
@@ -534,18 +561,32 @@ export async function runLibrarian(options) {
   // Index hygiene warnings (not blocking contradictions, but smells to track)
   const warnings = [];
 
-  // IDENTITY_COLLISION: URI exists but content differs (metadata problem)
+  // URI_COLLISION: Same URI, SAME origin, different content (metadata error - high severity)
+  // This is a TRUE collision that must be fixed
   if (uriCollisions.length > 0) {
     for (const collision of uriCollisions) {
       warnings.push({
-        type: "IDENTITY_COLLISION",
-        subtype: "URI_CONTENT_MISMATCH",
+        type: "URI_COLLISION",
         uri: collision.uri,
+        origin: collision.origin,
         paths: collision.paths,
         message: collision.message,
-        severity: "high", // This is a metadata error, should be fixed
+        severity: "high", // Metadata error, requires fix
       });
     }
+  }
+
+  // URI_DRIFT: Same URI, DIFFERENT origins, different content (expected evolution - low severity)
+  // This is normal when local is ahead of baseline
+  if (uriDrifts.length > 0) {
+    warnings.push({
+      type: "URI_DRIFT",
+      count: uriDrifts.length,
+      drifts: uriDrifts.slice(0, 10), // Limit for readability
+      total_drifts: uriDrifts.length,
+      message: `${uriDrifts.length} URI(s) have local/baseline version drift (using local versions)`,
+      severity: "low", // Expected, not an error
+    });
   }
 
   // EXCESSIVE_DUPLICATES: >25% of candidates were duplicates (unhealthy overlap)
@@ -568,6 +609,22 @@ export async function runLibrarian(options) {
       message: `${duplicateCount} duplicate(s) collapsed from ${collapsedGroups.length} identity group(s).`,
       groups: collapsedGroups.slice(0, 10), // Limit to first 10 for readability
       total_groups: collapsedGroups.length,
+    });
+  }
+
+  // MISSING_URI_FOR_POLICY_DOC: Governing docs should have URI for stable identity
+  // If identity changes every time content changes, doc can't be tracked over time
+  const governingWithoutUri = docs.filter(
+    (d) => d.authority_band === "governing" && !d.uri && d.origin === "local",
+  );
+  if (governingWithoutUri.length > 0) {
+    warnings.push({
+      type: "MISSING_URI_FOR_POLICY_DOC",
+      count: governingWithoutUri.length,
+      paths: governingWithoutUri.slice(0, 5).map((d) => d.path),
+      total: governingWithoutUri.length,
+      message: `${governingWithoutUri.length} governing doc(s) lack URI. Add uri frontmatter to stabilize identity.`,
+      severity: "medium", // Smell, not error
     });
   }
 
@@ -657,7 +714,13 @@ export async function runLibrarian(options) {
     rulesFired.push("EXCESSIVE_DUPLICATES");
   }
   if (uriCollisions.length > 0) {
-    rulesFired.push("IDENTITY_COLLISION_DETECTED");
+    rulesFired.push("URI_COLLISION_DETECTED"); // TRUE collision: same origin, different content
+  }
+  if (uriDrifts.length > 0) {
+    rulesFired.push("URI_DRIFT_DETECTED"); // Expected drift: different origins (normal)
+  }
+  if (governingWithoutUri.length > 0) {
+    rulesFired.push("MISSING_URI_FOR_POLICY_DOC"); // Governing docs need stable identity
   }
 
   if (status === "INSUFFICIENT_EVIDENCE") {

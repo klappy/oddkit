@@ -332,18 +332,18 @@ node bin/oddkit index -r "$FIXTURE_DIR_E" 2>/dev/null
 RESULT_E=$(node bin/oddkit librarian -q "What is the authentication policy?" -r "$FIXTURE_DIR_E" 2>/dev/null)
 unset ODDKIT_BASELINE_REF
 
-# Check for IDENTITY_COLLISION warning
-if echo "$RESULT_E" | grep -q "IDENTITY_COLLISION"; then
-  echo "✅ IDENTITY_COLLISION warning detected (URI content mismatch)"
+# Check for URI_COLLISION warning (same origin, different content = true collision)
+if echo "$RESULT_E" | grep -q "URI_COLLISION"; then
+  echo "✅ URI_COLLISION warning detected (same origin, different content)"
 else
-  echo "❌ FAIL: Expected IDENTITY_COLLISION warning for URI with different content"
+  echo "❌ FAIL: Expected URI_COLLISION warning for same-origin URI with different content"
   echo "Result warnings:"
-  echo "$RESULT_E" | grep -o '"warnings":\s*\[[^]]*\]' | head -1
+  echo "$RESULT_E" | grep -o '"type":\s*"[^"]*"' | head -5
 fi
 
-# Check for IDENTITY_COLLISION_DETECTED rule
-if echo "$RESULT_E" | grep -q "IDENTITY_COLLISION_DETECTED"; then
-  echo "✅ IDENTITY_COLLISION_DETECTED rule fired"
+# Check for URI_COLLISION_DETECTED rule
+if echo "$RESULT_E" | grep -q "URI_COLLISION_DETECTED"; then
+  echo "✅ URI_COLLISION_DETECTED rule fired"
 else
   echo "⚠️ Rule not fired (check if collision detection working)"
 fi

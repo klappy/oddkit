@@ -96,10 +96,20 @@ export const RULES = {
     meaning:
       "More than 25% of candidates were duplicates. Baseline and local repos overlap heavily. Consider pinning baseline ref or reducing baseline scope.",
   },
-  IDENTITY_COLLISION_DETECTED: {
-    title: "URI collision with content mismatch",
+  URI_COLLISION_DETECTED: {
+    title: "URI collision detected (metadata error)",
     meaning:
-      "Multiple docs share the same URI but have different content. This is a metadata error — URIs must be unique identities. Fix the conflicting documents.",
+      "Multiple docs in the SAME origin share the same URI but have different content. This is a metadata error — URIs must be unique identities. Fix the conflicting documents.",
+  },
+  URI_DRIFT_DETECTED: {
+    title: "URI version drift detected (expected)",
+    meaning:
+      "Same URI has different content in local vs baseline. This is normal when local is ahead of baseline — using local version. Not an error.",
+  },
+  MISSING_URI_FOR_POLICY_DOC: {
+    title: "Governing doc lacks URI",
+    meaning:
+      "One or more governing (policy) documents lack a URI. Without URI, identity is path+hash, which changes with every edit. Add uri frontmatter to stabilize identity.",
   },
 
   // Validation rules
