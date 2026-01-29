@@ -1,4 +1,4 @@
-import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
+import { buildIndex, loadIndex, saveIndex, INTENT_HIERARCHY } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
@@ -7,6 +7,7 @@ import { writeLast } from "../state/last.js";
 
 const MIN_EVIDENCE_BULLETS = 2;
 const MAX_RESULTS = 5;
+const MIN_CONFIDENCE_THRESHOLD = 0.6; // Below this, result is advisory
 
 /**
  * Detect policy intent from query
@@ -27,6 +28,85 @@ function detectPolicyIntent(query) {
     return "weak";
   }
   return "none";
+}
+
+/**
+ * Apply intent-gated precedence (per canon/weighted-relevance-and-arbitration.md)
+ * A newer workaround/experiment MUST NOT outrank an older promoted/pattern
+ * unless it explicitly supersedes it
+ */
+function applyIntentGatedPrecedence(candidates, supersededUris) {
+  const violations = [];
+
+  // Find the highest-intent item
+  const maxIntent = Math.max(...candidates.map((c) => INTENT_HIERARCHY[c.doc.intent] || 3));
+
+  // Check for violations: low-intent items ranked above high-intent items
+  for (let i = 0; i < candidates.length; i++) {
+    const current = candidates[i];
+    const currentIntent = INTENT_HIERARCHY[current.doc.intent] || 3;
+
+    // Low intent items (workaround, experiment) cannot outrank high intent (pattern, promoted)
+    if (currentIntent <= 2) {
+      // workaround or experiment
+      const higherIntentBelow = candidates.slice(i + 1).find((c) => {
+        const intent = INTENT_HIERARCHY[c.doc.intent] || 3;
+        return intent >= 4; // pattern or promoted
+      });
+
+      if (higherIntentBelow) {
+        // Check if current explicitly supersedes the higher-intent item
+        const currentSupersedes = current.doc.supersedes;
+        const higherUri = higherIntentBelow.doc.uri;
+
+        if (!currentSupersedes || currentSupersedes !== higherUri) {
+          violations.push({
+            lowIntent: current.doc.path,
+            lowIntentType: current.doc.intent,
+            highIntent: higherIntentBelow.doc.path,
+            highIntentType: higherIntentBelow.doc.intent,
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Calculate confidence level based on evidence quality and consistency
+ * Per canon/weighted-relevance-and-arbitration.md: low confidence = advisory
+ */
+function calculateConfidence(scored, evidence) {
+  if (evidence.length === 0) return 0;
+  if (scored.length === 0) return 0;
+
+  // Factors that reduce confidence
+  let confidence = 1.0;
+
+  // Few evidence bullets
+  if (evidence.length < MIN_EVIDENCE_BULLETS) {
+    confidence *= 0.5;
+  }
+
+  // Weak evidence strength in sources
+  const avgEvidence =
+    scored.slice(0, evidence.length).reduce((sum, s) => {
+      const evWeight = { none: 0.5, weak: 0.7, medium: 1.0, strong: 1.0 }[s.doc.evidence] || 0.8;
+      return sum + evWeight;
+    }, 0) / evidence.length;
+  confidence *= avgEvidence;
+
+  // Low-intent sources dominating
+  const avgIntent =
+    scored.slice(0, evidence.length).reduce((sum, s) => {
+      const intWeight = INTENT_HIERARCHY[s.doc.intent] || 3;
+      return sum + intWeight / 5;
+    }, 0) / evidence.length;
+  confidence *= avgIntent;
+
+  return Math.min(1.0, Math.max(0, confidence));
 }
 
 /**
@@ -83,15 +163,31 @@ export async function runLibrarian(options) {
   // Tokenize query
   const queryTokens = tokenize(query);
 
-  // Score all documents
-  const scored = docs
-    .map((doc) => ({
-      doc,
-      score: scoreDocument(doc, queryTokens),
-    }))
+  // Score all documents (returns { score, signals })
+  const allScored = docs.map((doc) => {
+    const { score, signals } = scoreDocument(doc, queryTokens);
+    return { doc, score, signals };
+  });
+
+  // Filter and sort
+  const scored = allScored
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_RESULTS);
+
+  // Check for intent-gated precedence violations (per canon/weighted-relevance-and-arbitration.md)
+  const precedenceViolations = applyIntentGatedPrecedence(scored, suppressed);
+
+  // Build candidates considered (for output contract 2.3)
+  const candidatesConsidered = scored.map((s) => ({
+    path: s.doc.path,
+    origin: s.doc.origin,
+    score: Math.round(s.score * 100) / 100,
+    intent: s.doc.intent,
+    evidence: s.doc.evidence,
+    authority: s.doc.authority_band,
+    signals: s.signals,
+  }));
 
   // Build evidence bullets with rejection tracking
   const evidence = [];
@@ -144,6 +240,8 @@ export async function runLibrarian(options) {
       quote: quoteResult.quote,
       citation,
       origin: doc.origin,
+      intent: doc.intent,
+      evidence_strength: doc.evidence,
       wordCount: quoteResult.wordCount,
       truncated: quoteResult.truncated,
     });
@@ -159,15 +257,37 @@ export async function runLibrarian(options) {
     Object.entries(rejectionReasons).filter(([, v]) => v > 0),
   );
 
+  // Calculate confidence (per canon/weighted-relevance-and-arbitration.md)
+  const confidence = calculateConfidence(scored, evidence);
+  const isConfident = confidence >= MIN_CONFIDENCE_THRESHOLD;
+
   // Determine status
-  const status = evidence.length >= MIN_EVIDENCE_BULLETS ? "SUPPORTED" : "INSUFFICIENT_EVIDENCE";
+  let status;
+  if (evidence.length >= MIN_EVIDENCE_BULLETS) {
+    status = isConfident ? "SUPPORTED" : "SUPPORTED_ADVISORY";
+  } else {
+    status = "INSUFFICIENT_EVIDENCE";
+  }
 
   // Build answer
   let answer;
   if (status === "SUPPORTED") {
     answer = `Found ${evidence.length} relevant document(s) for: "${query}"`;
+  } else if (status === "SUPPORTED_ADVISORY") {
+    answer = `Found ${evidence.length} relevant document(s) for: "${query}" (advisory: confidence is low)`;
   } else {
     answer = `Could not find sufficient evidence to answer: "${query}". Found ${evidence.length} partial match(es).`;
+  }
+
+  // Detect contradictions (per canon/weighted-relevance-and-arbitration.md: no silent resolution)
+  const contradictions = [];
+  if (precedenceViolations.length > 0) {
+    for (const v of precedenceViolations) {
+      contradictions.push({
+        type: "INTENT_PRECEDENCE_VIOLATION",
+        message: `${v.lowIntentType} (${v.lowIntent}) ranked above ${v.highIntentType} (${v.highIntent}) without explicit supersedes`,
+      });
+    }
   }
 
   // Build read_next
@@ -197,16 +317,23 @@ export async function runLibrarian(options) {
   // Determine policy intent
   const policyIntent = detectPolicyIntent(query);
 
-  // Build rules fired
+  // Build rules fired (per canon/weighted-relevance-and-arbitration.md)
   const rulesFired = [];
   rulesFired.push("SUPPORTED_REQUIRES_EVIDENCE_BULLETS");
   rulesFired.push("QUOTE_LENGTH_ENFORCED");
+  rulesFired.push("INTENT_GATED_PRECEDENCE"); // Always active
 
   if (status === "INSUFFICIENT_EVIDENCE") {
     rulesFired.push("INSUFFICIENT_EVIDENCE_RETURNED");
   }
+  if (status === "SUPPORTED_ADVISORY") {
+    rulesFired.push("LOW_CONFIDENCE_ADVISORY");
+  }
   if (Object.keys(suppressed).length > 0) {
     rulesFired.push("SUPERSEDES_APPLIED");
+  }
+  if (precedenceViolations.length > 0) {
+    rulesFired.push("INTENT_PRECEDENCE_VIOLATED");
   }
   if (!baselineAvailable) {
     rulesFired.push("BASELINE_UNAVAILABLE");
@@ -232,9 +359,17 @@ export async function runLibrarian(options) {
   const result = {
     status,
     answer,
+    confidence: Math.round(confidence * 100) / 100,
+    is_confident: isConfident,
     evidence,
     sources,
     read_next: readNext.slice(0, 2),
+    // Arbitration data (per canon/weighted-relevance-and-arbitration.md section 2.3)
+    arbitration: {
+      candidates_considered: candidatesConsidered,
+      contradictions,
+      precedence_violations: precedenceViolations,
+    },
     debug: {
       tool: "librarian",
       timestamp: new Date().toISOString(),
@@ -254,6 +389,8 @@ export async function runLibrarian(options) {
       policy_intent: policyIntent,
       suppressed: Object.keys(suppressed).length > 0 ? suppressed : {},
       rules_fired: rulesFired,
+      // Reference to governing doctrine
+      governing_canon: "canon/weighted-relevance-and-arbitration.md",
       notes: [],
     },
   };

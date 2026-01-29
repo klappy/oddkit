@@ -193,6 +193,10 @@ function renderDebug(debug) {
   if (debug.notes && debug.notes.length > 0) {
     lines.push(`- Notes: ${debug.notes.join("; ")}`);
   }
+  // Cite governing Canon document for arbitration decisions
+  if (debug.governing_canon) {
+    lines.push(`- Governing doctrine: \`${debug.governing_canon}\``);
+  }
 
   return lines.length > 0 ? lines : ["- No debug info available."];
 }
@@ -218,6 +222,12 @@ function renderMarkdown(result) {
   if (result.verdict) {
     lines.push(`- Verdict: ${result.verdict}`);
   }
+  if (result.confidence !== undefined) {
+    lines.push(`- Confidence: ${Math.round(result.confidence * 100)}%`);
+    if (!result.is_confident) {
+      lines.push(`- ⚠️ **Advisory**: Low confidence — result is not authoritative`);
+    }
+  }
   if (result.answer) {
     lines.push(`- Answer: ${result.answer}`);
   }
@@ -239,6 +249,32 @@ function renderMarkdown(result) {
   const filteringLines = renderEvidenceFiltering(debug);
   if (filteringLines) {
     lines.push(...filteringLines);
+    lines.push("");
+  }
+
+  // Arbitration contradictions (per canon/weighted-relevance-and-arbitration.md: no silent resolution)
+  if (result.arbitration?.contradictions && result.arbitration.contradictions.length > 0) {
+    lines.push("## ⚠️ Contradictions detected");
+    lines.push(
+      "*Per canon/weighted-relevance-and-arbitration.md: conflicts are exposed, not resolved silently.*",
+    );
+    lines.push("");
+    for (const c of result.arbitration.contradictions) {
+      lines.push(`- **${c.type}**: ${c.message}`);
+    }
+    lines.push("");
+  }
+
+  // Candidates considered (arbitration transparency)
+  if (result.arbitration?.candidates_considered && result.arbitration.candidates_considered.length > 0) {
+    lines.push("## Candidates considered");
+    for (const c of result.arbitration.candidates_considered) {
+      const intentBadge = c.intent ? `[${c.intent}]` : "";
+      const evidenceBadge = c.evidence && c.evidence !== "none" ? `[evidence:${c.evidence}]` : "";
+      lines.push(
+        `- \`${c.path}\` (score: ${c.score}, ${c.authority}) ${intentBadge} ${evidenceBadge}`.trim(),
+      );
+    }
     lines.push("");
   }
 

@@ -8,84 +8,99 @@
 export const RULES = {
   // Librarian rules
   SUPPORTED_REQUIRES_EVIDENCE_BULLETS: {
-    title: 'SUPPORTED requires evidence bullets',
+    title: "SUPPORTED requires evidence bullets",
     meaning:
-      'A SUPPORTED answer must include at least 2 evidence bullets with quotes and path#heading citations.',
+      "A SUPPORTED answer must include at least 2 evidence bullets with quotes and path#heading citations.",
   },
   QUOTE_LENGTH_ENFORCED: {
-    title: 'Quote length enforced',
+    title: "Quote length enforced",
     meaning:
-      'Quotes must be between 8 and 40 words to prevent token-laundering and meaningless fragments.',
+      "Quotes must be between 8 and 40 words to prevent token-laundering and meaningless fragments.",
   },
   INSUFFICIENT_EVIDENCE_RETURNED: {
-    title: 'Insufficient evidence returned',
-    meaning:
-      'The tool could not produce enough cited evidence, so it refused to claim an answer.',
+    title: "Insufficient evidence returned",
+    meaning: "The tool could not produce enough cited evidence, so it refused to claim an answer.",
   },
   SUPERSEDES_APPLIED: {
-    title: 'Supersedes override applied',
+    title: "Supersedes override applied",
     meaning:
-      'A local document explicitly superseded baseline content and the baseline doc was suppressed.',
+      "A local document explicitly superseded baseline content and the baseline doc was suppressed.",
   },
   BASELINE_UNAVAILABLE: {
-    title: 'Baseline unavailable',
+    title: "Baseline unavailable",
     meaning:
-      'Could not load baseline knowledge (git clone failed or network unavailable). Results are local-only.',
+      "Could not load baseline knowledge (git clone failed or network unavailable). Results are local-only.",
   },
   BASELINE_LOADED: {
-    title: 'Baseline loaded',
-    meaning: 'Baseline knowledge from klappy.dev was successfully loaded and merged with local docs.',
+    title: "Baseline loaded",
+    meaning:
+      "Baseline knowledge from klappy.dev was successfully loaded and merged with local docs.",
   },
   POLICY_INTENT_STRONG: {
-    title: 'Strong policy intent detected',
+    title: "Strong policy intent detected",
     meaning:
-      'Query explicitly references policy/canon/rules. Governing documents were prioritized.',
+      "Query explicitly references policy/canon/rules. Governing documents were prioritized.",
   },
   POLICY_INTENT_WEAK: {
-    title: 'Weak policy intent detected',
-    meaning:
-      'Query implies policy interest. Governing documents received a soft preference.',
+    title: "Weak policy intent detected",
+    meaning: "Query implies policy interest. Governing documents received a soft preference.",
   },
   POLICY_INTENT_NONE: {
-    title: 'No policy intent detected',
-    meaning: 'Query appears to be general lookup. No special policy filtering applied.',
+    title: "No policy intent detected",
+    meaning: "Query appears to be general lookup. No special policy filtering applied.",
+  },
+
+  // Arbitration rules (per canon/weighted-relevance-and-arbitration.md)
+  INTENT_GATED_PRECEDENCE: {
+    title: "Intent-gated precedence active",
+    meaning:
+      "Per Canon: workaround/experiment cannot outrank promoted/pattern without explicit supersedes.",
+  },
+  INTENT_PRECEDENCE_VIOLATED: {
+    title: "Intent precedence violation detected",
+    meaning:
+      "A lower-intent document (workaround/experiment) ranked above a higher-intent document without supersedes. See contradictions.",
+  },
+  LOW_CONFIDENCE_ADVISORY: {
+    title: "Low confidence — advisory result",
+    meaning:
+      "Per Canon: confidence is low due to weak evidence or low-intent sources. Result is advisory, not authoritative.",
   },
 
   // Validation rules
   VALIDATION_CLAIMS_PARSED: {
-    title: 'Claims parsed from message',
-    meaning: 'Completion claims were detected and extracted from your message.',
+    title: "Claims parsed from message",
+    meaning: "Completion claims were detected and extracted from your message.",
   },
   VALIDATION_NEEDS_ARTIFACTS: {
-    title: 'Completion claim needs artifacts',
-    meaning:
-      'You claimed completion but did not provide the required artifacts to verify it.',
+    title: "Completion claim needs artifacts",
+    meaning: "You claimed completion but did not provide the required artifacts to verify it.",
   },
   VALIDATION_PASS: {
-    title: 'Validation passed',
-    meaning: 'All required evidence was provided and matched the claims.',
+    title: "Validation passed",
+    meaning: "All required evidence was provided and matched the claims.",
   },
   VALIDATION_FAIL: {
-    title: 'Validation failed',
-    meaning: 'Evidence contradicts the claim or indicates breakage.',
+    title: "Validation failed",
+    meaning: "Evidence contradicts the claim or indicates breakage.",
   },
   VALIDATION_CLARIFY: {
-    title: 'Clarification needed',
-    meaning: 'No clear completion claim was detected. Please clarify what you completed.',
+    title: "Clarification needed",
+    meaning: "No clear completion claim was detected. Please clarify what you completed.",
   },
   VALIDATION_NO_COMPLETION_CLAIM: {
-    title: 'No completion claim detected',
-    meaning: 'The message did not contain a recognizable completion assertion.',
+    title: "No completion claim detected",
+    meaning: "The message did not contain a recognizable completion assertion.",
   },
 
   // Index rules
   INDEX_BUILT: {
-    title: 'Index built successfully',
-    meaning: 'Document index was created or updated.',
+    title: "Index built successfully",
+    meaning: "Document index was created or updated.",
   },
   INDEX_BASELINE_INCLUDED: {
-    title: 'Baseline included in index',
-    meaning: 'Baseline knowledge was merged into the index.',
+    title: "Baseline included in index",
+    meaning: "Baseline knowledge was merged into the index.",
   },
 };
 

@@ -73,6 +73,11 @@ async function indexRoot(rootPath, origin) {
         tags: frontmatter.tags || [],
         supersedes: frontmatter.supersedes || null,
         authority_band: inferAuthorityBand(filePath, frontmatter),
+        // Arbitration signals (per canon/weighted-relevance-and-arbitration.md)
+        scope: frontmatter.scope || null, // attempt | feature | prd | lane | repo
+        scope_key: frontmatter.scope_key || null, // identifier for scope
+        intent: inferIntent(filePath, frontmatter), // workaround | experiment | operational | pattern | promoted
+        evidence: frontmatter.evidence || "none", // none | weak | medium | strong
         headings,
         contentLength: content.length,
         contentPreview: content.slice(0, 500),
@@ -84,6 +89,45 @@ async function indexRoot(rootPath, origin) {
   }
 
   return docs;
+}
+
+/**
+ * Intent hierarchy values (per canon/weighted-relevance-and-arbitration.md)
+ * Lower = less durable, higher = more durable
+ */
+export const INTENT_HIERARCHY = {
+  workaround: 1,
+  experiment: 2,
+  operational: 3,
+  pattern: 4,
+  promoted: 5,
+};
+
+/**
+ * Infer intent from path and frontmatter
+ */
+function inferIntent(filePath, frontmatter) {
+  // Frontmatter override
+  if (frontmatter.intent && INTENT_HIERARCHY[frontmatter.intent] !== undefined) {
+    return frontmatter.intent;
+  }
+
+  // Path-based inference
+  if (filePath.startsWith("canon/")) {
+    return "promoted"; // Canon is governing, always promoted
+  }
+  if (filePath.startsWith("odd/")) {
+    return "pattern"; // ODD docs are patterns
+  }
+  if (filePath.includes("/workaround")) {
+    return "workaround";
+  }
+  if (filePath.includes("/experiment")) {
+    return "experiment";
+  }
+
+  // Default to operational
+  return "operational";
 }
 
 /**
