@@ -2,6 +2,27 @@
 
 oddkit exposes an MCP (Model Context Protocol) server that allows Cursor, Claude Code, and other MCP-compatible hosts to use oddkit as a tool.
 
+## Cursor config (long-term, run from anywhere)
+
+Use this config to run oddkit as an MCP server via **npx from GitHub** (no npm publish required):
+
+```json
+{
+  "mcpServers": {
+    "oddkit": {
+      "command": "npx",
+      "args": ["--yes", "--package", "github:klappy/oddkit", "oddkit-mcp"],
+      "env": {
+        "ODDKIT_BASELINE": "https://github.com/klappy/klappy.dev.git"
+      }
+    }
+  }
+}
+```
+
+- **ODDKIT_BASELINE** is optional; default is klappy.dev.
+- **repo_root** should be passed by the agent per tool call; if omitted, oddkit assumes the current working directory.
+
 ## Quick Setup with `oddkit init`
 
 The easiest way to set up oddkit MCP:
@@ -17,30 +38,16 @@ npx oddkit init --project
 npx oddkit init --print
 ```
 
-This writes the following to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--project`):
-
-```json
-{
-  "mcpServers": {
-    "oddkit": {
-      "command": "npx",
-      "args": ["oddkit-mcp"],
-      "env": {}
-    }
-  }
-}
-```
-
-The `init` command safely merges with existing config—it won't overwrite other MCP servers.
+This writes config to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--project`). The `init` command safely merges with existing config—it won't overwrite other MCP servers.
 
 ## Available Tools
 
-| Tool                 | Description                                                                |
-| -------------------- | -------------------------------------------------------------------------- |
+| Tool                 | Description                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------- |
 | `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and routes to the right tool |
-| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation            |
-| `oddkit_validate`    | Validate a completion claim with verdict and gaps                          |
-| `oddkit_explain`     | Explain the last oddkit result                                             |
+| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation                     |
+| `oddkit_validate`    | Validate a completion claim with verdict and gaps                                   |
+| `oddkit_explain`     | Explain the last oddkit result                                                      |
 
 ## Recommended: Use `oddkit_orchestrate`
 
@@ -84,6 +91,8 @@ Response:
 
 **macOS/Linux:** `~/.cursor/mcp.json`
 **Windows:** `%USERPROFILE%\.cursor\mcp.json`
+
+Use the [Cursor config (long-term)](#cursor-config-long-term-run-from-anywhere) above, or for a local install:
 
 ```json
 {

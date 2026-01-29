@@ -5,7 +5,7 @@
   "type": "module",
   "bin": {
     "oddkit": "./bin/oddkit",
-    "oddkit-mcp": "./src/mcp/server.js"
+    "oddkit-mcp": "./bin/oddkit-mcp"
   },
   "main": "src/cli.js",
   "repository": {
@@ -15,6 +15,7 @@
   "scripts": {
     "test": "bash tests/smoke.sh",
     "test:smoke": "bash tests/smoke.sh",
+    "test:mcp": "bash tests/mcp-smoke.sh",
     "test:tooljson": "bash tests/tooljson.sh",
     "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",

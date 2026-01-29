@@ -64,29 +64,24 @@ function runOddkit(args) {
 }
 
 /**
- * Tool definitions
+ * Tool definitions (tool-grade contracts; repo_root in schema for MCP clients)
  */
 const TOOLS = [
   {
     name: "oddkit_orchestrate",
     description:
-      "Smart router for oddkit - automatically detects intent and routes to librarian (questions), validate (completion claims), or explain (explain requests). Recommended entrypoint for agents.",
+      "Routes a message to librarian/validate/explain and returns tool-grade JSON.",
     inputSchema: {
       type: "object",
       properties: {
-        message: {
+        message: { type: "string" },
+        repo_root: {
           type: "string",
-          description:
-            "The user message. Orchestrate will detect if it's a question, completion claim, or explain request.",
-        },
-        repoRoot: {
-          type: "string",
-          description: "Path to the repository root. Defaults to current working directory.",
+          description: "Path to target repo. Default: current working directory.",
         },
         baseline: {
           type: "string",
-          description:
-            "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline.",
+          description: "Optional baseline git URL or local path.",
         },
       },
       required: ["message"],
@@ -94,65 +89,39 @@ const TOOLS = [
   },
   {
     name: "oddkit_librarian",
-    description:
-      "Ask a policy or lookup question against ODD-governed documentation. Returns citations with quotes from governing documents.",
+    description: "Retrieves governing/operational docs with quotes + citations.",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "The question to ask (e.g., 'What is the definition of done?')",
-        },
-        repoRoot: {
-          type: "string",
-          description: "Path to the repository root. Defaults to current working directory.",
-        },
-        baseline: {
-          type: "string",
-          description:
-            "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline.",
-        },
+        query: { type: "string" },
+        repo_root: { type: "string" },
+        baseline: { type: "string" },
       },
       required: ["query"],
     },
   },
   {
     name: "oddkit_validate",
-    description:
-      "Validate a completion claim. Returns verdict (PASS, NEEDS_ARTIFACTS, CLARIFY) with required evidence and gaps.",
+    description: "Validates completion claims against required artifacts.",
     inputSchema: {
       type: "object",
       properties: {
-        message: {
-          type: "string",
-          description:
-            "The completion claim message (e.g., 'Done with the UI update. Screenshot: ui.png')",
-        },
-        repoRoot: {
-          type: "string",
-          description: "Path to the repository root. Defaults to current working directory.",
-        },
-        baseline: {
-          type: "string",
-          description:
-            "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline.",
-        },
-        artifacts: {
-          type: "string",
-          description: "Path to artifacts JSON file with additional evidence.",
-        },
+        message: { type: "string" },
+        repo_root: { type: "string" },
+        baseline: { type: "string" },
+        artifacts: { type: "string" },
       },
       required: ["message"],
     },
   },
   {
     name: "oddkit_explain",
-    description:
-      "Explain the last oddkit result in human-readable format. Shows what happened, why, and what to do next.",
+    description: "Explains the last oddkit run (from .oddkit/last.json).",
     inputSchema: {
       type: "object",
-      properties: {},
-      required: [],
+      properties: {
+        repo_root: { type: "string" },
+      },
     },
   },
 ];
@@ -180,17 +149,18 @@ async function main() {
     };
   });
 
-  // Handle tool calls
+  // Handle tool calls (normalize repo_root / repoRoot for backward compatibility)
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+    const { name, arguments: args = {} } = request.params;
+    const repoRoot = args.repo_root ?? args.repoRoot ?? process.cwd();
 
     switch (name) {
       case "oddkit_orchestrate": {
-        const { message, repoRoot, baseline } = args;
+        const { message, baseline } = args;
         try {
           const result = await runOrchestrate({
             message,
-            repoRoot: repoRoot || process.cwd(),
+            repoRoot,
             baseline,
           });
           return {
@@ -222,8 +192,8 @@ async function main() {
       }
 
       case "oddkit_librarian": {
-        const { query, repoRoot, baseline } = args;
-        let cmd = `tool librarian -q "${query.replace(/"/g, '\\"')}"`;
+        const { query, baseline } = args;
+        let cmd = `tool librarian -q "${String(query).replace(/"/g, '\\"')}"`;
         if (repoRoot) cmd += ` -r "${repoRoot}"`;
         if (baseline) cmd += ` -b "${baseline}"`;
 
@@ -239,8 +209,8 @@ async function main() {
       }
 
       case "oddkit_validate": {
-        const { message, repoRoot, baseline, artifacts } = args;
-        let cmd = `tool validate -m "${message.replace(/"/g, '\\"')}"`;
+        const { message, baseline, artifacts } = args;
+        let cmd = `tool validate -m "${String(message).replace(/"/g, '\\"')}"`;
         if (repoRoot) cmd += ` -r "${repoRoot}"`;
         if (baseline) cmd += ` -b "${baseline}"`;
         if (artifacts) cmd += ` -a "${artifacts}"`;
@@ -273,13 +243,22 @@ async function main() {
     }
   });
 
-  // Start server with stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("oddkit MCP server started");
 }
 
-main().catch((err) => {
-  console.error("Failed to start MCP server:", err);
-  process.exit(1);
-});
+/**
+ * Start the MCP server (stdio transport). No banners in normal operation.
+ */
+export async function startMcpServer() {
+  return main();
+}
+
+// Auto-start only when this file is run directly (e.g. node src/mcp/server.js)
+const isEntry = process.argv[1]?.endsWith("server.js");
+if (isEntry) {
+  startMcpServer().catch((err) => {
+    console.error("Failed to start MCP server:", err);
+    process.exit(1);
+  });
+}

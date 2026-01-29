@@ -2,6 +2,14 @@
 
 Get running in 60 seconds.
 
+## Cursor Setup
+
+To use oddkit as an MCP server in Cursor (or Claude Code / Codex), see **[docs/MCP.md](MCP.md)**. You can run oddkit from anywhere via:
+
+```bash
+npx --yes --package github:klappy/oddkit oddkit-mcp
+```
+
 ## Use in Cursor (recommended)
 
 ### Option A: One command (global)
