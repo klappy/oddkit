@@ -24,16 +24,22 @@ import {
   ListToolsRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { readFileSync } from "fs";
 import { runOrchestrate } from "./orchestrate.js";
 import { listPrompts, getPrompt } from "./prompts.js";
 import { getOddkitInstructions } from "./instructions.js";
 
+// Read version from package.json to keep MCP server version in sync
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8"));
+const VERSION = packageJson.version;
 
 // Path to oddkit CLI
 const ODDKIT_BIN = join(__dirname, "../../bin/oddkit");
@@ -76,8 +82,15 @@ function runOddkit(args) {
 const ALL_TOOLS = [
   {
     name: "oddkit_orchestrate",
-    description:
-      "Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.",
+    description: `Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.
+
+MUST: Before editing files or implementing a spec, call with your implementation plan.
+MUST: Before claiming done/fixed/shipped/merged, call with completion claim + artifact paths.
+
+Use when:
+- Policy/canon questions ("what's the rule?", "is this allowed?")
+- Contradictions or low confidence
+- Discoverability ("what's in ODD?", "list canon")`,
     inputSchema: {
       type: "object",
       properties: {
@@ -153,13 +166,14 @@ async function main() {
   const server = new Server(
     {
       name: "oddkit",
-      version: "0.1.0",
+      version: VERSION,
       instructions: getOddkitInstructions(),
     },
     {
       capabilities: {
         tools: {},
         prompts: {},
+        resources: {},
       },
     },
   );
@@ -186,6 +200,41 @@ async function main() {
       throw new Error(`Unknown prompt: ${name}`);
     }
     return prompt;
+  });
+
+  // Handle list resources request
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return {
+      resources: [
+        {
+          uri: "oddkit://instructions",
+          name: "ODDKIT Decision Gate",
+          description: "When and how to call oddkit_orchestrate",
+          mimeType: "text/plain",
+        },
+      ],
+    };
+  });
+
+  // Handle read resource request
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    if (uri === "oddkit://instructions") {
+      const text = getOddkitInstructions();
+      if (process.env.ODDKIT_DEBUG_MCP) {
+        console.error(`oddkit: served resource uri=${uri} len=${text.length}`);
+      }
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "text/plain",
+            text,
+          },
+        ],
+      };
+    }
+    throw new Error(`Unknown resource: ${uri}`);
   });
 
   // Handle tool calls (normalize repo_root / repoRoot for backward compatibility)

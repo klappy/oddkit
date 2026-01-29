@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-29
+
+### Added
+
+- **MCP Resource support** - Exposes `oddkit://instructions` as a fetchable resource so Cursor shows "1 resources" and agents can retrieve full instruction text on demand.
+  - MUST lines baked into `oddkit_orchestrate` tool description (unavoidable in tool-selection context)
+  - Debug logging via `ODDKIT_DEBUG_MCP=1` env var
+
 ## [0.2.0] - 2026-01-29
 
 ### Added

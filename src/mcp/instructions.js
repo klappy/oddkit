@@ -6,7 +6,7 @@
  * Kept SHORT and IMPERATIVE so models actually follow them.
  */
 export function getOddkitInstructions() {
-  return `
+  const instructions = `
 ODDKIT DECISION GATE
 
 MUST: Before editing files or implementing a spec, call oddkit_orchestrate with your implementation plan.
@@ -22,4 +22,10 @@ Call oddkit_orchestrate when:
 
 Do NOT pre-inject docs. Retrieve minimal excerpts via oddkit, quote with citations.
 `.trim();
+
+  if (process.env.ODDKIT_DEBUG_MCP) {
+    console.error(`oddkit: served instructions tag=ODDKIT_GATE_v0.3.0 len=${instructions.length}`);
+  }
+
+  return instructions;
 }

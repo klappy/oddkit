@@ -1,6 +1,6 @@
 {
   "name": "oddkit",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
   "type": "module",
   "bin": {
