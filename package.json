@@ -1,7 +1,7 @@
 {
   "name": "oddkit",
-  "version": "0.4.0",
-  "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
+  "version": "0.5.0",
+  "description": "Agent-first CLI for ODD-governed repos. Epistemic terrain rendering with portable baseline.",
   "type": "module",
   "bin": {
     "oddkit": "./bin/oddkit",

@@ -1,8 +1,63 @@
 {
   "name": "oddkit",
-  "version": "0.1.0",
-  "description": "Agent-first CLI for ODD-governed repos. Librarian + Validation with portable baseline.",
+  "version": "0.5.0",
+  "description": "Agent-first CLI for ODD-governed repos. Epistemic terrain rendering: catalog, librarian, validate, orient.",
   "tools": [
+    {
+      "name": "oddkit_orchestrate",
+      "description": "Routes a message to the appropriate oddkit action. Returns tool-grade JSON with ready-to-send assistant_text.\n\nMUST: Before editing files or implementing a spec, call with your implementation plan.\nMUST: Before claiming done/fixed/shipped/merged, call with completion claim + artifact paths.\n\nUse when:\n- Policy/canon questions\n- Contradictions or low confidence\n- Discoverability (what's in ODD?, list canon)\n- Orientation (pass action='orient' explicitly)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The message or question to route"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["orient", "catalog", "preflight", "librarian", "validate", "explain"],
+            "description": "Explicit action override. When provided, oddkit executes this action directly without message-based detection. Required for ORIENT (oddkit does not infer orientation from message content)."
+          },
+          "repo_root": {
+            "type": "string",
+            "description": "Path to the repository root. Defaults to current working directory."
+          },
+          "baseline": {
+            "type": "string",
+            "description": "Override baseline repo (path or git URL). Defaults to klappy.dev canonical baseline."
+          },
+          "epistemic": {
+            "type": "object",
+            "description": "Optional epistemic context from upstream agents. OddKit adapts behavior based on this context but does not infer or validate it.",
+            "properties": {
+              "mode_ref": {
+                "type": "string",
+                "description": "Canon-derived epistemic mode URI (e.g., klappy://canon/epistemic-modes#exploration). OddKit does not define or validate the mode taxonomy."
+              },
+              "confidence": {
+                "type": "string",
+                "enum": ["low", "partial", "strong", "verified"],
+                "description": "Caller-declared confidence level. Used to shape how much context and cross-linking OddKit returns."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["message"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["orient", "catalog", "preflight", "librarian", "validate", "explain"]
+          },
+          "assistant_text": { "type": "string" },
+          "result": { "type": "object" },
+          "debug": { "type": "object" }
+        }
+      }
+    },
     {
       "name": "oddkit_librarian",
       "description": "Ask a policy or lookup question against ODD-governed documentation. Returns citations with quotes from governing documents.",

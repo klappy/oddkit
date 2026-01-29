@@ -23,6 +23,7 @@ import { countWords } from "../utils/slicing.js";
  * Action types (no "none" - always route somewhere useful)
  */
 export const ACTIONS = {
+  ORIENT: "orient",
   PREFLIGHT: "preflight",
   CATALOG: "catalog",
   LIBRARIAN: "librarian",
@@ -34,6 +35,7 @@ export const ACTIONS = {
  * Reason codes for action detection
  */
 export const REASONS = {
+  EXPLICIT_ACTION: "EXPLICIT_ACTION",
   PREFLIGHT_INTENT: "PREFLIGHT_INTENT",
   CATALOG_INTENT: "CATALOG_INTENT",
   EXPLAIN_INTENT: "EXPLAIN_INTENT",
@@ -46,9 +48,13 @@ export const REASONS = {
  * Detect action from user message (antifragile version)
  * Returns { action, reason }
  *
+ * IMPORTANT: ORIENT is NOT detected from message content.
+ * Per CHARTER.md, ORIENT is action-driven only (caller passes action="orient").
+ * oddkit does not interpret phrases like "orient me" - that's upstream's job.
+ *
  * Rules (ORDER MATTERS, precision-first):
  *
- * 0. PREFLIGHT - pre-implementation consultation (highest priority)
+ * 0. PREFLIGHT - pre-implementation consultation
  *    - Direct: "preflight", "before i implement", "what should i read first", etc.
  *    - Compound: implementation verb + target ("implement catalog", "wire mcp", etc.)
  *
@@ -77,7 +83,7 @@ export function detectAction(message) {
 
   const m = message.toLowerCase().trim();
 
-  // Rule 0a: PREFLIGHT - pre-implementation consultation (highest priority)
+  // Rule 0a: PREFLIGHT - pre-implementation consultation
   // Direct triggers
   const preflightPhrases = [
     "preflight",
@@ -218,32 +224,79 @@ export function detectAction(message) {
  * INVARIANT: Always returns { action, assistant_text, result, debug }
  * assistant_text is always populated with something useful to print
  *
+ * Per CHARTER.md: oddkit is epistemic terrain rendering, not reactive search.
+ * It adapts behavior based on epistemic context but never infers mode.
+ * ORIENT is action-driven only (caller passes action="orient").
+ *
  * @param {Object} options
  * @param {string} options.message - The user message
  * @param {string} options.repoRoot - Repository root path
  * @param {string} options.baseline - Baseline override
- * @returns {Object} { action, assistant_text, result, debug }
+ * @param {string} [options.action] - Explicit action override (orient, catalog, preflight, librarian, validate, explain)
+ * @param {Object} [options.epistemic] - Optional epistemic context from upstream
+ * @param {string} [options.epistemic.mode_ref] - Canon-derived mode URI
+ * @param {string} [options.epistemic.confidence] - Caller-declared confidence
+ * @returns {Object} { action, assistant_text, result, debug, suggest_orient }
  */
 export async function runOrchestrate(options) {
-  const { message, repoRoot, baseline } = options;
+  const { message, repoRoot, baseline, action: explicitAction, epistemic } = options;
 
-  // Detect action (never returns "none")
-  const { action, reason } = detectAction(message);
+  // Determine action: explicit action takes precedence, otherwise detect from message
+  // Per CHARTER.md: ORIENT is only available via explicit action parameter
+  let action, reason;
+  if (explicitAction && Object.values(ACTIONS).includes(explicitAction)) {
+    action = explicitAction;
+    reason = "EXPLICIT_ACTION";
+  } else {
+    const detected = detectAction(message);
+    action = detected.action;
+    reason = detected.reason;
+  }
+
+  // Check if we should suggest ORIENT based on epistemic context
+  // Per CHARTER.md: suggest only, never force or reroute
+  let suggestOrient = false;
+  if (
+    epistemic &&
+    epistemic.mode_ref &&
+    epistemic.mode_ref.includes("exploration") &&
+    epistemic.confidence &&
+    epistemic.confidence !== "strong" &&
+    epistemic.confidence !== "verified" &&
+    action !== ACTIONS.ORIENT
+  ) {
+    suggestOrient = true;
+  }
 
   // Build base result
   const result = {
     action,
     assistant_text: null,
     result: null,
+    suggest_orient: suggestOrient,
     debug: {
       reason,
       message_preview: message ? message.slice(0, 100) : null,
+      epistemic_provided: !!epistemic,
+      epistemic_mode: epistemic?.mode_ref || null,
+      epistemic_confidence: epistemic?.confidence || null,
     },
   };
 
   // Execute appropriate task
   try {
     switch (action) {
+      case ACTIONS.ORIENT: {
+        // ORIENT reuses catalog but frames it as terrain/orientation
+        const taskResult = await runCatalog({
+          repo: repoRoot || process.cwd(),
+          baseline,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildOrientAssistantText(taskResult, epistemic);
+        break;
+      }
+
       case ACTIONS.PREFLIGHT: {
         const taskResult = await runPreflight({
           repo: repoRoot || process.cwd(),
@@ -397,6 +450,68 @@ function buildCatalogAssistantText(taskResult) {
   lines.push("Operational playbooks:");
   for (const p of taskResult.playbooks || []) {
     lines.push(`  ${p.path}`);
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for ORIENT results (terrain rendering)
+ * Per CHARTER.md: oddkit is epistemic terrain rendering, not reactive search.
+ */
+function buildOrientAssistantText(taskResult, epistemic) {
+  const lines = [];
+
+  lines.push("Epistemic terrain");
+  lines.push("");
+
+  // If epistemic context provided, acknowledge it
+  if (epistemic?.mode_ref) {
+    const mode = epistemic.mode_ref.split("#").pop() || "unknown";
+    const conf = epistemic.confidence || "unspecified";
+    lines.push(`Context: ${mode} mode, ${conf} confidence`);
+    lines.push("");
+  }
+
+  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const nextPaths = (taskResult.next_up || []).map((d) => d.path);
+  lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
+  lines.push("");
+
+  lines.push("Canon by tag:");
+  for (const { tag, docs: docList } of taskResult.canon_by_tag || []) {
+    if (docList.length > 0) {
+      lines.push(`  ${tag}: ${docList.map((d) => d.path).join(", ")}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("Operational playbooks:");
+  for (const p of taskResult.playbooks || []) {
+    lines.push(`  ${p.path}`);
+  }
+  lines.push("");
+
+  // Contextual suggestions based on epistemic mode (if provided)
+  if (epistemic?.mode_ref) {
+    lines.push("Suggested next actions:");
+    if (epistemic.mode_ref.includes("exploration")) {
+      lines.push("  - Read the quickstart or start_here doc");
+      lines.push("  - Ask: What constraints apply to [topic]?");
+      lines.push("  - Ask: What's the definition of done for [task]?");
+    } else if (epistemic.mode_ref.includes("planning")) {
+      lines.push("  - Review constraints and governing docs");
+      lines.push("  - Ask: What prior decisions affect [topic]?");
+      lines.push("  - Run preflight before implementation");
+    } else if (epistemic.mode_ref.includes("execution")) {
+      lines.push("  - Use librarian for specific policy questions");
+      lines.push("  - When ready, validate your completion claim");
+    }
+  } else {
+    lines.push("To go deeper:");
+    lines.push("  - Ask a specific policy question (librarian)");
+    lines.push("  - Run preflight before implementing");
+    lines.push("  - Validate completion claims with artifacts");
   }
 
   return lines.join("\n").trim();

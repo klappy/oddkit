@@ -2,6 +2,10 @@
 
 Agent-first CLI for ODD-governed repos. Portable Librarian + Validation with baseline knowledge.
 
+> **Authoritative:** [docs/oddkit/CHARTER.md](docs/oddkit/CHARTER.md)
+>
+> OddKit is epistemic terrain rendering (map), not epistemic authority (compass).
+
 ## Documentation
 
 | Doc                                                               | What It Covers                  |
