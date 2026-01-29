@@ -91,6 +91,16 @@ export const RULES = {
     meaning:
       "One or more duplicate identity groups were found and collapsed. Consider adding uri or supersedes to make identity explicit.",
   },
+  EXCESSIVE_DUPLICATES: {
+    title: "Excessive duplicates detected",
+    meaning:
+      "More than 25% of candidates were duplicates. Baseline and local repos overlap heavily. Consider pinning baseline ref or reducing baseline scope.",
+  },
+  IDENTITY_COLLISION_DETECTED: {
+    title: "URI collision with content mismatch",
+    meaning:
+      "Multiple docs share the same URI but have different content. This is a metadata error — URIs must be unique identities. Fix the conflicting documents.",
+  },
 
   // Validation rules
   VALIDATION_CLAIMS_PARSED: {

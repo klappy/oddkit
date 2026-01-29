@@ -8,22 +8,25 @@ import { writeLast } from "../state/last.js";
 const MIN_EVIDENCE_BULLETS = 2;
 const MAX_RESULTS = 5;
 const MIN_CONFIDENCE_THRESHOLD = 0.6; // Below this, result is advisory
+const EXCESSIVE_DUPLICATE_THRESHOLD = 0.25; // >25% duplicates is a smell
 
 /**
  * Compute candidate identity key for dedup
- * Precedence: uri > normalized path
  *
- * Duplicates are an identity/equivalence issue, not a semantic override.
- * This is different from supersedes (which is semantic override of different docs).
+ * Identity key rules (per user critique: path-only is unsafe across repos):
+ * - If URI exists: id = uri (URI is TRUE identity)
+ * - Else: id = path + "::" + content_hash (path is heuristic, hash confirms)
+ *
+ * This prevents collision across repos where same path has different content.
  */
 function computeIdentityKey(doc) {
-  // 1. If uri exists, use it (stable across origins)
+  // 1. If uri exists, use it (stable across origins, TRUE identity)
   if (doc.uri) {
-    return doc.uri;
+    return { key: doc.uri, type: "uri" };
   }
-  // 2. Else use normalized path (relative to repo root, origin-agnostic)
-  // Normalize by removing origin-specific prefixes
-  return doc.path;
+  // 2. Else use path + content_hash (path is heuristic, hash confirms identity)
+  const hash = doc.content_hash || "no-hash";
+  return { key: `${doc.path}::${hash}`, type: "path+hash" };
 }
 
 /**
@@ -35,31 +38,53 @@ function computeIdentityKey(doc) {
  * 3. Evidence: strong > medium > weak > none
  * 4. Intent: promoted > pattern > operational > experiment > workaround
  *
+ * SAFETY FEATURES (per user critique):
+ * - Non-URI dedup requires content_hash match (path-only is heuristic)
+ * - URI collision with content mismatch emits IDENTITY_COLLISION warning
+ * - Excessive duplicates (>25%) emits EXCESSIVE_DUPLICATES warning
+ *
  * This is not "forced convergence" — it's treating duplicates as duplicates.
  * Per canon/weighted-relevance-and-arbitration.md: this removes artifact ambiguity
  * so "conflict" means real disagreement, not index hygiene.
  */
 function deduplicateCandidates(docs) {
-  const groups = new Map(); // id -> docs[]
+  const groups = new Map(); // key -> { docs[], idType }
+  const collisions = []; // URI collisions where content differs
 
   // Group by identity key
   for (const doc of docs) {
-    const id = computeIdentityKey(doc);
-    if (!groups.has(id)) {
-      groups.set(id, []);
+    const { key, type } = computeIdentityKey(doc);
+    if (!groups.has(key)) {
+      groups.set(key, { docs: [], idType: type });
     }
-    groups.get(id).push(doc);
+    groups.get(key).docs.push(doc);
   }
 
   const deduplicated = [];
   const collapsedGroups = [];
 
-  for (const [id, groupDocs] of groups) {
+  for (const [key, { docs: groupDocs, idType }] of groups) {
     if (groupDocs.length === 1) {
       // No duplicates, keep as-is
       deduplicated.push(groupDocs[0]);
     } else {
-      // Multiple docs with same identity — pick representative
+      // Multiple docs with same identity key
+
+      // SAFETY CHECK: For URI-based identity, verify content hashes match
+      // If they don't, this is IDENTITY_COLLISION (bad metadata)
+      if (idType === "uri") {
+        const hashes = [...new Set(groupDocs.map((d) => d.content_hash || "no-hash"))];
+        if (hashes.length > 1) {
+          // URI collision with different content — this is a metadata problem
+          collisions.push({
+            uri: key,
+            paths: groupDocs.map((d) => ({ path: d.path, origin: d.origin, hash: d.content_hash })),
+            message: `URI '${key}' has ${hashes.length} different content versions`,
+          });
+        }
+      }
+
+      // Pick representative using tie-breaker
       const sorted = groupDocs.sort((a, b) => {
         // 1. Origin: local > baseline
         if (a.origin !== b.origin) {
@@ -86,17 +111,28 @@ function deduplicateCandidates(docs) {
 
       deduplicated.push(chosen);
       collapsedGroups.push({
-        id,
-        chosen: { origin: chosen.origin, path: chosen.path },
-        collapsed: collapsed.map((d) => ({ origin: d.origin, path: d.path })),
+        id: key,
+        idType,
+        chosen: { origin: chosen.origin, path: chosen.path, hash: chosen.content_hash },
+        collapsed: collapsed.map((d) => ({
+          origin: d.origin,
+          path: d.path,
+          hash: d.content_hash,
+        })),
       });
     }
   }
 
+  const duplicateCount = docs.length - deduplicated.length;
+  const duplicateRatio = docs.length > 0 ? duplicateCount / docs.length : 0;
+
   return {
     docs: deduplicated,
     collapsedGroups,
-    duplicateCount: docs.length - deduplicated.length,
+    duplicateCount,
+    duplicateRatio,
+    collisions, // URI collisions where content differs
+    isExcessive: duplicateRatio > EXCESSIVE_DUPLICATE_THRESHOLD,
   };
 }
 
@@ -309,7 +345,14 @@ export async function runLibrarian(options) {
 
   // Apply dedup (identity collapse of same docs across origins)
   // This is different from supersedes: dedup handles index hygiene, supersedes handles semantic override
-  const { docs, collapsedGroups, duplicateCount } = deduplicateCandidates(afterSupersedes);
+  const {
+    docs,
+    collapsedGroups,
+    duplicateCount,
+    duplicateRatio,
+    collisions: uriCollisions,
+    isExcessive: isExcessiveDuplicates,
+  } = deduplicateCandidates(afterSupersedes);
 
   // INVARIANT: If baseline unavailable, no docs should have origin:"baseline"
   if (!baselineAvailable) {
@@ -490,12 +533,41 @@ export async function runLibrarian(options) {
 
   // Index hygiene warnings (not blocking contradictions, but smells to track)
   const warnings = [];
+
+  // IDENTITY_COLLISION: URI exists but content differs (metadata problem)
+  if (uriCollisions.length > 0) {
+    for (const collision of uriCollisions) {
+      warnings.push({
+        type: "IDENTITY_COLLISION",
+        subtype: "URI_CONTENT_MISMATCH",
+        uri: collision.uri,
+        paths: collision.paths,
+        message: collision.message,
+        severity: "high", // This is a metadata error, should be fixed
+      });
+    }
+  }
+
+  // EXCESSIVE_DUPLICATES: >25% of candidates were duplicates (unhealthy overlap)
+  if (isExcessiveDuplicates) {
+    warnings.push({
+      type: "EXCESSIVE_DUPLICATES",
+      count: duplicateCount,
+      ratio: Math.round(duplicateRatio * 100),
+      message: `${duplicateCount} duplicates (${Math.round(duplicateRatio * 100)}% of candidates). Baseline and local overlap heavily; consider pinning baseline ref or reducing baseline scope.`,
+      threshold: Math.round(EXCESSIVE_DUPLICATE_THRESHOLD * 100),
+    });
+  }
+
+  // INDEX_DUPLICATE: Standard dedup happened (informational)
   if (collapsedGroups.length > 0) {
     warnings.push({
       type: "INDEX_DUPLICATE",
       count: duplicateCount,
-      message: `${duplicateCount} duplicate(s) collapsed from ${collapsedGroups.length} identity group(s). Consider adding uri or supersedes.`,
-      groups: collapsedGroups,
+      ratio: Math.round(duplicateRatio * 100),
+      message: `${duplicateCount} duplicate(s) collapsed from ${collapsedGroups.length} identity group(s).`,
+      groups: collapsedGroups.slice(0, 10), // Limit to first 10 for readability
+      total_groups: collapsedGroups.length,
     });
   }
 
@@ -580,6 +652,12 @@ export async function runLibrarian(options) {
 
   if (duplicateCount > 0) {
     rulesFired.push("INDEX_DUPLICATE_COLLAPSED");
+  }
+  if (isExcessiveDuplicates) {
+    rulesFired.push("EXCESSIVE_DUPLICATES");
+  }
+  if (uriCollisions.length > 0) {
+    rulesFired.push("IDENTITY_COLLISION_DETECTED");
   }
 
   if (status === "INSUFFICIENT_EVIDENCE") {

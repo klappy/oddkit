@@ -314,13 +314,39 @@ function renderMarkdown(result) {
 
   // Warnings (hygiene issues, not blocking)
   if (result.arbitration?.warnings && result.arbitration.warnings.length > 0) {
-    lines.push("## ⚠️ Hygiene warnings");
-    lines.push("*These are not blocking contradictions, but smells to track for promotion pipeline.*");
-    lines.push("");
-    for (const w of result.arbitration.warnings) {
-      lines.push(`- **${w.type}**: ${w.message}`);
+    // Separate high-severity warnings (errors) from low-severity (info)
+    const highSeverity = result.arbitration.warnings.filter((w) => w.severity === "high");
+    const normalWarnings = result.arbitration.warnings.filter((w) => w.severity !== "high");
+
+    if (highSeverity.length > 0) {
+      lines.push("## 🚨 Metadata errors (fix required)");
+      lines.push("");
+      for (const w of highSeverity) {
+        lines.push(`- **${w.type}** (${w.subtype || ""}): ${w.message}`);
+        if (w.paths) {
+          for (const p of w.paths) {
+            lines.push(`  - \`${p.path}\` (${p.origin}, hash: ${p.hash || "none"})`);
+          }
+        }
+      }
+      lines.push("");
     }
-    lines.push("");
+
+    if (normalWarnings.length > 0) {
+      lines.push("## ⚠️ Hygiene warnings");
+      lines.push(
+        "*These are not blocking contradictions, but smells to track for promotion pipeline.*",
+      );
+      lines.push("");
+      for (const w of normalWarnings) {
+        if (w.type === "EXCESSIVE_DUPLICATES") {
+          lines.push(`- **${w.type}**: ${w.message} (threshold: ${w.threshold}%)`);
+        } else {
+          lines.push(`- **${w.type}**: ${w.message}`);
+        }
+      }
+      lines.push("");
+    }
   }
 
   // Candidates considered (arbitration transparency)

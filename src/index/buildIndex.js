@@ -1,8 +1,19 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
 import { join, relative, dirname } from "path";
 import { homedir } from "os";
+import { createHash } from "crypto";
 import fg from "fast-glob";
 import matter from "gray-matter";
+
+/**
+ * Compute content hash for identity dedup (non-URI fallback)
+ * Uses first 8 chars of SHA-256 of normalized content (without frontmatter)
+ */
+function computeContentHash(content) {
+  // Normalize: trim, collapse whitespace
+  const normalized = content.trim().replace(/\s+/g, " ");
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 8);
+}
 
 // Default include patterns
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md"];
@@ -78,6 +89,8 @@ async function indexRoot(rootPath, origin) {
         scope_key: frontmatter.scope_key || null, // identifier for scope
         intent: inferIntent(filePath, frontmatter), // workaround | experiment | operational | pattern | promoted
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
+        // Identity for dedup (per user critique: path-only is unsafe across repos)
+        content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
         headings,
         contentLength: content.length,
         contentPreview: content.slice(0, 500),
