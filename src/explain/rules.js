@@ -116,6 +116,16 @@ export const RULES = {
     meaning:
       "Rule direction has INVERTED (e.g., MUST → MUST NOT). This is a high-severity semantic change that requires review.",
   },
+  NEW_NORMATIVE_PROHIBITION: {
+    title: "New prohibition introduced",
+    meaning:
+      "A new prohibition phrase (MUST NOT, SHALL NOT, NEVER, etc.) was introduced that did not exist in the baseline version. Even without a polarity flip, this is a significant rule change.",
+  },
+  NEW_NORMATIVE_REQUIREMENT: {
+    title: "New requirement introduced",
+    meaning:
+      "A new requirement phrase (MUST, REQUIRED, SHALL, etc.) was introduced that did not exist in the baseline version. This may indicate scope expansion.",
+  },
   MISSING_URI_FOR_POLICY_DOC: {
     title: "Governing doc lacks URI",
     meaning:

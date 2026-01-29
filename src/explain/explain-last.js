@@ -380,6 +380,20 @@ function renderMarkdown(result) {
           const govBadge = d.isGoverning ? " 🏛️" : "";
           lines.push(`- **${d.uri}**${flipBadge}${govBadge}`);
           lines.push(`  - ${d.message}`);
+
+          // NEW: Show specific phrase changes
+          if (d.newProhibitions && d.newProhibitions.length > 0) {
+            lines.push(`  - 🚫 **New prohibitions:** ${d.newProhibitions.join(", ")}`);
+          }
+          if (d.newRequirements && d.newRequirements.length > 0) {
+            lines.push(`  - ✅ **New requirements:** ${d.newRequirements.join(", ")}`);
+          }
+          if (d.removedProhibitions && d.removedProhibitions.length > 0) {
+            lines.push(`  - ⚠️ **Removed prohibitions:** ${d.removedProhibitions.join(", ")}`);
+          }
+          if (d.removedRequirements && d.removedRequirements.length > 0) {
+            lines.push(`  - ⚠️ **Removed requirements:** ${d.removedRequirements.join(", ")}`);
+          }
         }
       }
       lines.push("");

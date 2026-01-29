@@ -41,36 +41,171 @@ function computeDriftVolatility(localDoc, baselineDoc) {
 /**
  * Normative tokens that carry policy weight
  * Changes in these tokens indicate potential rule changes, not just edits
+ *
+ * IMPORTANT: Ordered by longest-match-first within each category
+ * to prevent double-counting (e.g., "MUST NOT" counting both as negative AND positive)
  */
 const NORMATIVE_TOKENS = {
+  // Multi-word phrases MUST be scanned first (longest match first)
+  negative_phrases: ["MUST NOT", "MUST NEVER", "SHALL NOT", "SHOULD NOT"],
+  positive_phrases: [], // Currently none, but placeholder for future
+  conditional_phrases: [],
+
+  // Single-word tokens scanned AFTER phrases are masked
   positive: ["MUST", "REQUIRED", "SHALL", "ALWAYS", "MANDATORY"],
-  negative: ["MUST NOT", "MUST NEVER", "SHALL NOT", "NEVER", "FORBIDDEN", "PROHIBITED"],
-  conditional: ["SHOULD", "SHOULD NOT", "MAY", "OPTIONAL", "RECOMMENDED"],
+  negative: ["NEVER", "FORBIDDEN", "PROHIBITED"],
+  conditional: ["SHOULD", "MAY", "OPTIONAL", "RECOMMENDED"],
 };
 
 /**
+ * Strip fenced code blocks from content before normative scanning
+ * Prevents examples inside ``` blocks from being counted as policy
+ */
+function stripFencedCodeBlocks(content) {
+  if (!content) return "";
+  // Match fenced code blocks: ``` optionally with language, then content, then ```
+  // Using [\s\S] instead of . to match across newlines
+  return content.replace(/```[\s\S]*?```/g, "");
+}
+
+/**
+ * Find all occurrences of normative phrases in content
+ * Returns: Set of matched phrases (for set-diff calculations)
+ */
+function findNormativePhrases(content) {
+  if (!content) return { positive: new Set(), negative: new Set(), conditional: new Set() };
+
+  // Strip code blocks first - examples are not policy
+  const stripped = stripFencedCodeBlocks(content);
+  const upper = stripped.toUpperCase();
+
+  // Use a working copy that we'll mask as we find phrases
+  let working = upper;
+
+  const found = {
+    positive: new Set(),
+    negative: new Set(),
+    conditional: new Set(),
+  };
+
+  // Helper to find and mask phrases (longest-match-first)
+  const findAndMask = (phrases, category) => {
+    for (const phrase of phrases) {
+      // Check if phrase exists BEFORE masking (for set membership)
+      if (upper.includes(phrase)) {
+        found[category].add(phrase);
+      }
+      // Mask all occurrences in working copy to prevent sub-token double-count
+      working = working.split(phrase).join("█".repeat(phrase.length));
+    }
+  };
+
+  // Phase 1: Multi-word negatives first (highest priority to prevent double-count)
+  findAndMask(NORMATIVE_TOKENS.negative_phrases, "negative");
+
+  // Phase 2: Multi-word positives (currently empty, but future-proof)
+  findAndMask(NORMATIVE_TOKENS.positive_phrases, "positive");
+
+  // Phase 3: Multi-word conditionals
+  findAndMask(NORMATIVE_TOKENS.conditional_phrases, "conditional");
+
+  // Phase 4: Single-word tokens (on the masked working copy)
+  for (const token of NORMATIVE_TOKENS.positive) {
+    // Use word boundary check to avoid partial matches
+    const regex = new RegExp(`\\b${token}\\b`, "g");
+    if (regex.test(working)) {
+      found.positive.add(token);
+    }
+  }
+
+  for (const token of NORMATIVE_TOKENS.negative) {
+    const regex = new RegExp(`\\b${token}\\b`, "g");
+    if (regex.test(working)) {
+      found.negative.add(token);
+    }
+  }
+
+  for (const token of NORMATIVE_TOKENS.conditional) {
+    const regex = new RegExp(`\\b${token}\\b`, "g");
+    if (regex.test(working)) {
+      found.conditional.add(token);
+    }
+  }
+
+  return found;
+}
+
+/**
  * Count normative tokens in content
+ * Uses longest-match-first scanning to avoid double-counting
+ * Strips fenced code blocks to avoid counting examples as policy
  */
 function countNormativeTokens(content) {
   if (!content) return { positive: 0, negative: 0, conditional: 0 };
 
-  const upper = content.toUpperCase();
+  // Strip code blocks first - examples are not policy
+  const stripped = stripFencedCodeBlocks(content);
+  const upper = stripped.toUpperCase();
+
+  // Use a working copy that we'll mask as we find phrases
+  let working = upper;
+
+  let positiveCount = 0;
+  let negativeCount = 0;
+  let conditionalCount = 0;
+
+  // Helper to count and mask phrases (longest-match-first)
+  const countAndMask = (phrases) => {
+    let count = 0;
+    for (const phrase of phrases) {
+      const matches = working.split(phrase).length - 1;
+      count += matches;
+      // Mask matched phrases to prevent sub-token double-counting
+      working = working.split(phrase).join("█".repeat(phrase.length));
+    }
+    return count;
+  };
+
+  // Phase 1: Multi-word negatives first (e.g., "MUST NOT" before "MUST")
+  negativeCount += countAndMask(NORMATIVE_TOKENS.negative_phrases);
+
+  // Phase 2: Multi-word positives (currently empty)
+  positiveCount += countAndMask(NORMATIVE_TOKENS.positive_phrases);
+
+  // Phase 3: Multi-word conditionals (e.g., "SHOULD NOT")
+  // Note: SHOULD NOT is in negative_phrases, so SHOULD alone is conditional
+  conditionalCount += countAndMask(NORMATIVE_TOKENS.conditional_phrases);
+
+  // Phase 4: Single-word tokens (on masked working copy)
+  positiveCount += countAndMask(NORMATIVE_TOKENS.positive);
+  negativeCount += countAndMask(NORMATIVE_TOKENS.negative);
+  conditionalCount += countAndMask(NORMATIVE_TOKENS.conditional);
+
   return {
-    positive: NORMATIVE_TOKENS.positive.reduce((sum, t) => sum + (upper.split(t).length - 1), 0),
-    negative: NORMATIVE_TOKENS.negative.reduce((sum, t) => sum + (upper.split(t).length - 1), 0),
-    conditional: NORMATIVE_TOKENS.conditional.reduce(
-      (sum, t) => sum + (upper.split(t).length - 1),
-      0,
-    ),
+    positive: positiveCount,
+    negative: negativeCount,
+    conditional: conditionalCount,
   };
 }
 
 /**
+ * Compute set difference: items in setA but not in setB
+ */
+function setDifference(setA, setB) {
+  return new Set([...setA].filter((x) => !setB.has(x)));
+}
+
+/**
  * Detect normative drift between two content versions
- * Returns: { hasNormativeDrift, polarityFlip, details }
+ * Returns: { hasNormativeDrift, polarityFlip, newProhibitions, newRequirements, details }
  *
- * This catches "MUST → MUST NOT" changes that char-delta misses.
+ * This catches:
+ * - "MUST → MUST NOT" changes that char-delta misses (polarity flip)
+ * - New prohibitions introduced (high priority signal)
+ * - New requirements introduced (medium priority signal)
+ *
  * A polarity flip (positive→negative or vice versa) is HIGH severity.
+ * New prohibitions/requirements are actionable signals even without polarity flip.
  */
 function detectNormativeDrift(localDoc, baselineDoc) {
   const localContent = localDoc?.contentPreview || "";
@@ -78,6 +213,22 @@ function detectNormativeDrift(localDoc, baselineDoc) {
 
   const localCounts = countNormativeTokens(localContent);
   const baselineCounts = countNormativeTokens(baselineContent);
+
+  // Find specific phrases for set-diff analysis
+  const localPhrases = findNormativePhrases(localContent);
+  const baselinePhrases = findNormativePhrases(baselineContent);
+
+  // NEW PROHIBITIONS: negative phrases in local that weren't in baseline
+  const newProhibitions = setDifference(localPhrases.negative, baselinePhrases.negative);
+
+  // NEW REQUIREMENTS: positive phrases in local that weren't in baseline
+  const newRequirements = setDifference(localPhrases.positive, baselinePhrases.positive);
+
+  // REMOVED PROHIBITIONS: negative phrases in baseline that aren't in local
+  const removedProhibitions = setDifference(baselinePhrases.negative, localPhrases.negative);
+
+  // REMOVED REQUIREMENTS: positive phrases in baseline that aren't in local
+  const removedRequirements = setDifference(baselinePhrases.positive, localPhrases.positive);
 
   // Check for polarity flip: was positive-heavy, now negative-heavy (or vice versa)
   const localPolarity = localCounts.positive - localCounts.negative;
@@ -91,16 +242,39 @@ function detectNormativeDrift(localDoc, baselineDoc) {
     baselineCounts.positive + baselineCounts.negative + baselineCounts.conditional;
   const normativeCountChange = Math.abs(totalLocalNormative - totalBaselineNormative);
 
-  // Normative drift if: polarity flip OR significant count change
-  const hasNormativeDrift = polarityFlip || normativeCountChange >= 2;
+  // Normative drift conditions:
+  // - polarity flip (critical)
+  // - significant count change (>= 2 tokens)
+  // - new prohibitions introduced (even a single one is significant)
+  // - new requirements introduced
+  const hasNormativeDrift =
+    polarityFlip ||
+    normativeCountChange >= 2 ||
+    newProhibitions.size > 0 ||
+    newRequirements.size > 0;
 
   return {
     hasNormativeDrift,
     polarityFlip,
+    newProhibitions: [...newProhibitions],
+    newRequirements: [...newRequirements],
+    removedProhibitions: [...removedProhibitions],
+    removedRequirements: [...removedRequirements],
     details: {
       local: localCounts,
       baseline: baselineCounts,
       countChange: normativeCountChange,
+      // Phrase-level details for debugging
+      localPhrases: {
+        positive: [...localPhrases.positive],
+        negative: [...localPhrases.negative],
+        conditional: [...localPhrases.conditional],
+      },
+      baselinePhrases: {
+        positive: [...baselinePhrases.positive],
+        negative: [...baselinePhrases.negative],
+        conditional: [...baselinePhrases.conditional],
+      },
     },
   };
 }
@@ -185,6 +359,20 @@ function deduplicateCandidates(docs) {
               localDoc?.authority_band === "governing" ||
               baselineDoc?.authority_band === "governing";
 
+            // Build detailed message based on drift type
+            let driftMessage;
+            if (normative.polarityFlip) {
+              driftMessage = `URI '${key}' has POLARITY FLIP — normative change detected`;
+            } else if (normative.newProhibitions.length > 0) {
+              driftMessage = `URI '${key}' has NEW PROHIBITIONS: ${normative.newProhibitions.join(", ")}`;
+            } else if (normative.newRequirements.length > 0) {
+              driftMessage = `URI '${key}' has NEW REQUIREMENTS: ${normative.newRequirements.join(", ")}`;
+            } else if (normative.hasNormativeDrift) {
+              driftMessage = `URI '${key}' has normative drift (rule language changed)`;
+            } else {
+              driftMessage = `URI '${key}' has ${volatility} volatility drift`;
+            }
+
             drifts.push({
               uri: key,
               local: localDoc
@@ -204,12 +392,13 @@ function deduplicateCandidates(docs) {
               volatility, // low | medium | high (size-based, NOT semantic)
               normativeDrift: normative.hasNormativeDrift,
               polarityFlip: normative.polarityFlip,
+              // NEW: Specific phrase changes
+              newProhibitions: normative.newProhibitions,
+              newRequirements: normative.newRequirements,
+              removedProhibitions: normative.removedProhibitions,
+              removedRequirements: normative.removedRequirements,
               isGoverning,
-              message: normative.polarityFlip
-                ? `URI '${key}' has POLARITY FLIP — normative change detected`
-                : normative.hasNormativeDrift
-                  ? `URI '${key}' has normative drift (rule language changed)`
-                  : `URI '${key}' has ${volatility} volatility drift`,
+              message: driftMessage,
             });
           } else {
             // SAME origin but different content = TRUE COLLISION (metadata error)
@@ -899,6 +1088,19 @@ export async function runLibrarian(options) {
       const polarityFlips = normativeDrifts.filter((d) => d.polarityFlip);
       if (polarityFlips.length > 0) {
         rulesFired.push("POLARITY_FLIP_DETECTED"); // Critical: rule direction changed
+      }
+      // NEW: Track new prohibitions/requirements introduced
+      const driftsWithNewProhibitions = uriDrifts.filter(
+        (d) => d.newProhibitions && d.newProhibitions.length > 0,
+      );
+      if (driftsWithNewProhibitions.length > 0) {
+        rulesFired.push("NEW_NORMATIVE_PROHIBITION"); // New prohibition introduced
+      }
+      const driftsWithNewRequirements = uriDrifts.filter(
+        (d) => d.newRequirements && d.newRequirements.length > 0,
+      );
+      if (driftsWithNewRequirements.length > 0) {
+        rulesFired.push("NEW_NORMATIVE_REQUIREMENT"); // New requirement introduced
       }
     }
   }
