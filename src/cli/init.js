@@ -17,10 +17,11 @@ import { homedir } from "os";
 
 /**
  * Default oddkit server spec for MCP
+ * Uses GitHub package reference for portable execution (no globals, no linking, no publishing)
  */
 const ODDKIT_SERVER_SPEC = {
   command: "npx",
-  args: ["oddkit-mcp"],
+  args: ["--yes", "--package", "github:klappy/oddkit", "oddkit-mcp"],
   env: {},
 };
 
