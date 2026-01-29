@@ -69,7 +69,8 @@ function runOddkit(args) {
 const ALL_TOOLS = [
   {
     name: "oddkit_orchestrate",
-    description: "Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.",
+    description:
+      "Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.",
     inputSchema: {
       type: "object",
       properties: {

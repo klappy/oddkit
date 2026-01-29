@@ -87,9 +87,7 @@ export async function readExcerpt(options) {
     // If anchor exists, extract section under that heading
     if (anchor) {
       const headings = extractHeadings(content);
-      const targetHeading = headings.find(
-        (h) => h.text.toLowerCase() === anchor.toLowerCase(),
-      );
+      const targetHeading = headings.find((h) => h.text.toLowerCase() === anchor.toLowerCase());
 
       if (targetHeading) {
         const startLine = targetHeading.startLine + 1; // Skip heading line

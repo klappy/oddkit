@@ -46,11 +46,13 @@ When using oddkit in Cursor:
 3. **Print it verbatim** — it's already a complete answer with quotes and citations
 
 Example:
+
 - User asks: "What is epistemic challenge?"
 - Cursor calls: `oddkit_orchestrate({ message: "What is epistemic challenge?", repo_root: "." })`
 - Cursor prints: the `assistant_text` field directly (no extra narration needed)
 
 The `assistant_text` includes:
+
 - Complete answer with 2-4 substantial quotes
 - Citations (path#anchor format)
 - Advisory messaging if confidence is low

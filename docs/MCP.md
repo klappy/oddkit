@@ -46,12 +46,12 @@ This writes config to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--
 
 To expose all tools for debugging, set `ODDKIT_DEV_TOOLS=1` in your MCP server environment.
 
-| Tool                 | Description                                                                         |
-| -------------------- | ----------------------------------------------------------------------------------- |
+| Tool                 | Description                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
 | `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and returns ready-to-send `assistant_text` |
-| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation (dev only)         |
-| `oddkit_validate`    | Validate a completion claim with verdict and gaps (dev only)                        |
-| `oddkit_explain`     | Explain the last oddkit result (dev only)                                           |
+| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation (dev only)                        |
+| `oddkit_validate`    | Validate a completion claim with verdict and gaps (dev only)                                      |
+| `oddkit_explain`     | Explain the last oddkit result (dev only)                                                         |
 
 ## Recommended: Use `oddkit_orchestrate`
 
@@ -247,10 +247,10 @@ echo "Done with the UI update" | oddkit tool validate -m @stdin
 
 ## Environment Variables
 
-| Variable              | Description                              |
-| --------------------- | ---------------------------------------- |
-| `ODDKIT_BASELINE`     | Override baseline repo (path or git URL) |
-| `ODDKIT_BASELINE_REF` | Pin baseline to specific branch/tag      |
+| Variable              | Description                                                         |
+| --------------------- | ------------------------------------------------------------------- |
+| `ODDKIT_BASELINE`     | Override baseline repo (path or git URL)                            |
+| `ODDKIT_BASELINE_REF` | Pin baseline to specific branch/tag                                 |
 | `ODDKIT_DEV_TOOLS`    | Set to `1` to expose all tools (default: only `oddkit_orchestrate`) |
 
 ## Output Contract
