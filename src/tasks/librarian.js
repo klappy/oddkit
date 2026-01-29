@@ -2,7 +2,7 @@ import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
-import { extractQuote, formatCitation } from "../utils/slicing.js";
+import { extractQuote, formatCitation, MIN_QUOTE_WORDS, countWords } from "../utils/slicing.js";
 import { writeLast } from "../state/last.js";
 
 const MIN_EVIDENCE_BULLETS = 2;
@@ -75,7 +75,7 @@ export async function runLibrarian(options) {
     const baselineDocsPresent = docs.some((d) => d.origin === "baseline");
     if (baselineDocsPresent) {
       throw new Error(
-        "Invariant violated: baseline documents present in index while baseline is unavailable"
+        "Invariant violated: baseline documents present in index while baseline is unavailable",
       );
     }
   }
@@ -99,8 +99,12 @@ export async function runLibrarian(options) {
   const rejectionReasons = {
     NO_HEADING: 0,
     TOO_SHORT: 0,
-    DUPLICATE_SOURCE: 0,
+    DUPLICATE_PATH_HEADING: 0,
+    DUPLICATE_PATH_DIVERSITY: 0,
   };
+  // Track seen (path, heading) pairs for hard dedup
+  const seenPathHeading = new Set();
+  // Track seen paths for diversity preference (soft dedup when we have enough)
   const seenPaths = new Set();
 
   for (const { doc } of scored) {
@@ -110,25 +114,38 @@ export async function runLibrarian(options) {
       continue;
     }
 
-    const quote = extractQuote(doc, heading);
-    if (!quote || quote.length < 20) {
+    const quoteResult = extractQuote(doc, heading);
+    // Use word count (MIN_QUOTE_WORDS = 8), not character count
+    if (!quoteResult || quoteResult.wordCount < MIN_QUOTE_WORDS) {
       rejectionReasons.TOO_SHORT++;
       continue;
     }
 
     const citation = formatCitation(doc, heading);
+    const pathHeadingKey = `${doc.path}::${heading.text}`;
 
-    // Check for duplicate source (same path, different origin)
-    if (seenPaths.has(doc.path)) {
-      rejectionReasons.DUPLICATE_SOURCE++;
+    // Hard dedup: same path AND same heading is always rejected
+    if (seenPathHeading.has(pathHeadingKey)) {
+      rejectionReasons.DUPLICATE_PATH_HEADING++;
       continue;
     }
+
+    // Soft dedup: same path but different heading
+    // Only apply diversity preference if we already have enough evidence
+    if (seenPaths.has(doc.path) && evidence.length >= MIN_EVIDENCE_BULLETS) {
+      rejectionReasons.DUPLICATE_PATH_DIVERSITY++;
+      continue;
+    }
+
+    seenPathHeading.add(pathHeadingKey);
     seenPaths.add(doc.path);
 
     evidence.push({
-      quote,
+      quote: quoteResult.quote,
       citation,
       origin: doc.origin,
+      wordCount: quoteResult.wordCount,
+      truncated: quoteResult.truncated,
     });
 
     sources.push(citation);
@@ -139,7 +156,7 @@ export async function runLibrarian(options) {
   const evidenceRejectedCount = Object.values(rejectionReasons).reduce((a, b) => a + b, 0);
   // Filter out zero counts
   const evidenceRejectedReasons = Object.fromEntries(
-    Object.entries(rejectionReasons).filter(([, v]) => v > 0)
+    Object.entries(rejectionReasons).filter(([, v]) => v > 0),
   );
 
   // Determine status
@@ -198,7 +215,7 @@ export async function runLibrarian(options) {
     const baselineEvidence = evidence.filter((e) => e.origin === "baseline");
     if (baselineEvidence.length > 0) {
       throw new Error(
-        `Invariant violated: ${baselineEvidence.length} evidence items have origin:"baseline" while baseline is unavailable`
+        `Invariant violated: ${baselineEvidence.length} evidence items have origin:"baseline" while baseline is unavailable`,
       );
     }
   } else {
@@ -226,6 +243,7 @@ export async function runLibrarian(options) {
       queryTokens,
       baseline_ref: baselineRef,
       baseline_ref_source: baseline.refSource,
+      baseline_commit: baseline.commitSha || null,
       baseline_available: baselineAvailable,
       baseline_cache_used: !indexRebuildReason,
       index_rebuild_reason: indexRebuildReason,

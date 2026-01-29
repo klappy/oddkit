@@ -68,10 +68,21 @@ export async function ensureBaselineRepo() {
       });
     }
 
+    // Get the resolved commit SHA for reproducibility
+    let commitSha = null;
+    try {
+      commitSha = execSync("git rev-parse HEAD", { cwd: cacheDir, stdio: "pipe" })
+        .toString()
+        .trim();
+    } catch {
+      // Couldn't get SHA, continue without it
+    }
+
     return {
       root: cacheDir,
       ref,
       refSource,
+      commitSha,
       error: null,
     };
   } catch (err) {

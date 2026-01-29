@@ -171,6 +171,9 @@ function renderDebug(debug) {
   if (debug.baseline_available !== undefined) {
     lines.push(`- Baseline available: ${debug.baseline_available}`);
   }
+  if (debug.baseline_commit) {
+    lines.push(`- Baseline commit: ${debug.baseline_commit.slice(0, 12)}`);
+  }
   if (debug.timestamp) {
     lines.push(`- Timestamp: ${debug.timestamp}`);
   }

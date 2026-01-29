@@ -1,9 +1,21 @@
 import { readFileSync } from "fs";
 import matter from "gray-matter";
 
+// Quote length constraints (in words)
+export const MIN_QUOTE_WORDS = 8;
+export const MAX_QUOTE_WORDS = 40;
+
+/**
+ * Count words in a string
+ */
+export function countWords(text) {
+  if (!text) return 0;
+  return text.split(/\s+/).filter((w) => w.length > 0).length;
+}
+
 /**
  * Extract a quote from a document at a specific heading
- * Returns a quote of 8-40 words
+ * Returns { quote, wordCount, truncated } or null
  */
 export function extractQuote(doc, heading) {
   try {
@@ -25,7 +37,7 @@ export function extractQuote(doc, heading) {
       .replace(/[#*_`]/g, "")
       .trim();
 
-    // Extract 8-40 words
+    // Extract words
     const words = cleaned.split(/\s+/).filter((w) => w.length > 0);
 
     if (words.length === 0) {
@@ -43,16 +55,19 @@ export function extractQuote(doc, heading) {
     }
 
     // Extract 8-40 words
-    const minWords = 8;
-    const maxWords = 40;
-    const quoteWords = words.slice(startIdx, startIdx + maxWords);
+    let quoteWords = words.slice(startIdx, startIdx + MAX_QUOTE_WORDS);
+    let truncated = words.length > startIdx + MAX_QUOTE_WORDS;
 
-    if (quoteWords.length < minWords && words.length >= minWords) {
+    if (quoteWords.length < MIN_QUOTE_WORDS && words.length >= MIN_QUOTE_WORDS) {
       // Not enough words from preferred start, try from beginning
-      return words.slice(0, maxWords).join(" ");
+      quoteWords = words.slice(0, MAX_QUOTE_WORDS);
+      truncated = words.length > MAX_QUOTE_WORDS;
     }
 
-    return quoteWords.join(" ");
+    const quote = quoteWords.join(" ");
+    const wordCount = quoteWords.length;
+
+    return { quote, wordCount, truncated };
   } catch (err) {
     return null;
   }
