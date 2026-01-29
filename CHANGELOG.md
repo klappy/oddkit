@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-29
+
+### Added
+
+- **OddKit Charter** (`docs/oddkit/CHARTER.md`) — Authoritative contract defining oddkit's identity as epistemic terrain rendering:
+  - What oddkit derives (catalog structure, tag groupings, relevance)
+  - What oddkit refuses to infer (epistemic mode, user intent, confidence)
+  - What oddkit requires from upstream (explicit action, epistemic context)
+
+- **ORIENT action** — First-class action for map-first navigation:
+  - Action-driven only (caller passes `action: "orient"`)
+  - No phrase detection or inference from message content
+  - Returns epistemic terrain with contextual suggestions based on mode
+
+- **Epistemic context parameter** — Canon-derived mode awareness:
+  - `epistemic.mode_ref` — Canon URI (e.g., `klappy://canon/epistemic-modes#exploration`)
+  - `epistemic.confidence` — Caller-declared confidence level (`low|partial|strong|verified`)
+  - `suggest_orient` hint when exploration + low confidence (advisory only)
+
+- **Epistemic retrieval bias** — Soft retrieval adaptation based on mode:
+  - Exploration: boosts overview/getting-started/principles docs (1.2x)
+  - Planning: boosts constraints/dod/decisions/governing docs (1.25x)
+  - Execution: boosts operational/how-to/commands docs (1.15x)
+  - Full observability via `debug.retrieval_policy`
+
+### Changed
+
+- **README.md** — Added charter pointer ("OddKit is epistemic terrain rendering, not epistemic authority")
+- **orchestrate.js** — Added ORIENT action, explicit `action` parameter, epistemic context threading
+- **scoring.js** — Added `computeEpistemicBias()` with mode-aware multipliers
+- **librarian.js** — Accepts epistemic context, surfaces retrieval_policy in debug
+- **instructions.js** — Documented action parameter and epistemic context (v0.5.0)
+- **tools/oddkit.tools.json** — Added `action` and `epistemic` parameters to orchestrate schema
+
 ## [0.4.0] - 2026-01-29
 
 ### Added
