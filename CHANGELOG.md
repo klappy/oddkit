@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Docs pointer** — `docs/getting-started/odd-agents-and-mcp.md` now points to canonical orientation doc at klappy.dev (`klappy://odd/getting-started/agents-and-mcp`)
+
 ## [0.3.0] - 2026-01-29
 
 ### Added
