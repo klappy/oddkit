@@ -14,6 +14,7 @@ export function run() {
     .command("index")
     .description("Build or rebuild the document index")
     .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
     .option("--force", "Force rebuild even if index exists")
     .action(async (options) => {
       try {
@@ -31,6 +32,7 @@ export function run() {
     .description("Ask a policy/lookup question")
     .requiredOption("-q, --query <text>", "The question to ask")
     .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
     .option("-f, --format <type>", "Output format: json or md", "json")
     .action(async (options) => {
       try {
@@ -52,6 +54,7 @@ export function run() {
     .description("Validate a completion claim")
     .requiredOption("-m, --message <text>", "The completion claim message")
     .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
     .option("-a, --artifacts <path>", "Path to artifacts JSON file")
     .option("-f, --format <type>", "Output format: json or md", "json")
     .action(async (options) => {

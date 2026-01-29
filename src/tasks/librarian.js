@@ -638,10 +638,10 @@ function calculateConfidence(scored, evidence, contradictions = []) {
  * Run the librarian command
  */
 export async function runLibrarian(options) {
-  const { query, repo: repoRoot } = options;
+  const { query, repo: repoRoot, baseline: baselineOverride } = options;
 
-  // Ensure baseline
-  const baseline = await ensureBaselineRepo();
+  // Ensure baseline (CLI flag overrides env var overrides default)
+  const baseline = await ensureBaselineRepo(baselineOverride);
   const baselineRef = getBaselineRef();
   const baselineAvailable = !!baseline.root;
 
@@ -1180,6 +1180,8 @@ export async function runLibrarian(options) {
       repo_root: repoRoot,
       query,
       queryTokens,
+      baseline_url: baseline.baselineUrl,
+      baseline_source: baseline.baselineSource, // cli | environment | default
       baseline_ref: baselineRef,
       baseline_ref_source: baseline.refSource,
       baseline_commit: baseline.commitSha || null,

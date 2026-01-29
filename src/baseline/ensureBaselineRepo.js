@@ -1,10 +1,43 @@
 import { execSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, resolve, isAbsolute } from "path";
 import { homedir } from "os";
 
-const BASELINE_REPO_URL = "https://github.com/klappy/klappy.dev.git";
+const DEFAULT_BASELINE_URL = "https://github.com/klappy/klappy.dev.git";
 const DEFAULT_REF = "main";
+
+/**
+ * Check if a string looks like a git URL
+ */
+function isGitUrl(str) {
+  return (
+    str.startsWith("https://") ||
+    str.startsWith("git@") ||
+    str.startsWith("git://") ||
+    str.startsWith("ssh://")
+  );
+}
+
+/**
+ * Check if a string is a local path (absolute or relative)
+ */
+function isLocalPath(str) {
+  return str.startsWith("/") || str.startsWith("./") || str.startsWith("../") || str.startsWith("~");
+}
+
+/**
+ * Resolve the baseline source: CLI flag > env var > default
+ * Returns { url, source } where source is "cli" | "environment" | "default"
+ */
+export function resolveBaselineSource(cliOverride = null) {
+  if (cliOverride) {
+    return { url: cliOverride, source: "cli" };
+  }
+  if (process.env.ODDKIT_BASELINE) {
+    return { url: process.env.ODDKIT_BASELINE, source: "environment" };
+  }
+  return { url: DEFAULT_BASELINE_URL, source: "default" };
+}
 
 /**
  * Get the baseline ref from environment or default
@@ -14,21 +47,93 @@ export function getBaselineRef() {
 }
 
 /**
- * Get the cache directory for a specific ref
+ * Get a safe cache directory name from a URL or path
  */
-export function getCacheDir(ref) {
-  const cacheRoot = join(homedir(), ".oddkit", "cache", "klappy.dev");
+function getCacheName(url) {
+  // Extract repo name from URL or use sanitized path
+  const match = url.match(/\/([^\/]+?)(\.git)?$/);
+  if (match) {
+    return match[1];
+  }
+  // Fallback: sanitize the whole thing
+  return url.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
+}
+
+/**
+ * Get the cache directory for a specific baseline and ref
+ */
+export function getCacheDir(baselineUrl, ref) {
+  const cacheName = getCacheName(baselineUrl);
+  const cacheRoot = join(homedir(), ".oddkit", "cache", cacheName);
   return join(cacheRoot, ref.replace(/[^a-zA-Z0-9_-]/g, "_"));
 }
 
 /**
- * Ensure the baseline repo is cloned and at the correct ref
- * Returns { root, ref, source } or { root: null, error }
+ * Ensure the baseline repo is available
+ * 
+ * Resolution order:
+ *   1. cliOverride parameter (from --baseline flag)
+ *   2. ODDKIT_BASELINE environment variable
+ *   3. Default: https://github.com/klappy/klappy.dev.git
+ * 
+ * Returns { root, ref, source, baselineUrl, commitSha } or { root: null, error }
  */
-export async function ensureBaselineRepo() {
+export async function ensureBaselineRepo(cliOverride = null) {
+  const { url: baselineUrl, source: baselineSource } = resolveBaselineSource(cliOverride);
   const ref = getBaselineRef();
-  const cacheDir = getCacheDir(ref);
   const refSource = process.env.ODDKIT_BASELINE_REF ? "environment" : "defaulted";
+
+  // Handle local path - no cloning needed
+  if (isLocalPath(baselineUrl)) {
+    const localPath = baselineUrl.startsWith("~")
+      ? join(homedir(), baselineUrl.slice(1))
+      : resolve(baselineUrl);
+
+    if (!existsSync(localPath)) {
+      return {
+        root: null,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        error: `Local baseline path does not exist: ${localPath}`,
+      };
+    }
+
+    // Get commit SHA if it's a git repo
+    let commitSha = null;
+    try {
+      commitSha = execSync("git rev-parse HEAD", { cwd: localPath, stdio: "pipe" })
+        .toString()
+        .trim();
+    } catch {
+      // Not a git repo or can't get SHA
+    }
+
+    return {
+      root: localPath,
+      ref: "local",
+      refSource: "local",
+      baselineUrl,
+      baselineSource,
+      commitSha,
+      error: null,
+    };
+  }
+
+  // Handle git URL - clone/fetch as needed
+  if (!isGitUrl(baselineUrl)) {
+    return {
+      root: null,
+      ref,
+      refSource,
+      baselineUrl,
+      baselineSource,
+      error: `Invalid baseline: ${baselineUrl} (expected git URL or local path)`,
+    };
+  }
+
+  const cacheDir = getCacheDir(baselineUrl, ref);
 
   try {
     // Check if git is available
@@ -38,13 +143,15 @@ export async function ensureBaselineRepo() {
       root: null,
       ref,
       refSource,
+      baselineUrl,
+      baselineSource,
       error: "git not installed",
     };
   }
 
   try {
-    // Ensure cache directory exists
-    const parentDir = join(homedir(), ".oddkit", "cache", "klappy.dev");
+    // Ensure cache directory parent exists
+    const parentDir = join(homedir(), ".oddkit", "cache", getCacheName(baselineUrl));
     if (!existsSync(parentDir)) {
       mkdirSync(parentDir, { recursive: true });
     }
@@ -63,7 +170,7 @@ export async function ensureBaselineRepo() {
       }
     } else {
       // Clone fresh
-      execSync(`git clone --branch ${ref} --single-branch ${BASELINE_REPO_URL} ${cacheDir}`, {
+      execSync(`git clone --branch ${ref} --single-branch ${baselineUrl} ${cacheDir}`, {
         stdio: "pipe",
       });
     }
@@ -82,6 +189,8 @@ export async function ensureBaselineRepo() {
       root: cacheDir,
       ref,
       refSource,
+      baselineUrl,
+      baselineSource,
       commitSha,
       error: null,
     };
@@ -90,6 +199,8 @@ export async function ensureBaselineRepo() {
       root: null,
       ref,
       refSource,
+      baselineUrl,
+      baselineSource,
       error: err.message || "Failed to clone baseline repo",
     };
   }
@@ -98,7 +209,7 @@ export async function ensureBaselineRepo() {
 /**
  * Get the baseline root path (or null if unavailable)
  */
-export async function getBaselineRoot() {
-  const result = await ensureBaselineRepo();
+export async function getBaselineRoot(cliOverride = null) {
+  const result = await ensureBaselineRepo(cliOverride);
   return result.root;
 }

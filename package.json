@@ -7,8 +7,13 @@
     "oddkit": "./bin/oddkit"
   },
   "main": "src/cli.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/klappy/oddkit.git"
+  },
   "scripts": {
     "test": "bash tests/smoke.sh",
+    "test:smoke": "bash tests/smoke.sh",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",
     "index": "node bin/oddkit index"
@@ -25,6 +30,6 @@
     "documentation",
     "governance"
   ],
-  "author": "",
+  "author": "klappy",
   "license": "MIT"
 }

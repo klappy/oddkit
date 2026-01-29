@@ -86,8 +86,32 @@ The explain command:
 
 By default, oddkit loads the [klappy.dev](https://github.com/klappy/klappy.dev) repo as baseline knowledge.
 
-- Cloned to `~/.oddkit/cache/klappy.dev/<ref>/`
-- Pinned to `ODDKIT_BASELINE_REF` environment variable (or `main`)
+### Resolution Order
+
+1. `--baseline <path-or-git-url>` CLI flag (highest priority)
+2. `ODDKIT_BASELINE` environment variable (path or git URL)
+3. Default: `https://github.com/klappy/klappy.dev`
+
+### Configuration
+
+```bash
+# Override baseline via CLI flag
+oddkit librarian -q "What is done?" --baseline /path/to/local/canon
+oddkit librarian -q "What is done?" --baseline https://github.com/yourorg/your-canon.git
+
+# Override baseline via environment variable
+export ODDKIT_BASELINE="https://github.com/yourorg/your-canon.git"
+oddkit librarian -q "What is done?"
+
+# Pin to a specific branch/tag
+export ODDKIT_BASELINE_REF="v1.0.0"
+oddkit librarian -q "What is done?"
+```
+
+### Cache Location
+
+- Git repos are cloned to `~/.oddkit/cache/<repo-name>/<ref>/`
+- Local paths are used directly (no caching)
 - Local docs can override baseline via `supersedes` frontmatter field
 
 ## Supersedes Override

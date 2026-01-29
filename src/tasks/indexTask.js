@@ -7,8 +7,8 @@ import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRe
 export async function runIndex(options) {
   const repoRoot = options.repo;
 
-  // Get baseline
-  const baseline = await ensureBaselineRepo();
+  // Get baseline (CLI flag overrides env var overrides default)
+  const baseline = await ensureBaselineRepo(options.baseline);
   const baselineRef = getBaselineRef();
 
   // Build index
@@ -30,8 +30,11 @@ export async function runIndex(options) {
     stats: index.stats,
     baseline: {
       available: !!baseline.root,
+      url: baseline.baselineUrl,
+      source: baseline.baselineSource, // cli | environment | default
       ref: baselineRef,
       refSource: baseline.refSource,
+      commit: baseline.commitSha || null,
       error: baseline.error,
     },
   };
