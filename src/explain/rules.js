@@ -81,6 +81,16 @@ export const RULES = {
     meaning:
       "Per Canon: contradictions exist but confidence is sufficient. This pattern may warrant promotion to Canon.",
   },
+  IDENTITY_DEDUP: {
+    title: "Identity dedup active",
+    meaning:
+      "Duplicate candidates (same URI or path) are collapsed before scoring. This removes artifact ambiguity so conflict means real disagreement.",
+  },
+  INDEX_DUPLICATE_COLLAPSED: {
+    title: "Duplicates collapsed",
+    meaning:
+      "One or more duplicate identity groups were found and collapsed. Consider adding uri or supersedes to make identity explicit.",
+  },
 
   // Validation rules
   VALIDATION_CLAIMS_PARSED: {

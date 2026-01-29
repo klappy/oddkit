@@ -285,10 +285,40 @@ function renderMarkdown(result) {
   // Vetoed items (hard veto enforcement)
   if (result.arbitration?.vetoed && result.arbitration.vetoed.length > 0) {
     lines.push("## Items demoted by intent veto");
-    lines.push("*Per Canon: these low-intent items were forcibly demoted below high-intent items.*");
+    lines.push(
+      "*Per Canon: these low-intent items were forcibly demoted below high-intent items.*",
+    );
     lines.push("");
     for (const v of result.arbitration.vetoed) {
       lines.push(`- \`${v}\``);
+    }
+    lines.push("");
+  }
+
+  // Dedup info (index hygiene)
+  if (result.arbitration?.dedup?.collapsed_groups > 0) {
+    const dedup = result.arbitration.dedup;
+    lines.push("## Index hygiene: duplicates collapsed");
+    lines.push(
+      `*${dedup.duplicate_count} duplicate(s) from ${dedup.collapsed_groups} identity group(s) were collapsed before scoring.*`,
+    );
+    lines.push("");
+    for (const g of dedup.groups || []) {
+      lines.push(`- **${g.id}**: kept \`${g.chosen.path}\` (${g.chosen.origin})`);
+      for (const c of g.collapsed || []) {
+        lines.push(`  - collapsed: \`${c.path}\` (${c.origin})`);
+      }
+    }
+    lines.push("");
+  }
+
+  // Warnings (hygiene issues, not blocking)
+  if (result.arbitration?.warnings && result.arbitration.warnings.length > 0) {
+    lines.push("## ⚠️ Hygiene warnings");
+    lines.push("*These are not blocking contradictions, but smells to track for promotion pipeline.*");
+    lines.push("");
+    for (const w of result.arbitration.warnings) {
+      lines.push(`- **${w.type}**: ${w.message}`);
     }
     lines.push("");
   }

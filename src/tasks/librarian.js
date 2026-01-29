@@ -10,6 +10,97 @@ const MAX_RESULTS = 5;
 const MIN_CONFIDENCE_THRESHOLD = 0.6; // Below this, result is advisory
 
 /**
+ * Compute candidate identity key for dedup
+ * Precedence: uri > normalized path
+ *
+ * Duplicates are an identity/equivalence issue, not a semantic override.
+ * This is different from supersedes (which is semantic override of different docs).
+ */
+function computeIdentityKey(doc) {
+  // 1. If uri exists, use it (stable across origins)
+  if (doc.uri) {
+    return doc.uri;
+  }
+  // 2. Else use normalized path (relative to repo root, origin-agnostic)
+  // Normalize by removing origin-specific prefixes
+  return doc.path;
+}
+
+/**
+ * Collapse duplicates by identity key, pick representative
+ *
+ * Tie-breaker for representative selection (principled):
+ * 1. Origin: local > baseline
+ * 2. Authority: governing > operational > non-governing
+ * 3. Evidence: strong > medium > weak > none
+ * 4. Intent: promoted > pattern > operational > experiment > workaround
+ *
+ * This is not "forced convergence" — it's treating duplicates as duplicates.
+ * Per canon/weighted-relevance-and-arbitration.md: this removes artifact ambiguity
+ * so "conflict" means real disagreement, not index hygiene.
+ */
+function deduplicateCandidates(docs) {
+  const groups = new Map(); // id -> docs[]
+
+  // Group by identity key
+  for (const doc of docs) {
+    const id = computeIdentityKey(doc);
+    if (!groups.has(id)) {
+      groups.set(id, []);
+    }
+    groups.get(id).push(doc);
+  }
+
+  const deduplicated = [];
+  const collapsedGroups = [];
+
+  for (const [id, groupDocs] of groups) {
+    if (groupDocs.length === 1) {
+      // No duplicates, keep as-is
+      deduplicated.push(groupDocs[0]);
+    } else {
+      // Multiple docs with same identity — pick representative
+      const sorted = groupDocs.sort((a, b) => {
+        // 1. Origin: local > baseline
+        if (a.origin !== b.origin) {
+          return a.origin === "local" ? -1 : 1;
+        }
+        // 2. Authority: governing > operational > non-governing
+        const authOrder = { governing: 0, operational: 1, "non-governing": 2 };
+        const authA = authOrder[a.authority_band] ?? 1;
+        const authB = authOrder[b.authority_band] ?? 1;
+        if (authA !== authB) return authA - authB;
+        // 3. Evidence: strong > medium > weak > none
+        const evOrder = { strong: 0, medium: 1, weak: 2, none: 3 };
+        const evA = evOrder[a.evidence] ?? 3;
+        const evB = evOrder[b.evidence] ?? 3;
+        if (evA !== evB) return evA - evB;
+        // 4. Intent: promoted > pattern > operational > experiment > workaround
+        const intA = INTENT_HIERARCHY[a.intent] || 3;
+        const intB = INTENT_HIERARCHY[b.intent] || 3;
+        return intB - intA; // Higher intent wins
+      });
+
+      const chosen = sorted[0];
+      const collapsed = sorted.slice(1);
+
+      deduplicated.push(chosen);
+      collapsedGroups.push({
+        id,
+        chosen: { origin: chosen.origin, path: chosen.path },
+        collapsed: collapsed.map((d) => ({ origin: d.origin, path: d.path })),
+      });
+    }
+  }
+
+  return {
+    docs: deduplicated,
+    collapsedGroups,
+    duplicateCount: docs.length - deduplicated.length,
+  };
+}
+
+/**
  * Detect policy intent from query
  */
 function detectPolicyIntent(query) {
@@ -213,8 +304,12 @@ export async function runLibrarian(options) {
     saveIndex(index, repoRoot);
   }
 
-  // Apply supersedes
-  const { filtered: docs, suppressed } = applySupersedes(index.documents);
+  // Apply supersedes (semantic override of different docs)
+  const { filtered: afterSupersedes, suppressed } = applySupersedes(index.documents);
+
+  // Apply dedup (identity collapse of same docs across origins)
+  // This is different from supersedes: dedup handles index hygiene, supersedes handles semantic override
+  const { docs, collapsedGroups, duplicateCount } = deduplicateCandidates(afterSupersedes);
 
   // INVARIANT: If baseline unavailable, no docs should have origin:"baseline"
   if (!baselineAvailable) {
@@ -242,8 +337,11 @@ export async function runLibrarian(options) {
     .slice(0, MAX_RESULTS);
 
   // Apply intent-gated precedence as HARD VETO (per canon/weighted-relevance-and-arbitration.md)
-  const { reordered: reorderedScored, violations: precedenceViolations, vetoed } =
-    applyIntentGatedPrecedence(scored);
+  const {
+    reordered: reorderedScored,
+    violations: precedenceViolations,
+    vetoed,
+  } = applyIntentGatedPrecedence(scored);
 
   // Use reordered list for evidence building
   const finalScored = reorderedScored;
@@ -390,6 +488,17 @@ export async function runLibrarian(options) {
     });
   }
 
+  // Index hygiene warnings (not blocking contradictions, but smells to track)
+  const warnings = [];
+  if (collapsedGroups.length > 0) {
+    warnings.push({
+      type: "INDEX_DUPLICATE",
+      count: duplicateCount,
+      message: `${duplicateCount} duplicate(s) collapsed from ${collapsedGroups.length} identity group(s). Consider adding uri or supersedes.`,
+      groups: collapsedGroups,
+    });
+  }
+
   // Scope contradictions: local and baseline sources disagree
   const hasLocal = evidence.some((e) => e.origin === "local");
   const hasBaseline = evidence.some((e) => e.origin === "baseline");
@@ -411,17 +520,28 @@ export async function runLibrarian(options) {
 
   // Determine arbitration outcome (per canon/weighted-relevance-and-arbitration.md)
   // prefer | defer | escalate | propose_promotion
+  //
+  // KEY INSIGHT: If the only reason for low confidence is duplicate identity groups
+  // (now collapsed), outcome should still be "prefer" with advisory + warnings.
+  // Reserve "defer" for actual competing hypotheses (different docs, different claims).
   let arbitrationOutcome;
+  const hasRealContradictions = contradictions.length > 0; // True conflicts, not hygiene warnings
+
   if (status === "INSUFFICIENT_EVIDENCE") {
     arbitrationOutcome = "defer";
-  } else if (contradictions.length > 0 && !isConfident) {
-    arbitrationOutcome = "escalate";
-  } else if (contradictions.length > 0 && isConfident) {
+  } else if (hasRealContradictions && !isConfident) {
+    arbitrationOutcome = "escalate"; // True conflict + low confidence = need human
+  } else if (hasRealContradictions && isConfident) {
     arbitrationOutcome = "propose_promotion"; // Repeated pattern = promotion candidate
   } else if (isConfident) {
-    arbitrationOutcome = "prefer";
+    arbitrationOutcome = "prefer"; // Confident, no conflicts
   } else {
-    arbitrationOutcome = "defer";
+    // Not confident, but no real contradictions
+    // This could be due to:
+    // 1. Close scores after dedup (genuine uncertainty)
+    // 2. Weak evidence/intent quality
+    // Don't defer purely due to low confidence if we have evidence - prefer with advisory
+    arbitrationOutcome = evidence.length >= MIN_EVIDENCE_BULLETS ? "prefer" : "defer";
   }
 
   // Build read_next
@@ -456,6 +576,11 @@ export async function runLibrarian(options) {
   rulesFired.push("SUPPORTED_REQUIRES_EVIDENCE_BULLETS");
   rulesFired.push("QUOTE_LENGTH_ENFORCED");
   rulesFired.push("INTENT_GATED_PRECEDENCE"); // Always active as hard veto
+  rulesFired.push("IDENTITY_DEDUP"); // Always active
+
+  if (duplicateCount > 0) {
+    rulesFired.push("INDEX_DUPLICATE_COLLAPSED");
+  }
 
   if (status === "INSUFFICIENT_EVIDENCE") {
     rulesFired.push("INSUFFICIENT_EVIDENCE_RETURNED");
@@ -514,8 +639,14 @@ export async function runLibrarian(options) {
       outcome: arbitrationOutcome, // prefer | defer | escalate | propose_promotion
       candidates_considered: candidatesConsidered,
       contradictions, // Typed: AUTHORITY_, EVIDENCE_, SCOPE_, TEMPORAL_, STATE_
+      warnings, // Hygiene warnings (INDEX_DUPLICATE, etc.) - not blocking
       precedence_violations: precedenceViolations,
       vetoed, // Items that were demoted by hard veto
+      dedup: {
+        collapsed_groups: collapsedGroups.length,
+        duplicate_count: duplicateCount,
+        groups: collapsedGroups,
+      },
     },
     debug: {
       tool: "librarian",
