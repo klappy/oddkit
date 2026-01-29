@@ -2,6 +2,22 @@
 
 oddkit exposes an MCP (Model Context Protocol) server that allows Cursor, Claude Code, and other MCP-compatible hosts to use oddkit as a tool.
 
+## Zero-config Behavior (recommended)
+
+Once oddkit MCP is installed (globally or project-local), agents automatically receive always-on guidance via MCP GetInstructions. This means:
+
+- **No per-repo files required** — no `.oddkit` config, no AGENTS.md injection
+- **No compass prompts needed** — the decision gate is built into the MCP handshake
+- **No doc preloading** — agents retrieve guidance on-demand, never paste large docs
+
+The agent receives a standing rule at startup:
+
+- "If I'm about to state policy, I consult oddkit."
+- "If I'm about to claim done, I validate with oddkit."
+- "If I'm about to invent PRD success metrics, I retrieve governing DoD guidance first."
+
+**Default entrypoint:** Agents should call `oddkit_orchestrate` as their primary tool. It routes to librarian/validate/explain automatically and returns ready-to-use `assistant_text` with citations.
+
 ## Cursor config (long-term, run from anywhere)
 
 Use this config to run oddkit as an MCP server via **npx from GitHub** (no npm publish required):
@@ -93,6 +109,8 @@ To expose all tools for debugging, set `ODDKIT_DEV_TOOLS=1` in your MCP server e
 
 For all use cases, call `oddkit_orchestrate` with the user message. It will automatically route to:
 
+- **preflight** — for pre-implementation consultation ("preflight: implement X", "before I implement", "what should I read first")
+- **catalog** — for discoverability ("What's in ODD?", "list the canon")
 - **librarian** — for questions ("What is the definition of done?")
 - **validate** — for completion claims ("Done with feature X")
 - **explain** — for explain requests ("explain last")
@@ -126,6 +144,74 @@ Response:
 ```
 
 **Cursor usage:** After calling `oddkit_orchestrate`, extract and print the `assistant_text` field verbatim. No need to add "I'm going to read..." or other narration — the answer is already complete with quotes and citations.
+
+## Preflight (Pre-Implementation Consultation)
+
+Before implementing code changes, agents should run a **preflight** check. This returns relevant docs, constraints, DoD, and pitfalls without injecting doc content.
+
+**Trigger phrases (automatic):**
+
+- "preflight: implement X"
+- "before I implement..."
+- "what should I read first"
+- "what constraints apply"
+- Any message with an implementation verb + target (e.g., "implement catalog", "wire MCP handler")
+
+**Example:**
+
+```json
+{
+  "name": "oddkit_orchestrate",
+  "arguments": {
+    "message": "preflight: implement catalog action in orchestrate",
+    "repo_root": "/path/to/repo"
+  }
+}
+```
+
+**Response:**
+
+```
+Preflight summary
+
+Start here: docs/QUICKSTART.md
+Next up: docs/MCP.md, src/mcp/orchestrate.js
+
+Constraints likely relevant:
+  - canon/definition-of-done.md
+  - canon/tool-json-contract.md
+
+Definition of Done: docs/oddkit/DoD.md
+
+Known pitfalls / related operational notes:
+  - tests/mcp-smoke.sh (MCP smoke tests)
+
+If you want more detail, ask one of:
+  - "What artifacts does validate require when I claim done?"
+  - "What constraints apply to this type of change?"
+```
+
+**Natural workflow:**
+
+1. Agent receives task
+2. Agent calls `oddkit_orchestrate("preflight: <what I'm about to do>")`
+3. Agent reads 1-2 files based on preflight response
+4. Agent implements
+5. Agent claims done → triggers validate
+
+## Catalog / Discoverability
+
+Agents can ask naturally for a "map" of ODD docs without preinjected content. These phrases route through `oddkit_orchestrate` and return a **catalog menu** (Start here / Next up / Top canon by tag / Operational playbooks). No nested JSON or special format required.
+
+**Examples the agent can ask naturally:**
+
+- "What's in ODD?"
+- "List the canon"
+- "What should I read next?"
+- "Show me the doctrines"
+- "Show me the ODD map"
+
+These trigger the **catalog** action. The response `assistant_text` is a plain-text menu of paths — no doc bodies, no injected canon. Use it to navigate ODD docs on-demand.
 
 ## Manual Setup (without init)
 

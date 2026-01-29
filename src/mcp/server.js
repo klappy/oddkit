@@ -30,6 +30,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { runOrchestrate } from "./orchestrate.js";
 import { listPrompts, getPrompt } from "./prompts.js";
+import { getOddkitInstructions } from "./instructions.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -153,6 +154,7 @@ async function main() {
     {
       name: "oddkit",
       version: "0.1.0",
+      instructions: getOddkitInstructions(),
     },
     {
       capabilities: {

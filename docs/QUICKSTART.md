@@ -29,6 +29,10 @@ npx oddkit init --project
 
 This writes to `<repo>/.cursor/mcp.json` instead.
 
+### Automatic Instructions
+
+After MCP setup, oddkit provides default instructions automatically via MCP GetInstructions. No additional prompts or per-repo config files are required. The agent knows when to call `oddkit_orchestrate` at policy questions, completion claims, and PRD work.
+
 ### Verify
 
 After init, Cursor should show the `oddkit_orchestrate` tool. You can also verify from CLI:
@@ -67,6 +71,32 @@ The `assistant_text` includes:
 - Advisory messaging if confidence is low
 
 **Note:** By default, only `oddkit_orchestrate` is exposed. Set `ODDKIT_DEV_TOOLS=1` in your MCP server environment to see all tools for debugging.
+
+### Preflight (Before Implementation)
+
+Before implementing code changes, run a preflight check:
+
+```
+oddkit_orchestrate({ message: "preflight: implement X", repo_root: "." })
+```
+
+This returns relevant files to read, constraints, DoD pointer, and pitfalls — without injecting doc content. The agent then reads what it needs and implements.
+
+**Natural workflow:** preflight → implement → validate
+
+See [docs/MCP.md](MCP.md#preflight-pre-implementation-consultation) for details.
+
+### Discoverability (Catalog)
+
+Ask for a menu of ODD docs — no preinjected content. Examples:
+
+- "What's in ODD?"
+- "List the canon"
+- "What should I read next?"
+- "Show me the doctrines"
+- "Show me the ODD map"
+
+These route through `oddkit_orchestrate` and return a catalog (Start here / Next up / Top canon by tag / Playbooks). See [docs/MCP.md](MCP.md#catalog--discoverability).
 
 ---
 

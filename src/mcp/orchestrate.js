@@ -2,6 +2,7 @@
  * oddkit orchestrate - antifragile router for MCP
  *
  * INVARIANT: If message is non-empty, orchestrate MUST return one of:
+ *   - catalog (discoverability: "what's in ODD?", "list the canon", etc.)
  *   - librarian (default fallback)
  *   - validate (only on strong completion claim markers)
  *   - explain (only on explicit explain requests)
@@ -12,6 +13,8 @@
 
 import { runLibrarian } from "../tasks/librarian.js";
 import { runValidate } from "../tasks/validate.js";
+import { runCatalog } from "../tasks/catalog.js";
+import { runPreflight } from "../tasks/preflight.js";
 import { explainLast } from "../explain/explain-last.js";
 import { readExcerpt } from "../tools/readExcerpt.js";
 import { countWords } from "../utils/slicing.js";
@@ -20,6 +23,8 @@ import { countWords } from "../utils/slicing.js";
  * Action types (no "none" - always route somewhere useful)
  */
 export const ACTIONS = {
+  PREFLIGHT: "preflight",
+  CATALOG: "catalog",
   LIBRARIAN: "librarian",
   VALIDATE: "validate",
   EXPLAIN: "explain",
@@ -29,6 +34,8 @@ export const ACTIONS = {
  * Reason codes for action detection
  */
 export const REASONS = {
+  PREFLIGHT_INTENT: "PREFLIGHT_INTENT",
+  CATALOG_INTENT: "CATALOG_INTENT",
   EXPLAIN_INTENT: "EXPLAIN_INTENT",
   STRONG_COMPLETION_CLAIM: "STRONG_COMPLETION_CLAIM",
   LOOKUP_QUESTION: "LOOKUP_QUESTION",
@@ -41,16 +48,24 @@ export const REASONS = {
  *
  * Rules (ORDER MATTERS, precision-first):
  *
- * 1. EXPLAIN - highest precision, explicit intent only
+ * 0. PREFLIGHT - pre-implementation consultation (highest priority)
+ *    - Direct: "preflight", "before i implement", "what should i read first", etc.
+ *    - Compound: implementation verb + target ("implement catalog", "wire mcp", etc.)
+ *
+ * 1. CATALOG - discoverability phrases
+ *    - "what's in odd", "show me the doctrines", "list the canon", etc.
+ *    - "odd map" / "show me the map" only if message contains odd|canon|doctrine
+ *
+ * 2. EXPLAIN - explicit explain intent
  *    - "explain last", "explain", "why", "what happened"
  *
- * 2. VALIDATE - strong completion claim markers only
+ * 3. VALIDATE - strong completion claim markers only
  *    - Starts with: done, shipped, implemented, fixed, merged, released, deployed
  *    - Contains PR/commit refs: #123, PR, commit, SHA-like patterns
  *    - Contains explicit completion phrases: "I finished", "I completed", "I deployed"
  *    - NOTE: "done" alone is NOT a validate trigger
  *
- * 3. LIBRARIAN - everything else (DEFAULT)
+ * 4. LIBRARIAN - everything else (DEFAULT)
  *    - questions, statements, vague stuff, angry stuff, "help", anything
  *    - This is the antifragile fallback
  */
@@ -60,9 +75,88 @@ export function detectAction(message) {
     return { action: ACTIONS.LIBRARIAN, reason: REASONS.DEFAULT_FALLBACK };
   }
 
-  const lower = message.toLowerCase().trim();
+  const m = message.toLowerCase().trim();
 
-  // Rule 1: EXPLAIN - explicit explain intent (highest precision)
+  // Rule 0a: PREFLIGHT - pre-implementation consultation (highest priority)
+  // Direct triggers
+  const preflightPhrases = [
+    "preflight",
+    "before i implement",
+    "before implementing",
+    "what should i read first",
+    "what constraints apply",
+    "what counts as done",
+    "any pitfalls",
+    "relevant docs",
+    "relevant files",
+    "pre-implementation",
+    "preimplementation",
+  ];
+  for (const phrase of preflightPhrases) {
+    if (m.includes(phrase)) {
+      return { action: ACTIONS.PREFLIGHT, reason: REASONS.PREFLIGHT_INTENT };
+    }
+  }
+
+  // Compound trigger: implementation verb + concrete target
+  const implementationVerbs = [
+    "implement",
+    "wire",
+    "refactor",
+    "add",
+    "change",
+    "update",
+    "modify",
+    "build",
+    "create",
+  ];
+  const concreteTargets = [
+    "mcp",
+    "server",
+    "orchestrate",
+    "cli",
+    "index",
+    "catalog",
+    "validate",
+    "librarian",
+    "preflight",
+    "baseline",
+    "tools",
+  ];
+  const hasVerb = implementationVerbs.some((v) => m.includes(v));
+  const hasTarget = concreteTargets.some((t) => m.includes(t));
+  if (hasVerb && hasTarget) {
+    return { action: ACTIONS.PREFLIGHT, reason: REASONS.PREFLIGHT_INTENT };
+  }
+
+  // Rule 1: CATALOG - discoverability phrases (conservative)
+  const catalogPhrases = [
+    "what's in odd",
+    "whats in odd",
+    "what is in odd",
+    "show me the doctrines",
+    "doctrines available",
+    "doctrines do you have",
+    "what should i read",
+    "what to read next",
+    "what should i read next",
+    "list the canon",
+    "list canon",
+    "top canon",
+    "canon list",
+  ];
+  for (const phrase of catalogPhrases) {
+    if (m.includes(phrase)) {
+      return { action: ACTIONS.CATALOG, reason: REASONS.CATALOG_INTENT };
+    }
+  }
+  if ((m.includes("odd map") || m.includes("show me the map")) && /odd|canon|doctrine/.test(m)) {
+    return { action: ACTIONS.CATALOG, reason: REASONS.CATALOG_INTENT };
+  }
+
+  const lower = m;
+
+  // Rule 2: EXPLAIN - explicit explain intent
   const explainPatterns = [
     /^explain\b/i, // starts with "explain"
     /\bexplain\s*(--)?last\b/i, // "explain last" or "explain --last"
@@ -77,7 +171,7 @@ export function detectAction(message) {
     }
   }
 
-  // Rule 2: VALIDATE - strong completion claim markers ONLY
+  // Rule 3: VALIDATE - strong completion claim markers ONLY
   // These are high-precision patterns that indicate actual completion claims
   const validatePatterns = [
     // Starts with completion verb (strong signal)
@@ -103,7 +197,7 @@ export function detectAction(message) {
     }
   }
 
-  // Rule 3: LIBRARIAN - everything else (antifragile default)
+  // Rule 4: LIBRARIAN - everything else (antifragile default)
   // Questions get a specific reason, everything else is fallback
   const isQuestion =
     /\?$/.test(message.trim()) ||
@@ -150,6 +244,27 @@ export async function runOrchestrate(options) {
   // Execute appropriate task
   try {
     switch (action) {
+      case ACTIONS.PREFLIGHT: {
+        const taskResult = await runPreflight({
+          repo: repoRoot || process.cwd(),
+          baseline,
+          message,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildPreflightAssistantText(taskResult);
+        break;
+      }
+
+      case ACTIONS.CATALOG: {
+        const taskResult = await runCatalog({
+          repo: repoRoot || process.cwd(),
+          baseline,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildCatalogAssistantText(taskResult);
+        break;
+      }
+
       case ACTIONS.LIBRARIAN: {
         const taskResult = await runLibrarian({
           query: message || "help",
@@ -262,6 +377,83 @@ export async function runOrchestrate(options) {
   }
 
   return result;
+}
+
+/**
+ * Build assistant_text for catalog results (menu only; no doc bodies or quotes)
+ */
+function buildCatalogAssistantText(taskResult) {
+  const lines = [];
+
+  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const nextPaths = (taskResult.next_up || []).map((d) => d.path);
+  lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
+  lines.push("Top canon by tag:");
+  for (const { tag, docs: docList } of taskResult.canon_by_tag || []) {
+    if (docList.length > 0) {
+      lines.push(`  ${tag}: ${docList.map((d) => d.path).join(", ")}`);
+    }
+  }
+  lines.push("Operational playbooks:");
+  for (const p of taskResult.playbooks || []) {
+    lines.push(`  ${p.path}`);
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for preflight results (menu + constraints + DoD + pitfalls)
+ * Plain text, short, menu-like with progressive disclosure.
+ */
+function buildPreflightAssistantText(taskResult) {
+  const lines = [];
+
+  lines.push("Preflight summary");
+  lines.push("");
+
+  // Start here + Next up (reuse catalog format)
+  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const nextPaths = (taskResult.next_up || []).map((d) => d.path);
+  lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
+  lines.push("");
+
+  // Constraints
+  if (taskResult.constraints_docs && taskResult.constraints_docs.length > 0) {
+    lines.push("Constraints likely relevant:");
+    for (const c of taskResult.constraints_docs) {
+      lines.push(`  - ${c.path}`);
+    }
+    lines.push("");
+  }
+
+  // Definition of Done
+  if (taskResult.dod) {
+    lines.push("Definition of Done: " + taskResult.dod.path);
+  } else {
+    lines.push("Definition of Done: (not found)");
+  }
+  lines.push("");
+
+  // Pitfalls
+  if (taskResult.pitfalls && taskResult.pitfalls.length > 0) {
+    lines.push("Known pitfalls / related operational notes:");
+    for (const p of taskResult.pitfalls) {
+      const summary = p.title ? ` (${p.title})` : "";
+      lines.push(`  - ${p.path}${summary}`);
+    }
+    lines.push("");
+  }
+
+  // Suggested follow-up questions
+  if (taskResult.suggested_questions && taskResult.suggested_questions.length > 0) {
+    lines.push("If you want more detail, ask one of:");
+    for (const q of taskResult.suggested_questions) {
+      lines.push(`  - "${q}"`);
+    }
+  }
+
+  return lines.join("\n").trim();
 }
 
 /**
