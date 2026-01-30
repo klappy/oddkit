@@ -5,6 +5,7 @@ import { runValidate } from "./tasks/validate.js";
 import { runIndex } from "./tasks/indexTask.js";
 import { explainLast } from "./explain/explain-last.js";
 import { runInit, getOddkitMcpSnippet } from "./cli/init.js";
+import { registerSyncAgentsCommand } from "./cli/syncAgents.js";
 
 const SCHEMA_VERSION = "1.0";
 
@@ -376,6 +377,9 @@ export function run() {
         process.exit(EXIT_OK);
       }
     });
+
+  // Register sync-agents command
+  registerSyncAgentsCommand(program);
 
   program.parse();
 }

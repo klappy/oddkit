@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-01-30
+
+### Added
+
+- **sync-agents command** — Human-triggered installer for agent files from baseline to Cursor:
+  - Dry-run by default (shows patch plan, no writes)
+  - `--apply` flag to actually copy files
+  - `--backup` (default ON) creates timestamped backups before overwriting
+  - `--only <agents>` filters to specific agent subset
+  - `--from baseline` forces baseline refresh before diff
+  - `--dest <path>` overrides default Cursor agents directory
+  - `--verbose` shows unchanged files and hashes
+
+- **Safety rules (non-negotiable):**
+  - Never writes into baseline repo
+  - Never auto-runs on MCP calls
+  - Never overwrites without `--apply` AND printing patch plan first
+  - Always hashes bytes before/after for verification
+
+### Philosophy
+
+- **Manual install stays the authority gate** — Default posture preserves ODD premise (no silent mutation of operational truth)
+- **Convenience without compromise** — Removes "copy files manually" tax while keeping human control
+- **Deterministic patch plans** — Shows exactly what will change before any write
+
 ## [0.6.1] - 2026-01-29
 
 ### Fixed
