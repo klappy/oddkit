@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-01-29
+
+### Fixed
+
+- **instruction_sync return contract** — Now returns standard `{ action, assistant_text, result, debug, suggest_orient }` structure instead of non-standard `{ action, ok, result }`. Callers depending on the documented contract at line 287 will no longer fail.
+- **buildInstructionSyncAssistantText** — Added helper function to generate human-readable output showing sync timestamp, registry version, impact summary, and unresolved dependencies.
+
 ## [0.6.0] - 2026-01-29
 
 ### Added

@@ -495,11 +495,9 @@ export async function runOrchestrate(options) {
           registryPayload: registry_payload,
           statePayload: state_payload,
         });
-        return {
-          action: "instruction_sync",
-          ok: true,
-          result: syncResult,
-        };
+        result.result = syncResult;
+        result.assistant_text = buildInstructionSyncAssistantText(syncResult);
+        break;
       }
     }
   } catch (err) {
@@ -779,4 +777,78 @@ function buildExplainAssistantText(taskResult) {
   }
 
   return assistantText.trim() || "Explained last run. Check result for details.";
+}
+
+/**
+ * Build assistant_text for instruction_sync results
+ */
+function buildInstructionSyncAssistantText(taskResult) {
+  const lines = [];
+
+  lines.push("Instruction sync complete");
+  lines.push("");
+
+  if (taskResult.timestamp) {
+    lines.push(`Timestamp: ${taskResult.timestamp}`);
+  }
+  if (taskResult.registry_version) {
+    lines.push(`Registry version: ${taskResult.registry_version}`);
+  }
+  lines.push("");
+
+  const impact = taskResult.impact || {};
+  const mustCount = (impact.must_update || []).length;
+  const shouldCount = (impact.should_update || []).length;
+  const niceCount = (impact.nice_to_update || []).length;
+  const errorCount = (impact.errors || []).length;
+
+  lines.push("Impact summary:");
+  lines.push(`  Must update: ${mustCount}`);
+  lines.push(`  Should update: ${shouldCount}`);
+  lines.push(`  Nice to update: ${niceCount}`);
+  lines.push(`  Errors: ${errorCount}`);
+  lines.push("");
+
+  // List must_update items (high priority)
+  if (mustCount > 0) {
+    lines.push("Must update:");
+    for (const item of impact.must_update) {
+      lines.push(`  - ${item.id}: ${item.change_summary} (${item.dependency})`);
+    }
+    lines.push("");
+  }
+
+  // List should_update items (medium priority)
+  if (shouldCount > 0) {
+    lines.push("Should update:");
+    for (const item of impact.should_update) {
+      lines.push(`  - ${item.id}: ${item.change_summary} (${item.dependency})`);
+    }
+    lines.push("");
+  }
+
+  // List errors if any
+  if (errorCount > 0) {
+    lines.push("Errors:");
+    for (const err of impact.errors) {
+      lines.push(`  - ${err.id}: ${err.reason}${err.detail ? ` - ${err.detail}` : ""}`);
+    }
+    lines.push("");
+  }
+
+  // Unresolved dependencies
+  const unresolved = taskResult.updated_state?.unresolved || [];
+  if (unresolved.length > 0) {
+    lines.push("Unresolved dependencies:");
+    for (const u of unresolved) {
+      lines.push(`  - ${u.ref}: ${u.reason}`);
+    }
+    lines.push("");
+  }
+
+  if (mustCount === 0 && shouldCount === 0 && errorCount === 0) {
+    lines.push("All instructions are in sync.");
+  }
+
+  return lines.join("\n").trim();
 }
