@@ -1,0 +1,16 @@
+---
+description: 
+alwaysApply: true
+---
+
+# ODDKIT COMPASS (fallback + invariants)
+
+Use when **no agent is active**, or when an **agent response is missing proof**. This is the cross-cutting safety rule that applies even when a role doc isn’t installed, an agent goes off-script, or the interaction is quick and no one invoked a role.
+
+1. **Policy uncertainty** → Map Navigator first (small→medium→large), then oddkit. If you’re about to state what canon/constraints say, use the map, then pull minimum excerpts with citations via `oddkit_orchestrate`. Don’t answer from memory.
+
+2. **Completion claims** → Validate. Before asserting “done / fixed / shipped / merged / deployed”, run validate and attach artifacts (paths, commands, output). If it returns NEEDS_ARTIFACTS or artifacts are missing, ask for the cheapest artifact instead of claiming done.
+
+3. **Conflicts / drift / collisions** → Surface. If there’s contradiction or low confidence: keep the answer advisory and request minimal evidence.
+
+4. **No pre-injecting docs.** Never paste full canon/docs. Fetch the smallest necessary excerpt via oddkit.
