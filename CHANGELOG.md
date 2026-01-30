@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-29
+
+### Added
+
+- **INSTRUCTION_SYNC action** — New orchestrate action for instruction dependency analysis:
+  - Detects when upstream dependencies (canon docs, tool schemas, charters) have changed
+  - Computes content hashes and compares against stored state
+  - Returns impact sets (must_update, should_update, nice_to_update) and patch plans
+  - Supports filesystem mode (`baseline_root`) and payload mode (`registry_payload`)
+
+- **normalizeRef utility** (`src/utils/normalizeRef.js`) — Strict ref normalization with explicit scheme allowlist:
+  - Requires `scheme://path` format (non-empty path)
+  - Allowed schemes: `klappy://`, `oddkit://`
+  - Strips `.md` extension, collapses repeated slashes, removes trailing slash
+
+- **instructionSync task** (`src/tasks/instructionSync.js`) — Core sync logic:
+  - Resolves instruction paths by owner (`klappy.dev` → baseline, `oddkit` → repo)
+  - Resolves dependency paths with extension probing (`.md` fallback)
+  - Tracks dependency hashes (SHA-256, 8-char prefix)
+  - Returns sorted state keys and unresolved refs list
+
+- **Runtime parameter validation** — XOR enforcement for instruction_sync params:
+  - Must provide either `baseline_root` OR `registry_payload` (not both, not neither)
+  - `state_payload` requires `registry_payload` (payload mode only)
+  - Message optional for instruction_sync, required for all other actions
+
+- **Test coverage** (`tests/orchestrate-instruction-sync.test.sh`) — Routing and validation tests
+
+### Changed
+
+- **orchestrate.js** — Added INSTRUCTION_SYNC to ACTIONS enum, validation function, dispatch case
+- **server.js** — Passes through `baseline_root`, `registry_payload`, `state_payload` to orchestrate
+- **oddkit.tools.json** — Added `instruction_sync` to action enum
+
+### Philosophy
+
+- **No auto-editing** — instruction_sync only reports impact and patch plans; it never edits instruction docs
+- **Schema permissive, runtime enforces** — JSON schema allows params; runtime validates correctness
+- **Annoying but safe** — Drift detection surfaces staleness without blocking work
+
 ## [0.5.0] - 2026-01-29
 
 ### Added
