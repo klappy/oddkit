@@ -92,11 +92,26 @@ MUST: Before claiming done/fixed/shipped/merged, call with completion claim + ar
 Use when:
 - Policy/canon questions ("what's the rule?", "is this allowed?")
 - Contradictions or low confidence
-- Discoverability ("what's in ODD?", "list canon")`,
+- Discoverability ("what's in ODD?", "list canon")
+- Instruction sync (action="instruction_sync" with baseline_root or registry_payload)`,
     inputSchema: {
       type: "object",
       properties: {
         message: { type: "string" },
+        action: {
+          type: "string",
+          enum: [
+            "orient",
+            "catalog",
+            "preflight",
+            "librarian",
+            "validate",
+            "explain",
+            "instruction_sync",
+          ],
+          description:
+            "Explicit action override. instruction_sync requires baseline_root or registry_payload.",
+        },
         repo_root: {
           type: "string",
           description: "Path to target repo. Default: current working directory.",
@@ -105,8 +120,22 @@ Use when:
           type: "string",
           description: "Optional baseline git URL or local path.",
         },
+        baseline_root: {
+          type: "string",
+          description: "For instruction_sync filesystem mode: path to klappy.dev baseline root.",
+        },
+        registry_payload: {
+          type: "object",
+          description:
+            "For instruction_sync payload mode: registry object with version and instructions array.",
+        },
+        state_payload: {
+          type: "object",
+          description:
+            "For instruction_sync payload mode: state object (requires registry_payload).",
+        },
       },
-      required: ["message"],
+      required: [],
     },
   },
   {
@@ -284,12 +313,16 @@ async function main() {
 
     switch (name) {
       case "oddkit_orchestrate": {
-        const { message, baseline } = args;
+        const { message, baseline, action, baseline_root, registry_payload, state_payload } = args;
         try {
           const result = await runOrchestrate({
             message,
             repoRoot,
             baseline,
+            action,
+            baseline_root,
+            registry_payload,
+            state_payload,
           });
           return {
             content: [

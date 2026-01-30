@@ -15,8 +15,16 @@
           },
           "action": {
             "type": "string",
-            "enum": ["orient", "catalog", "preflight", "librarian", "validate", "explain"],
-            "description": "Explicit action override. When provided, oddkit executes this action directly without message-based detection. Required for ORIENT (oddkit does not infer orientation from message content)."
+            "enum": [
+              "orient",
+              "catalog",
+              "preflight",
+              "librarian",
+              "validate",
+              "explain",
+              "instruction_sync"
+            ],
+            "description": "Explicit action override. When provided, oddkit executes this action directly without message-based detection. Required for ORIENT (oddkit does not infer orientation from message content). instruction_sync requires baseline_root or registry_payload."
           },
           "repo_root": {
             "type": "string",

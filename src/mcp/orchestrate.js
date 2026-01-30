@@ -15,6 +15,7 @@ import { runLibrarian } from "../tasks/librarian.js";
 import { runValidate } from "../tasks/validate.js";
 import { runCatalog } from "../tasks/catalog.js";
 import { runPreflight } from "../tasks/preflight.js";
+import { runInstructionSync } from "../tasks/instructionSync.js";
 import { explainLast } from "../explain/explain-last.js";
 import { readExcerpt } from "../tools/readExcerpt.js";
 import { countWords } from "../utils/slicing.js";
@@ -29,6 +30,7 @@ export const ACTIONS = {
   LIBRARIAN: "librarian",
   VALIDATE: "validate",
   EXPLAIN: "explain",
+  INSTRUCTION_SYNC: "instruction_sync",
 };
 
 /**
@@ -43,6 +45,49 @@ export const REASONS = {
   LOOKUP_QUESTION: "LOOKUP_QUESTION",
   DEFAULT_FALLBACK: "DEFAULT_FALLBACK",
 };
+
+/**
+ * Validate orchestrate parameters (runtime enforcement)
+ * Schema is permissive; this function enforces correctness at runtime.
+ */
+function validateOrchestrateParams({
+  message,
+  action,
+  baseline_root,
+  registry_payload,
+  state_payload,
+}) {
+  if (action === "instruction_sync") {
+    const hasBaseline = !!baseline_root;
+    const hasPayload = !!registry_payload;
+
+    if (hasBaseline && hasPayload) {
+      throw new Error("instruction_sync: cannot provide both baseline_root and registry_payload");
+    }
+    if (!hasBaseline && !hasPayload) {
+      throw new Error("instruction_sync: must provide either baseline_root or registry_payload");
+    }
+    if (state_payload && !hasPayload) {
+      throw new Error(
+        "instruction_sync: state_payload requires registry_payload (use baseline_root for filesystem mode)",
+      );
+    }
+    // message optional for instruction_sync
+    return;
+  }
+
+  // For all other actions (including action omitted)
+  if (!message) {
+    throw new Error("message is required (unless action is instruction_sync)");
+  }
+
+  // Warn if sync params present on non-sync actions
+  if (baseline_root || registry_payload || state_payload) {
+    console.warn(
+      "Warning: baseline_root/registry_payload/state_payload are only used by instruction_sync (ignored)",
+    );
+  }
+}
 
 /**
  * Detect action from user message (antifragile version)
@@ -232,14 +277,35 @@ export function detectAction(message) {
  * @param {string} options.message - The user message
  * @param {string} options.repoRoot - Repository root path
  * @param {string} options.baseline - Baseline override
- * @param {string} [options.action] - Explicit action override (orient, catalog, preflight, librarian, validate, explain)
+ * @param {string} [options.action] - Explicit action override (orient, catalog, preflight, librarian, validate, explain, instruction_sync)
  * @param {Object} [options.epistemic] - Optional epistemic context from upstream
  * @param {string} [options.epistemic.mode_ref] - Canon-derived mode URI
  * @param {string} [options.epistemic.confidence] - Caller-declared confidence
+ * @param {string} [options.baseline_root] - For instruction_sync: filesystem mode baseline path
+ * @param {Object} [options.registry_payload] - For instruction_sync: payload mode registry object
+ * @param {Object} [options.state_payload] - For instruction_sync: payload mode state object
  * @returns {Object} { action, assistant_text, result, debug, suggest_orient }
  */
 export async function runOrchestrate(options) {
-  const { message, repoRoot, baseline, action: explicitAction, epistemic } = options;
+  const {
+    message,
+    repoRoot,
+    baseline,
+    action: explicitAction,
+    epistemic,
+    baseline_root,
+    registry_payload,
+    state_payload,
+  } = options;
+
+  // Runtime validation (schema is permissive, runtime enforces)
+  validateOrchestrateParams({
+    message,
+    action: explicitAction,
+    baseline_root,
+    registry_payload,
+    state_payload,
+  });
 
   // Determine action: explicit action takes precedence, otherwise detect from message
   // Per CHARTER.md: ORIENT is only available via explicit action parameter
@@ -420,6 +486,20 @@ export async function runOrchestrate(options) {
         result.result = taskResult;
         result.assistant_text = buildExplainAssistantText(taskResult);
         break;
+      }
+
+      case ACTIONS.INSTRUCTION_SYNC: {
+        const syncResult = await runInstructionSync({
+          repoRoot: repoRoot || process.cwd(),
+          baselineRoot: baseline_root,
+          registryPayload: registry_payload,
+          statePayload: state_payload,
+        });
+        return {
+          action: "instruction_sync",
+          ok: true,
+          result: syncResult,
+        };
       }
     }
   } catch (err) {
