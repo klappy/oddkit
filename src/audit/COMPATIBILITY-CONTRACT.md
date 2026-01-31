@@ -57,13 +57,41 @@ baseline.ref       — Requested ref (branch/tag)
 baseline.commit    — Resolved commit SHA
 cache.fresh        — Boolean: cache was purged before pull
 cache.path         — Path to baseline cache directory
-contract.version   — This contract's version string
-contract.sha256    — First 8 chars of this file's SHA256
+contract.version   — This contract's version string (informational)
+contract.sha256    — First 8 chars of this file's SHA256 (authoritative)
 tests.ordered      — Boolean: tests ran in contract order
 tests.results[]    — Per-test name, passed, duration, error
 probes.results[]   — Per-probe name, passed, data, error
 verdict            — COMPATIBLE | INCOMPATIBLE
+semantic_sha256    — Deterministic hash of semantic content (16 chars)
 ```
+
+**Important:** `contract.sha256` is authoritative; `contract.version` is informational.
+If they disagree, the sha256 reflects actual contract content.
+
+## Determinism Definition
+
+Receipt determinism is measured over these fields only:
+
+- `verdict`
+- `oddkit.commit`
+- `oddkit.dirty`
+- `baseline.commit`
+- `contract.sha256`
+- `cache.fresh`
+- `tests.results[].name` and `tests.results[].passed`
+- `probes.results[].name` and `probes.results[].passed`
+
+Explicitly **excluded** from determinism:
+
+- `audit_date` (timestamp)
+- `tests.results[].duration` (varies by machine)
+- `cache.path` (varies by machine)
+- `probes.results[].data` (may include machine-specific paths)
+
+The `semantic_sha256` field is computed from deterministic fields only.
+Two audits of the same oddkit commit against the same baseline commit
+should produce the same `semantic_sha256` (assuming same test outcomes).
 
 ## Verdict Rules
 

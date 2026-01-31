@@ -81,9 +81,33 @@ export function generateReceipt(options) {
     },
   };
 
+  // Compute semantic hash (deterministic, excludes timestamps/durations)
+  const semanticHash = computeSemanticHash(json);
+  json.semantic_sha256 = semanticHash;
+
   const markdown = renderMarkdown(json);
 
   return { json, markdown, verdict };
+}
+
+/**
+ * Compute a deterministic hash of the receipt's semantic content.
+ * Excludes: timestamps, durations, paths (which vary by machine).
+ * Includes: verdict, commits, test/probe pass/fail status, contract hash.
+ */
+function computeSemanticHash(json) {
+  const semantic = {
+    verdict: json.verdict,
+    oddkit_commit: json.oddkit.commit,
+    oddkit_dirty: json.oddkit.dirty,
+    baseline_commit: json.baseline.commit,
+    contract_sha256: json.contract.sha256,
+    cache_fresh: json.cache.fresh,
+    tests: json.tests.results.map((t) => ({ name: t.name, passed: t.passed })),
+    probes: json.probes.results.map((p) => ({ name: p.name, passed: p.passed })),
+  };
+  const hash = createHash("sha256").update(JSON.stringify(semantic)).digest("hex");
+  return hash.slice(0, 16);
 }
 
 /**
@@ -166,7 +190,17 @@ function renderMarkdown(json) {
   lines.push("");
   lines.push(`> Machine-generated receipt. Do not hand-edit.`);
   lines.push("");
+
+  // Dirty tree warning
+  if (json.oddkit.dirty) {
+    lines.push(
+      `> **WARNING:** Dirty working tree. Results not reproducible from commit \`${json.oddkit.commit.slice(0, 7)}\`.`,
+    );
+    lines.push("");
+  }
+
   lines.push(`**Verdict:** ${json.verdict}`);
+  lines.push(`**Semantic Hash:** \`${json.semantic_sha256}\``);
   lines.push("");
   lines.push("## Audit Context");
   lines.push("");
