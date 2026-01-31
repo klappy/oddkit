@@ -116,3 +116,22 @@ When `ODDKIT_STATE_DIR` is set:
 - Changing verdict rules: Major version bump
 - Receipt field additions: Minor version bump
 - Receipt field removals: Major version bump
+
+## Schema Version Governance
+
+`schema_version` in receipts tracks the receipt format, not this contract.
+
+**Rule:** Any semantic change to receipt fields that affects `semantic_sha256`
+computation MUST bump `schema_version`.
+
+Examples requiring schema_version bump:
+
+- Adding/removing fields included in semantic hash
+- Changing how semantic hash is computed
+- Changing field types or meanings
+
+Examples NOT requiring bump:
+
+- Adding debug/informational fields excluded from semantic hash
+- Changing prose in markdown rendering
+- Adding new warning types to warnings[]

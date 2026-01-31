@@ -32,9 +32,16 @@ export function generateReceipt(options) {
   const verdict = testResults.allPassed && probeResults.allPassed ? "COMPATIBLE" : "INCOMPATIBLE";
   const contractHash = getContractHash();
 
+  // Collect machine-parseable warnings
+  const warnings = [];
+  if (oddkitDirty) {
+    warnings.push("DIRTY_TREE");
+  }
+
   const json = {
     schema_version: "1.0.0",
     verdict,
+    warnings,
     audit_date: auditDate,
     oddkit: {
       commit: oddkitCommit,
@@ -94,19 +101,34 @@ export function generateReceipt(options) {
  * Compute a deterministic hash of the receipt's semantic content.
  * Excludes: timestamps, durations, paths (which vary by machine).
  * Includes: verdict, commits, test/probe pass/fail status, contract hash.
+ *
+ * IMPORTANT: Arrays are sorted by name to ensure order-independence.
+ * Keys are sorted for canonical JSON stringification.
  */
 function computeSemanticHash(json) {
+  // Sort by name to ensure order-independence
+  const sortedTests = json.tests.results
+    .map((t) => ({ name: t.name, passed: t.passed }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const sortedProbes = json.probes.results
+    .map((p) => ({ name: p.name, passed: p.passed }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   const semantic = {
-    verdict: json.verdict,
+    baseline_commit: json.baseline.commit,
+    cache_fresh: json.cache.fresh,
+    contract_sha256: json.contract.sha256,
     oddkit_commit: json.oddkit.commit,
     oddkit_dirty: json.oddkit.dirty,
-    baseline_commit: json.baseline.commit,
-    contract_sha256: json.contract.sha256,
-    cache_fresh: json.cache.fresh,
-    tests: json.tests.results.map((t) => ({ name: t.name, passed: t.passed })),
-    probes: json.probes.results.map((p) => ({ name: p.name, passed: p.passed })),
+    probes: sortedProbes,
+    tests: sortedTests,
+    verdict: json.verdict,
   };
-  const hash = createHash("sha256").update(JSON.stringify(semantic)).digest("hex");
+
+  // Use sorted keys for canonical JSON
+  const canonical = JSON.stringify(semantic, Object.keys(semantic).sort());
+  const hash = createHash("sha256").update(canonical).digest("hex");
   return hash.slice(0, 16);
 }
 

@@ -419,6 +419,13 @@ export function run() {
           console.log(`Probes: ${result.probes.passed}/${result.probes.total} passed`);
           console.log(`Baseline: ${result.baseline.commit}`);
           console.log(`Receipt: ${result.receipts.latest_md}`);
+
+          // CI-grepable warnings
+          if (result.json.warnings && result.json.warnings.length > 0) {
+            for (const w of result.json.warnings) {
+              console.log(`WARNING_${w}=true`);
+            }
+          }
         }
 
         // Exit code based on verdict
