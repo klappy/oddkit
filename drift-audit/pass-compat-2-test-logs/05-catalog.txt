@@ -1,0 +1,28 @@
+
+> oddkit@0.7.0 test:catalog
+> bash tests/orchestrate-catalog.test.sh
+
+Orchestrate catalog tests
+=========================
+
+Test 1a: 'what's in ODD?' -> action catalog
+PASS: what's in ODD -> catalog
+
+Test 1b: 'list the canon' -> action catalog
+PASS: list the canon -> catalog
+
+Test 2: menu contains Start here / Next up / Top canon by tag / Operational playbooks
+PASS: assistant_text contains "Start here:"
+PASS: assistant_text contains "Next up:"
+PASS: assistant_text contains "Top canon by tag:"
+PASS: assistant_text contains "Operational playbooks:"
+
+Test 3: 'what is epistemic challenge?' -> action librarian
+PASS: non-catalog -> librarian
+
+Test 4: explain --last shows last tool was catalog
+PASS: explain last tool = catalog
+
+=========================
+All catalog tests passed!
+Exit: 0

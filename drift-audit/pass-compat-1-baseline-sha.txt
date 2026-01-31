@@ -1,0 +1,10 @@
+=== Baseline SHA Frozen at Runtime ===
+Frozen SHA: 5ed9b336449886adc9623c2abec6a44bb98580c8
+Frozen at: 2026-01-31T16:30:07Z
+
+Log:
+5ed9b33 audit: Epoch 4 drift audit Pass 0 - legacy classification complete
+
+Remote:
+origin	https://github.com/klappy/klappy.dev.git (fetch)
+origin	https://github.com/klappy/klappy.dev.git (push)

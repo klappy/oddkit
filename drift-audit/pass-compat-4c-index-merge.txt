@@ -1,0 +1,29 @@
+=== Index Stats ===
+{
+  "total": 312,
+  "local": 156,
+  "baseline": 156,
+  "byAuthority": {
+    "governing": 136,
+    "operational": 176,
+    "non-governing": 0
+  }
+}
+
+=== Epoch 4 docs ===
+Found 8 Epoch 4 docs:
+ - canon/defaults/epistemic-posture.md
+ - canon/defaults/evidence-intake.md
+ - canon/meta/epistemic-architecture.md
+ - odd/contract/epistemic-contract.md
+ - canon/defaults/epistemic-posture.md
+ - canon/defaults/evidence-intake.md
+ - canon/meta/epistemic-architecture.md
+ - odd/contract/epistemic-contract.md
+
+=== Apocrypha docs (SHOULD BE EMPTY) ===
+FAIL: Found 4 apocrypha docs (should be excluded):
+ - canon/apocrypha/CHARTER.md
+ - canon/apocrypha/fragments/on-artifacts.md
+ - canon/apocrypha/CHARTER.md
+ - canon/apocrypha/fragments/on-artifacts.md

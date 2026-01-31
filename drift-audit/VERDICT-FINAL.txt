@@ -1,0 +1,79 @@
+==============================================
+  EPOCH 4 COMPATIBILITY AUDIT - FINAL VERDICT
+==============================================
+
+Date: 2026-01-31T17:24:42Z
+Baseline SHA: 5ed9b336449886adc9623c2abec6a44bb98580c8
+
+==============================================
+  COMPATIBILITY VERDICT: PASS
+==============================================
+
+Epoch 4 invariants hold:
+  - odd:// URIs are parseable and resolvable
+  - .noindex sentinel excludes apocrypha from index
+  - Path traversal attacks are rejected
+
+Compatibility PASS means:
+  - odd://contract/epistemic-contract resolves correctly
+  - canon/apocrypha/* is excluded from index (0 docs)
+  - excluded_by_noindex stat is populated
+  - Traversal attempts (../) are rejected at multiple layers
+
+==============================================
+  TEST SUITE HEALTH: DEGRADED
+==============================================
+
+Tests 09, 11 failing; failure modes unchanged post-patch (see receipts):
+  - Test 09: mcp-instructions-smoke - missing required phrase
+  - Test 11: mcp-orchestrate-test - shell parsing bug + anchor check
+
+These failures are pre-existing and unrelated to Epoch 4 compatibility.
+Compatibility PASS does not imply CI green.
+
+==============================================
+  PATCHES APPLIED
+==============================================
+
+1. src/utils/normalizeRef.js
+   - Added 'odd' to ALLOWED_SCHEMES
+   - Added traversal rejection (null bytes, backslash, ..)
+
+2. src/policy/docFetch.js
+   - Added safeSubpath() containment helper
+   - odd:// maps to odd/<path>.md with containment check
+   - klappy:// hardened against traversal
+   - Documented: odd:// is NOT an alias of klappy://odd/
+
+3. src/index/buildIndex.js
+   - indexRoot() now returns { docs, excludedByNoindex }
+   - excluded_by_noindex stat in index.json
+   - .noindex sentinel enforced as contract surface
+
+==============================================
+  REGRESSION TESTS ADDED
+==============================================
+
+1. tests/noindex-exclusion.test.sh
+   - Verifies excluded_by_noindex >= 1
+   - Verifies 0 apocrypha docs in index
+   - Verifies normal docs still indexed
+
+2. tests/odd-uri-scheme.test.sh
+   - normalizeRef accepts odd://
+   - normalizeRef rejects traversal
+   - getDocByUri resolves odd:// correctly
+   - getDocByUri rejects traversal
+   - klappy:// traversal also rejected
+
+==============================================
+  SECURITY HARDENING
+==============================================
+
+Path traversal protection at multiple layers:
+  - normalizeRef(): rejects .., /, \, null bytes
+  - safeSubpath(): POSIX normalize + containment check
+  - odd:// constrained to odd/ subtree
+  - klappy:// constrained to baseline root
+
+==============================================

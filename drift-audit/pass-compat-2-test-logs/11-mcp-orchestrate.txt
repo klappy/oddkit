@@ -1,0 +1,67 @@
+Testing oddkit_orchestrate assistant_text output
+================================================
+
+Setting up test environment...
+  Project root: /Users/chrisklapp/oddkit
+  Temp dir: /var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.zt82IA2d8z
+
+Building index...
+
+Testing orchestrate function...
+{
+  "action": "librarian",
+  "assistant_text": "Found 4 relevant document(s) for: \"What is epistemic challenge?\"\n\n> The epistemic challenge refers to the fundamental difficulty of knowing what we know and verifying claims in complex systems.\n\n— canon/epistemic-challenge.md#Epistemic Challenge\n\n> Document tiers define epistemic obligation, not importance.\n\n— canon/epistemic-obligation-and-document-tiers.md#Epistemic Obligation and Document Tiers\n\n> A phase-aware cognitive governor for Outcomes-Driven Development. > Use proactively when users jump to implementation, propose architecture, or request execution before epistemic prerequisites are met.\n\n— canon/agents/odd-epistemic-guide.md#ODD Epistemic Guide\n\n> The practical playbook for applying epistemic challenge without breaking collaboration.\n\n— docs/orchestrator/epistemic-challenge.md#Epistemic Challenge",
+  "result": {
+    "status": "SUPPORTED",
+    "advisory": false,
+    "answer": "Found 4 relevant document(s) for: \"What is epistemic challenge?\"",
+    "confidence": 0.61,
+    "confidence_factors": {
+      "margin": 0.20585161964472312,
+      "coverage": 1,
+      "conflict_penalty": 0,
+      "evidence_quality": 0.625,
+      "intent_quality": 1
+    },
+    "is_confident": true,
+    "evidence": [
+      {
+        "quote": "The epistemic challenge refers to the fundamental difficulty of knowing what we know and verifying claims in complex systems.",
+        "citation": "canon/epistemic-challenge.md#Epistemic Challenge",
+        "origin": "local",
+        "intent": "promoted",
+        "evidence_strength": "strong",
+        "wordCount": 19,
+        "truncated": false
+      },
+      {
+        "quote": "> Document tiers define epistemic obligation, not importance.",
+        "citation": "canon/epistemic-obligation-and-document-tiers.md#Epistemic Obligation and Document Tiers",
+        "origin": "baseline",
+        "intent": "promoted",
+        "evidence_strength": "none",
+        "wordCount": 8,
+        "truncated": false
+      },
+      {
+        "quote": "> A phase-aware cognitive governor for Outcomes-Driven Development. > Use proactively when users jump to implementation, propose architecture, or request execution before epistemic prerequisites are met.",
+        "citation": "canon/agents/odd-epistemic-guide.md#ODD Epistemic Guide",
+        "origin": "baseline",
+        "intent": "promoted",
+        "evidence_strength": "none",
+        "wordCount": 26,
+        "truncated": false
+      },
+      {
+        "quote": "> The practical playbook for applying epistemic challenge without breaking collaboration.",
+        "citation": "docs/orchestrator/epistemic-challenge.md#Epistemic Challenge",
+        "origin": "baseline",
+        "intent": "operational",
+        "evidence_strength": "none",
+PASS - assistant_text exists
+PASS - Contains canonical document reference
+tests/mcp-orchestrate-test.sh: line 93: [:        0
+0: integer expression expected
+WARN - Quote may be too short (words:        0
+0)
+FAIL - Missing citations with anchors

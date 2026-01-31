@@ -1,0 +1,2303 @@
+{
+  "status": "SUPPORTED",
+  "advisory": true,
+  "answer": "Found 5 relevant document(s) for: \"What is epoch E0004?\" [advisory: low confidence]",
+  "confidence": 0.48,
+  "confidence_factors": {
+    "margin": 0.04682274247491636,
+    "coverage": 1,
+    "conflict_penalty": 0,
+    "evidence_quality": 0.5,
+    "intent_quality": 0.8
+  },
+  "is_confident": false,
+  "evidence": [
+    {
+      "quote": "This document is not an introduction. It is a system-level constraint. It exists to prevent ODD from becoming heavy, coercive, or self-justifying as it grows. If there is ever a conflict between this document and any other part of ODD,",
+      "citation": "odd/constraint/use-only-what-hurts.md#Use Only What Hurts",
+      "origin": "local",
+      "intent": "pattern",
+      "evidence_strength": "none",
+      "wordCount": 40,
+      "truncated": true
+    },
+    {
+      "quote": "⚠️ This folder contains derived output. - This folder is derived output - It may be deleted anytime - Do not edit compiled files by hand - Regenerate from source Canon See /docs/appendices/canonical-compression.md for the compilation model.",
+      "citation": "canon/_compiled/epoch-E0002/README.md#Compiled Canon Outputs (Epoch E0002)",
+      "origin": "local",
+      "intent": "promoted",
+      "evidence_strength": "none",
+      "wordCount": 37,
+      "truncated": false
+    },
+    {
+      "quote": "An epoch defines the evaluation reality for a period of work: - what \"done\" means (and what it does not) - what evidence is mandatory - what contracts are binding (build/deploy, provenance, etc.) - what risks are acceptable - what",
+      "citation": "docs/appendices/epochs.md#What an Epoch Is",
+      "origin": "local",
+      "intent": "operational",
+      "evidence_strength": "none",
+      "wordCount": 40,
+      "truncated": true
+    },
+    {
+      "quote": "An Attempt is a bounded execution of a specific Product Requirements Document (PRD). An attempt: - has a single PRD version - has a defined scope - produces an outcome artifact - is evaluated against its own Definition of Done",
+      "citation": "docs/appendices/attempt-lifecycle.md#What an Attempt Is",
+      "origin": "local",
+      "intent": "operational",
+      "evidence_strength": "none",
+      "wordCount": 40,
+      "truncated": true
+    },
+    {
+      "quote": "E0004 is LOCKED. No further expansion without a new epoch. ---",
+      "citation": "canon/CHANGELOG.md#Epoch Lock",
+      "origin": "local",
+      "intent": "promoted",
+      "evidence_strength": "none",
+      "wordCount": 11,
+      "truncated": false
+    }
+  ],
+  "sources": [
+    "odd/constraint/use-only-what-hurts.md#Use Only What Hurts",
+    "canon/_compiled/epoch-E0002/README.md#Compiled Canon Outputs (Epoch E0002)",
+    "docs/appendices/epochs.md#What an Epoch Is",
+    "docs/appendices/attempt-lifecycle.md#What an Attempt Is",
+    "canon/CHANGELOG.md#Epoch Lock"
+  ],
+  "read_next": [
+    {
+      "path": "odd/constraint/use-only-what-hurts.md#Use Only What Hurts",
+      "reason": "Primary source"
+    },
+    {
+      "path": "canon/_compiled/epoch-E0002/README.md#Compiled Canon Outputs (Epoch E0002)",
+      "reason": "Related context"
+    }
+  ],
+  "arbitration": {
+    "outcome": "prefer",
+    "candidates_considered": [
+      {
+        "path": "odd/constraint/use-only-what-hurts.md",
+        "origin": "local",
+        "score": 39.47,
+        "intent": "pattern",
+        "evidence": "none",
+        "authority": "governing",
+        "signals": {
+          "title_match": 1,
+          "subtitle_match": 0,
+          "tag_match": 0,
+          "heading_match": 4,
+          "content_match": 1,
+          "authority_multiplier": 1.5,
+          "intent_multiplier": 1.3,
+          "evidence_multiplier": 0.8,
+          "origin_multiplier": 1.1,
+          "epistemic_multiplier": 1,
+          "epistemic_mode": null,
+          "epistemic_reason": null
+        }
+      },
+      {
+        "path": "canon/_compiled/epoch-E0002/README.md",
+        "origin": "local",
+        "score": 37.62,
+        "intent": "promoted",
+        "evidence": "none",
+        "authority": "governing",
+        "signals": {
+          "title_match": 1,
+          "subtitle_match": 0,
+          "tag_match": 1,
+          "heading_match": 1,
+          "content_match": 1,
+          "authority_multiplier": 1.5,
+          "intent_multiplier": 1.5,
+          "evidence_multiplier": 0.8,
+          "origin_multiplier": 1.1,
+          "epistemic_multiplier": 1,
+          "epistemic_mode": null,
+          "epistemic_reason": null
+        }
+      },
+      {
+        "path": "docs/appendices/epochs.md",
+        "origin": "local",
+        "score": 36.96,
+        "intent": "operational",
+        "evidence": "none",
+        "authority": "operational",
+        "signals": {
+          "title_match": 0,
+          "subtitle_match": 0,
+          "tag_match": 0,
+          "heading_match": 11,
+          "content_match": 2,
+          "authority_multiplier": 1.2,
+          "intent_multiplier": 1,
+          "evidence_multiplier": 0.8,
+          "origin_multiplier": 1.1,
+          "epistemic_multiplier": 1,
+          "epistemic_mode": null,
+          "epistemic_reason": null
+        }
+      },
+      {
+        "path": "docs/appendices/attempt-lifecycle.md",
+        "origin": "local",
+        "score": 16.9,
+        "intent": "operational",
+        "evidence": "none",
+        "authority": "operational",
+        "signals": {
+          "title_match": 0,
+          "subtitle_match": 0,
+          "tag_match": 0,
+          "heading_match": 5,
+          "content_match": 1,
+          "authority_multiplier": 1.2,
+          "intent_multiplier": 1,
+          "evidence_multiplier": 0.8,
+          "origin_multiplier": 1.1,
+          "epistemic_multiplier": 1,
+          "epistemic_mode": null,
+          "epistemic_reason": null
+        }
+      },
+      {
+        "path": "canon/CHANGELOG.md",
+        "origin": "local",
+        "score": 15.84,
+        "intent": "promoted",
+        "evidence": "none",
+        "authority": "governing",
+        "signals": {
+          "title_match": 0,
+          "subtitle_match": 0,
+          "tag_match": 0,
+          "heading_match": 2,
+          "content_match": 2,
+          "authority_multiplier": 1.5,
+          "intent_multiplier": 1.5,
+          "evidence_multiplier": 0.8,
+          "origin_multiplier": 1.1,
+          "epistemic_multiplier": 1,
+          "epistemic_mode": null,
+          "epistemic_reason": null
+        }
+      }
+    ],
+    "contradictions": [],
+    "warnings": [
+      {
+        "type": "EXCESSIVE_DUPLICATES",
+        "count": 156,
+        "ratio": 50,
+        "message": "156 duplicates (50% of candidates). Baseline and local overlap heavily; consider pinning baseline ref or reducing baseline scope.",
+        "threshold": 25
+      },
+      {
+        "type": "INDEX_DUPLICATE",
+        "count": 156,
+        "ratio": 50,
+        "message": "156 duplicate(s) collapsed from 156 identity group(s).",
+        "groups": [
+          {
+            "id": "klappy://meta/changelog",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/CHANGELOG.md",
+              "hash": "5f9ad67e"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/CHANGELOG.md",
+                "hash": "5f9ad67e"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/README.md",
+              "hash": "1984b500"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/README.md",
+                "hash": "1984b500"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/template",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/TEMPLATE.md",
+              "hash": "4aabe141"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/TEMPLATE.md",
+                "hash": "4aabe141"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/completion-report-template",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/completion-report-template.md",
+              "hash": "63b4a53f"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/completion-report-template.md",
+                "hash": "63b4a53f"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/constraints",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/constraints.md",
+              "hash": "d126fe49"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/constraints.md",
+                "hash": "d126fe49"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/decision-rules",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/decision-rules.md",
+              "hash": "685fb6b3"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/decision-rules.md",
+                "hash": "685fb6b3"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/definition-of-done",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/definition-of-done.md",
+              "hash": "2acf2485"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/definition-of-done.md",
+                "hash": "2acf2485"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/epistemic-challenge",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/epistemic-challenge.md",
+              "hash": "49f78fbc"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/epistemic-challenge.md",
+                "hash": "49f78fbc"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/epistemic-hygiene",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/epistemic-hygiene.md",
+              "hash": "1af83807"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/epistemic-hygiene.md",
+                "hash": "1af83807"
+              }
+            ]
+          },
+          {
+            "id": "klappy://canon/epistemic-modes",
+            "idType": "uri",
+            "chosen": {
+              "origin": "local",
+              "path": "canon/epistemic-modes.md",
+              "hash": "4a9e72ac"
+            },
+            "collapsed": [
+              {
+                "origin": "baseline",
+                "path": "canon/epistemic-modes.md",
+                "hash": "4a9e72ac"
+              }
+            ]
+          }
+        ],
+        "total_groups": 156
+      },
+      {
+        "type": "MISSING_URI_FOR_POLICY_DOC",
+        "count": 1,
+        "paths": [
+          "canon/apocrypha/CHARTER.md"
+        ],
+        "total": 1,
+        "message": "1 policy doc(s) lack URI. Add uri frontmatter to stabilize identity.",
+        "severity": "medium"
+      }
+    ],
+    "precedence_violations": [],
+    "vetoed": [],
+    "dedup": {
+      "collapsed_groups": 156,
+      "duplicate_count": 156,
+      "groups": [
+        {
+          "id": "klappy://meta/changelog",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/CHANGELOG.md",
+            "hash": "5f9ad67e"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/CHANGELOG.md",
+              "hash": "5f9ad67e"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/README.md",
+            "hash": "1984b500"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/README.md",
+              "hash": "1984b500"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/TEMPLATE.md",
+            "hash": "4aabe141"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/TEMPLATE.md",
+              "hash": "4aabe141"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/completion-report-template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/completion-report-template.md",
+            "hash": "63b4a53f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/completion-report-template.md",
+              "hash": "63b4a53f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/constraints",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/constraints.md",
+            "hash": "d126fe49"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/constraints.md",
+              "hash": "d126fe49"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/decision-rules",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/decision-rules.md",
+            "hash": "685fb6b3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/decision-rules.md",
+              "hash": "685fb6b3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/definition-of-done",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/definition-of-done.md",
+            "hash": "2acf2485"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/definition-of-done.md",
+              "hash": "2acf2485"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/epistemic-challenge",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/epistemic-challenge.md",
+            "hash": "49f78fbc"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/epistemic-challenge.md",
+              "hash": "49f78fbc"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/epistemic-hygiene",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/epistemic-hygiene.md",
+            "hash": "1af83807"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/epistemic-hygiene.md",
+              "hash": "1af83807"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/epistemic-modes",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/epistemic-modes.md",
+            "hash": "4a9e72ac"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/epistemic-modes.md",
+              "hash": "4a9e72ac"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/epistemic-obligation-and-document-tiers",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/epistemic-obligation-and-document-tiers.md",
+            "hash": "52ac788b"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/epistemic-obligation-and-document-tiers.md",
+              "hash": "52ac788b"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/self-audit",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/self-audit.md",
+            "hash": "599daa64"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/self-audit.md",
+              "hash": "599daa64"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/verification-and-evidence",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/verification-and-evidence.md",
+            "hash": "729929f6"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/verification-and-evidence.md",
+              "hash": "729929f6"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/visual-proof",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/visual-proof.md",
+            "hash": "aed08297"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/visual-proof.md",
+              "hash": "aed08297"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/weighted-relevance-and-arbitration",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/weighted-relevance-and-arbitration.md",
+            "hash": "0d842ef4"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/weighted-relevance-and-arbitration.md",
+              "hash": "0d842ef4"
+            }
+          ]
+        },
+        {
+          "id": "canon/apocrypha/CHARTER.md::92303d04",
+          "idType": "path+hash",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/apocrypha/CHARTER.md",
+            "hash": "92303d04"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/apocrypha/CHARTER.md",
+              "hash": "92303d04"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-epistemic-guide",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-epistemic-guide.md",
+            "hash": "30868ee3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-epistemic-guide.md",
+              "hash": "30868ee3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-implementation-guide",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-implementation-guide.md",
+            "hash": "ff615c89"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-implementation-guide.md",
+              "hash": "ff615c89"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-instruction-sync",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-instruction-sync.md",
+            "hash": "b1116714"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-instruction-sync.md",
+              "hash": "b1116714"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-map-navigator",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-map-navigator.md",
+            "hash": "9a972427"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-map-navigator.md",
+              "hash": "9a972427"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-mode-selector",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-mode-selector.md",
+            "hash": "bf807d38"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-mode-selector.md",
+              "hash": "bf807d38"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/agents/odd-scribe",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/agents/odd-scribe.md",
+            "hash": "b1a25023"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/agents/odd-scribe.md",
+              "hash": "b1a25023"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/decisions/decision-record-standard",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/decisions/decision-record-standard.md",
+            "hash": "bc85add3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/decisions/decision-record-standard.md",
+              "hash": "bc85add3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/decisions/models-do-not-mutate-canon",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/decisions/models-do-not-mutate-canon.md",
+            "hash": "28b230dc"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/decisions/models-do-not-mutate-canon.md",
+              "hash": "28b230dc"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/documentation/agent-executable-outline",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/documentation/agent-executable-outline.md",
+            "hash": "1a9b96a3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/documentation/agent-executable-outline.md",
+              "hash": "1a9b96a3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/documentation/execution-posture",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/documentation/execution-posture.md",
+            "hash": "fc269727"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/documentation/execution-posture.md",
+              "hash": "fc269727"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/documentation/slice-contract-sml",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/documentation/slice-contract-sml.md",
+            "hash": "c7f35c62"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/documentation/slice-contract-sml.md",
+              "hash": "c7f35c62"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/documentation/tier-vs-relevance",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/documentation/tier-vs-relevance.md",
+            "hash": "f1cbed78"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/documentation/tier-vs-relevance.md",
+              "hash": "f1cbed78"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/defaults/epistemic-posture",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/defaults/epistemic-posture.md",
+            "hash": "6ec2748f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/defaults/epistemic-posture.md",
+              "hash": "6ec2748f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/defaults/evidence-intake",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/defaults/evidence-intake.md",
+            "hash": "a469b4ab"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/defaults/evidence-intake.md",
+              "hash": "a469b4ab"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/meta/epistemic-architecture",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/meta/epistemic-architecture.md",
+            "hash": "9e026d5b"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/meta/epistemic-architecture.md",
+              "hash": "9e026d5b"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/principles/bulldoze-blueprint",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/principles/bulldoze-but-keep-the-blueprint.md",
+            "hash": "fba95c8c"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/principles/bulldoze-but-keep-the-blueprint.md",
+              "hash": "fba95c8c"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/principles/odds-relationship-to-documentation",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/principles/odds-relationship-to-documentation.md",
+            "hash": "f6f718de"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/principles/odds-relationship-to-documentation.md",
+              "hash": "f6f718de"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/README.md",
+            "hash": "b6489024"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/README.md",
+              "hash": "b6489024"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/TEMPLATE.md",
+            "hash": "8797bbd9"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/TEMPLATE.md",
+              "hash": "8797bbd9"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance/antifragile",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/antifragile.md",
+            "hash": "571ecc43"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/antifragile.md",
+              "hash": "571ecc43"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance/lean-startup",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/lean-startup.md",
+            "hash": "106a67bf"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/lean-startup.md",
+              "hash": "106a67bf"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance/ooda-loop",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/ooda-loop.md",
+            "hash": "133fdc8b"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/ooda-loop.md",
+              "hash": "133fdc8b"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/resonance/sprint",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/resonance/sprint.md",
+            "hash": "32d7ab08"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/resonance/sprint.md",
+              "hash": "32d7ab08"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/compiled/epoch-e0002-readme",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/_compiled/epoch-E0002/README.md",
+            "hash": "b99f48a7"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/_compiled/epoch-E0002/README.md",
+              "hash": "b99f48a7"
+            }
+          ]
+        },
+        {
+          "id": "klappy://apocrypha/on-artifacts",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/apocrypha/fragments/on-artifacts.md",
+            "hash": "c79fa2e5"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/apocrypha/fragments/on-artifacts.md",
+              "hash": "c79fa2e5"
+            }
+          ]
+        },
+        {
+          "id": "klappy://canon/odd/tool-specialization",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "canon/odd/appendices/tool-specialization.md",
+            "hash": "05539d5c"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "canon/odd/appendices/tool-specialization.md",
+              "hash": "05539d5c"
+            }
+          ]
+        },
+        {
+          "id": "klappy://public/odd",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/README.md",
+            "hash": "9bdf9fcd"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/README.md",
+              "hash": "9bdf9fcd"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/TEMPLATE.md",
+            "hash": "59c8df41"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/TEMPLATE.md",
+              "hash": "59c8df41"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/cognitive-partitioning",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/cognitive-partitioning.md",
+            "hash": "2d8c77ae"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/cognitive-partitioning.md",
+              "hash": "2d8c77ae"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/contract",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/contract.md",
+            "hash": "cd1ae5fd"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/contract.md",
+              "hash": "cd1ae5fd"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/index.md",
+            "hash": "dc17d851"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/index.md",
+              "hash": "dc17d851"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/manifesto",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/manifesto.md",
+            "hash": "8d2846bb"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/manifesto.md",
+              "hash": "8d2846bb"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/maturity",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/maturity.md",
+            "hash": "733d9aef"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/maturity.md",
+              "hash": "733d9aef"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/misuse-patterns",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/misuse-patterns.md",
+            "hash": "35b678dd"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/misuse-patterns.md",
+              "hash": "35b678dd"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/orientation-map",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/orientation-map.md",
+            "hash": "517e8335"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/orientation-map.md",
+              "hash": "517e8335"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/prompt-architecture",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/prompt-architecture.md",
+            "hash": "db0fee75"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/prompt-architecture.md",
+              "hash": "db0fee75"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/terminology",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/terminology.md",
+            "hash": "6bda98b0"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/terminology.md",
+              "hash": "6bda98b0"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/appendices",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/README.md",
+            "hash": "5ee60104"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/README.md",
+              "hash": "5ee60104"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/appendices/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/TEMPLATE.md",
+            "hash": "04410e2e"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/TEMPLATE.md",
+              "hash": "04410e2e"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/alignment-reviews",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/alignment-reviews.md",
+            "hash": "b4340db7"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/alignment-reviews.md",
+              "hash": "b4340db7"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/evolution-not-automation",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/evolution-not-automation.md",
+            "hash": "d369f22c"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/evolution-not-automation.md",
+              "hash": "d369f22c"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/appendices/failure-driven-modularity",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/failure-driven-modularity.md",
+            "hash": "fa757e21"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/failure-driven-modularity.md",
+              "hash": "fa757e21"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/media-as-learning-layer",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/media-as-learning-layer.md",
+            "hash": "4304e26e"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/media-as-learning-layer.md",
+              "hash": "4304e26e"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/appendices/progressive-elevation",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/progressive-elevation.md",
+            "hash": "4c4517c3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/progressive-elevation.md",
+              "hash": "4c4517c3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/quantum-development",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/quantum-development.md",
+            "hash": "47fb2489"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/quantum-development.md",
+              "hash": "47fb2489"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/visual-evolution",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/appendices/visual-evolution.md",
+            "hash": "956fd0b2"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/appendices/visual-evolution.md",
+              "hash": "956fd0b2"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/constraints/anti-metric-laundering",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/constraint/anti-metric-laundering.md",
+            "hash": "c7e859e4"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/constraint/anti-metric-laundering.md",
+              "hash": "c7e859e4"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/constraint/use-only-what-hurts",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/constraint/use-only-what-hurts.md",
+            "hash": "fd3b3e2a"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/constraint/use-only-what-hurts.md",
+              "hash": "fd3b3e2a"
+            }
+          ]
+        },
+        {
+          "id": "odd://contract/epistemic-contract",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/contract/epistemic-contract.md",
+            "hash": "11c32e7c"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/contract/epistemic-contract.md",
+              "hash": "11c32e7c"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/decisions/D0001",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/decisions/D0001-three-tier-conceptual-hierarchy.md",
+            "hash": "600df2ec"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/decisions/D0001-three-tier-conceptual-hierarchy.md",
+              "hash": "600df2ec"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/decisions",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/decisions/README.md",
+            "hash": "cc40a820"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/decisions/README.md",
+              "hash": "cc40a820"
+            }
+          ]
+        },
+        {
+          "id": "klappy://odd/getting-started/agents-and-mcp",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "odd/getting-started/odd-agents-and-mcp.md",
+            "hash": "bbc7c067"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "odd/getting-started/odd-agents-and-mcp.md",
+              "hash": "bbc7c067"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/agent-entrypoint",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/AGENT_ENTRYPOINT.md",
+            "hash": "714397df"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/AGENT_ENTRYPOINT.md",
+              "hash": "714397df"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/agent-kickoff",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/AGENT_KICKOFF.md",
+            "hash": "e3761f6f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/AGENT_KICKOFF.md",
+              "hash": "e3761f6f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/attempts",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/ATTEMPTS.md",
+            "hash": "3c9ecb81"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/ATTEMPTS.md",
+              "hash": "3c9ecb81"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/attempt-kickoff",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/ATTEMPT_KICKOFF.md",
+            "hash": "0abe45d9"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/ATTEMPT_KICKOFF.md",
+              "hash": "0abe45d9"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/attempt-record-pack",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/ATTEMPT_RECORD_PACK.md",
+            "hash": "6835b604"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/ATTEMPT_RECORD_PACK.md",
+              "hash": "6835b604"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/cloudflare-config",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/CLOUDFLARE_CONFIG.md",
+            "hash": "72b642cc"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/CLOUDFLARE_CONFIG.md",
+              "hash": "72b642cc"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/distillation-classification",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/DISTILLATION_CLASSIFICATION.md",
+            "hash": "0e22a4ad"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/DISTILLATION_CLASSIFICATION.md",
+              "hash": "0e22a4ad"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/prd",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/PRD.md",
+            "hash": "c7158ab5"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/PRD.md",
+              "hash": "c7158ab5"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/preview",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/PREVIEW.md",
+            "hash": "55334d43"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/PREVIEW.md",
+              "hash": "55334d43"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/README.md",
+            "hash": "971c402d"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/README.md",
+              "hash": "971c402d"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/TEMPLATE.md",
+            "hash": "caccb523"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/TEMPLATE.md",
+              "hash": "caccb523"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/template-readme",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/TEMPLATE_README.md",
+            "hash": "443fb658"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/TEMPLATE_README.md",
+              "hash": "443fb658"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/truth-map",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/TRUTH_MAP.md",
+            "hash": "1a97447e"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/TRUTH_MAP.md",
+              "hash": "1a97447e"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/what-this-repo-is-not",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/WHAT_THIS_REPO_IS_NOT.md",
+            "hash": "4b028d8f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/WHAT_THIS_REPO_IS_NOT.md",
+              "hash": "4b028d8f"
+            }
+          ]
+        },
+        {
+          "id": "oddkit://why",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/WHY.md",
+            "hash": "c21f6df8"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/WHY.md",
+              "hash": "c21f6df8"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/concept",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/concept.md",
+            "hash": "77d744d4"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/concept.md",
+              "hash": "77d744d4"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/context-packs-and-projection-detail",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/context-packs-and-projection-detail.md",
+            "hash": "7349c74a"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/context-packs-and-projection-detail.md",
+              "hash": "7349c74a"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/mode-separated-conversations",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/mode-separated-conversations.md",
+            "hash": "009b4698"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/mode-separated-conversations.md",
+              "hash": "009b4698"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/synthesis-ledger",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/synthesis-ledger.md",
+            "hash": "5df57ccf"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/synthesis-ledger.md",
+              "hash": "5df57ccf"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/prd/template",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/PRD/PRD_TEMPLATE.md",
+            "hash": "3766e058"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/PRD/PRD_TEMPLATE.md",
+              "hash": "3766e058"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/agent-architecture/sub-agents",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/agent-architecture/sub-agents.md",
+            "hash": "ff9e6cc8"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/agent-architecture/sub-agents.md",
+              "hash": "ff9e6cc8"
+            }
+          ]
+        },
+        {
+          "id": "docs/agents/README.md::c0871a87",
+          "idType": "path+hash",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/agents/README.md",
+            "hash": "c0871a87"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/agents/README.md",
+              "hash": "c0871a87"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/README.md",
+            "hash": "6f7fcc20"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/README.md",
+              "hash": "6f7fcc20"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/attempt-lifecycle",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/attempt-lifecycle.md",
+            "hash": "15e959dc"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/attempt-lifecycle.md",
+              "hash": "15e959dc"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/canonical-compression",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/canonical-compression.md",
+            "hash": "d5b3f062"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/canonical-compression.md",
+              "hash": "d5b3f062"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/compilation-targets",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/compilation-targets.md",
+            "hash": "1db6d53f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/compilation-targets.md",
+              "hash": "1db6d53f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/compilation",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/compilation.md",
+            "hash": "f4354300"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/compilation.md",
+              "hash": "f4354300"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/compiled-memory",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/compiled-memory.md",
+            "hash": "6541e86d"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/compiled-memory.md",
+              "hash": "6541e86d"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/deploy-evidence",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/deploy-evidence.md",
+            "hash": "39685ef7"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/deploy-evidence.md",
+              "hash": "39685ef7"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/drift-checks",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/drift-checks.md",
+            "hash": "0d52be16"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/drift-checks.md",
+              "hash": "0d52be16"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/epochs",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/epochs.md",
+            "hash": "fc29b89e"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/epochs.md",
+              "hash": "fc29b89e"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/evidence",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/evidence.md",
+            "hash": "8efaa20f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/evidence.md",
+              "hash": "8efaa20f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/lane-build-layout",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/lane-build-layout.md",
+            "hash": "a8602460"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/lane-build-layout.md",
+              "hash": "a8602460"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/lane-implementation-surfaces",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/lane-implementation-surfaces.md",
+            "hash": "d0966109"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/lane-implementation-surfaces.md",
+              "hash": "d0966109"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/memory-architecture",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/memory-architecture.proposed.md",
+            "hash": "44b1edf9"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/memory-architecture.proposed.md",
+              "hash": "44b1edf9"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/online-evidence",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/online-evidence.md",
+            "hash": "89831f11"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/online-evidence.md",
+              "hash": "89831f11"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/product-lanes",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/product-lanes.md",
+            "hash": "88e80aa5"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/product-lanes.md",
+              "hash": "88e80aa5"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/repo-topology",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/repo-topology.md",
+            "hash": "be3265e3"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/repo-topology.md",
+              "hash": "be3265e3"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/repo-truth-audit",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/repo-truth-audit.md",
+            "hash": "81f9137d"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/repo-truth-audit.md",
+              "hash": "81f9137d"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/appendices/repo-truth",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/appendices/repo-truth.md",
+            "hash": "7268931c"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/appendices/repo-truth.md",
+              "hash": "7268931c"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/examples",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/examples/README.md",
+            "hash": "c13b9621"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/examples/README.md",
+              "hash": "c13b9621"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/examples/qa-validation-odd-vs-ddd",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/examples/qa-validation-odd-vs-ddd.md",
+            "hash": "016c8a68"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/examples/qa-validation-odd-vs-ddd.md",
+              "hash": "016c8a68"
+            }
+          ]
+        },
+        {
+          "id": "docs/infra/cloudflare-branch-deploys.md::d600a515",
+          "idType": "path+hash",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/infra/cloudflare-branch-deploys.md",
+            "hash": "d600a515"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/infra/cloudflare-branch-deploys.md",
+              "hash": "d600a515"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0001",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0001-prod-branch-is-production.md",
+            "hash": "466f7260"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0001-prod-branch-is-production.md",
+              "hash": "466f7260"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0002",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0002-attempt-provenance-required.md",
+            "hash": "551bd01f"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0002-attempt-provenance-required.md",
+              "hash": "551bd01f"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0003",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0003-prd-version-auto-detection.md",
+            "hash": "35c97e70"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0003-prd-version-auto-detection.md",
+              "hash": "35c97e70"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0004",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0004-repo-truth-cleanup-mandatory.md",
+            "hash": "b777c701"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0004-repo-truth-cleanup-mandatory.md",
+              "hash": "b777c701"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0005",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0005-nuke-safety-guards.md",
+            "hash": "5326ed92"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0005-nuke-safety-guards.md",
+              "hash": "5326ed92"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0006",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0006-dogfooding-requirement.md",
+            "hash": "76935378"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0006-dogfooding-requirement.md",
+              "hash": "76935378"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0007",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0007-branch-names-are-convenience.md",
+            "hash": "786f36ae"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0007-branch-names-are-convenience.md",
+              "hash": "786f36ae"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0008",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0008-register-before-nuke.md",
+            "hash": "f075d3b1"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0008-register-before-nuke.md",
+              "hash": "f075d3b1"
+            }
+          ]
+        },
+        {
+          "id": "klappy://docs/decisions/D0009",
+          "idType": "uri",
+          "chosen": {
+            "origin": "local",
+            "path": "docs/decisions/D0009-multi-lane-prd-architecture.md",
+            "hash": "3f02e28d"
+          },
+          "collapsed": [
+            {
+              "origin": "baseline",
+              "path": "docs/decisions/D0009-multi-lane-prd-architecture.md",
+          

@@ -1,0 +1,11 @@
+Testing MCP prompts...
+Listed prompts: oddkit_compass, oddkit_compass_prd
+✅ listPrompts returns both compass prompts
+✅ getPrompt returns oddkit_compass content
+✅ getPrompt returns oddkit_compass_prd content
+✅ getPrompt returns null for unknown prompt
+
+✅ All MCP prompts tests passed
+
+✅ Prompts module tests complete
+Exit: 0

@@ -1,0 +1,207 @@
+🔬 Adversarial tests for canon/weighted-relevance-and-arbitration.md
+======================================================================
+
+📁 Creating fixture repo at /var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.jNbB3oXf1n
+
+==========================================
+TEST A: Workaround must not outrank promoted
+==========================================
+
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.jNbB3oXf1n/.oddkit/index.json",
+  "baselineIndexPath": null,
+  "stats": {
+    "total": 4,
+    "local": 4,
+    "baseline": 0,
+    "byAuthority": {
+      "governing": 1,
+      "operational": 3,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": false,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "invalid-ref-to-disable",
+    "refSource": "environment",
+    "commit": null,
+    "error": "Command failed: git clone --branch invalid-ref-to-disable --single-branch https://github.com/klappy/klappy.dev.git /Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable\nCloning into '/Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable'...\nfatal: Remote branch invalid-ref-to-disable not found in upstream origin\n"
+  }
+}
+Query: 'What is the authentication policy?'
+
+✅ Promoted doc (canon/auth-policy.md) is in evidence
+📋 Vetoed items: "vetoed": []
+✅ Intent-gated precedence rule active
+✅ First evidence citation is from promoted doc
+
+==========================================
+TEST B: Low confidence must trigger defer/escalate
+==========================================
+
+Query: 'What is the API guide?'
+
+📊 Confidence: 0.46
+✅ Advisory flag is true (low confidence)
+📋 Arbitration outcome: "outcome": "escalate"
+✅ Outcome is defer or escalate (correct for low confidence)
+✅ Low confidence advisory rule fired
+
+==========================================
+TEST C: Local+baseline duplicates must prefer local with warning
+==========================================
+
+Query: 'What is the definition of done?'
+
+📋 Arbitration outcome: "outcome": "prefer"
+✅ Outcome is prefer (not defer due to duplicates)
+⚠️ No duplicates collapsed (may be OK if URI dedup worked)
+📋 Collapsed groups: "collapsed_groups": 129
+✅ First evidence is from local origin (dedup prefers local)
+
+==========================================
+TEST D: Path collision across repos must not collapse (different content)
+==========================================
+
+Created fixture with docs/README.md (different content, no URI)
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.NJzc5Cw6EN/.oddkit/index.json",
+  "baselineIndexPath": null,
+  "stats": {
+    "total": 1,
+    "local": 1,
+    "baseline": 0,
+    "byAuthority": {
+      "governing": 0,
+      "operational": 1,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": false,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "invalid-ref-to-disable",
+    "refSource": "environment",
+    "commit": null,
+    "error": "Command failed: git clone --branch invalid-ref-to-disable --single-branch https://github.com/klappy/klappy.dev.git /Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable\nCloning into '/Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable'...\nfatal: Remote branch invalid-ref-to-disable not found in upstream origin\n"
+  }
+}
+⚠️ Could not verify identity type in output
+
+==========================================
+TEST E: URI collision with different content must warn
+==========================================
+
+Created fixture with URI collision: docs/v1/policy.md and docs/v2/policy.md
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.shsagKXPU7/.oddkit/index.json",
+  "baselineIndexPath": null,
+  "stats": {
+    "total": 2,
+    "local": 2,
+    "baseline": 0,
+    "byAuthority": {
+      "governing": 0,
+      "operational": 2,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": false,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "invalid-ref-to-disable",
+    "refSource": "environment",
+    "commit": null,
+    "error": "Command failed: git clone --branch invalid-ref-to-disable --single-branch https://github.com/klappy/klappy.dev.git /Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable\nCloning into '/Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable'...\nfatal: Remote branch invalid-ref-to-disable not found in upstream origin\n"
+  }
+}
+✅ URI_COLLISION warning detected (same origin, different content)
+✅ URI_COLLISION_DETECTED rule fired
+
+==========================================
+TEST F: URI collision (same origin) must escalate
+==========================================
+
+Created fixture with URI collision: canon/auth-rules.md and docs/auth-rules.md (same URI, different content)
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.BjTwROvbTy/.oddkit/index.json",
+  "baselineIndexPath": null,
+  "stats": {
+    "total": 2,
+    "local": 2,
+    "baseline": 0,
+    "byAuthority": {
+      "governing": 1,
+      "operational": 1,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": false,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "invalid-ref-to-disable",
+    "refSource": "environment",
+    "commit": null,
+    "error": "Command failed: git clone --branch invalid-ref-to-disable --single-branch https://github.com/klappy/klappy.dev.git /Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable\nCloning into '/Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable'...\nfatal: Remote branch invalid-ref-to-disable not found in upstream origin\n"
+  }
+}
+✅ URI_COLLISION warning detected
+📋 Arbitration outcome: "outcome": "escalate"
+✅ Outcome is escalate (correct for URI collision)
+✅ URI_COLLISION_DETECTED rule fired
+
+==========================================
+TEST G: Code block must not trigger NORMATIVE_DRIFT
+==========================================
+
+Creating baseline with code block containing MUST NOT...
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.KZNTQOYDYK/.oddkit/index.json",
+  "baselineIndexPath": null,
+  "stats": {
+    "total": 2,
+    "local": 2,
+    "baseline": 0,
+    "byAuthority": {
+      "governing": 0,
+      "operational": 2,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": false,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "invalid-ref-to-disable",
+    "refSource": "environment",
+    "commit": null,
+    "error": "Command failed: git clone --branch invalid-ref-to-disable --single-branch https://github.com/klappy/klappy.dev.git /Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable\nCloning into '/Users/chrisklapp/.oddkit/cache/klappy.dev/invalid-ref-to-disable'...\nfatal: Remote branch invalid-ref-to-disable not found in upstream origin\n"
+  }
+}
+✅ NORMATIVE_DRIFT_DETECTED did NOT fire (code blocks correctly stripped)
+✅ NEW_NORMATIVE_PROHIBITION did NOT fire (code blocks correctly stripped)
+
+==========================================
+SUMMARY
+==========================================
+
+✅ Test A: Workaround vs Promoted - PASSED
+✅ Test B: Low Confidence Handling - PASSED
+✅ Test C: Duplicate Handling - PASSED
+✅ Test D: Path+Hash Identity - PASSED
+✅ Test E: URI Collision Detection - PASSED
+✅ Test F: URI Collision Escalation - PASSED
+✅ Test G: Code Block Normative Stripping - PASSED
+
+🎉 All adversarial tests passed!
+Exit: 0

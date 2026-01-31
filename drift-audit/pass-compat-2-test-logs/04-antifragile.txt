@@ -1,0 +1,66 @@
+
+> oddkit@0.7.0 test:antifragile
+> bash tests/orchestrate-antifragile.sh
+
+Antifragile orchestrator regression tests
+==========================================
+
+Test 1: Question with 'what is' → librarian
+PASS: what is question
+      Input: 'what is the definition of done?' → librarian
+
+Test 2: Phrase without question mark → librarian
+PASS: phrase without ?
+      Input: 'definition of done' → librarian
+
+Test 3: Strong completion claim → validate
+PASS: done with [thing]
+      Input: 'done with feature X' → validate
+
+Test 4: PR reference → validate
+PASS: PR reference
+      Input: 'shipped feature X, PR #42' → validate
+
+Test 5: Explicit explain → explain
+PASS: explain last
+      Input: 'explain last' → explain
+
+Test 6: Angry vague input → librarian (NOT no_action)
+PASS: angry fallback
+      Input: 'THIS SUCKS' → librarian
+
+Test 7: Just 'done' alone → librarian (NOT validate)
+PASS: done alone
+      Input: 'done' → librarian
+
+Test 8: Help request → librarian
+PASS: help request
+      Input: 'help' → librarian
+
+Test 9: Empty message → librarian
+PASS: empty message
+      Input: '' → librarian
+
+Test 10: I finished statement → validate
+PASS: I finished
+      Input: 'I finished the auth module' → validate
+
+Test 11: Merged to main → validate
+PASS: merged to main
+      Input: 'merged to main' → validate
+
+Test 12: Random statement → librarian
+PASS: random statement
+      Input: 'the sky is blue' → librarian
+
+Test 13: Why question → explain
+PASS: why did you
+      Input: 'why did you do that?' → explain
+
+Test 14: What happened → explain
+PASS: what happened
+      Input: 'what happened' → explain
+
+==========================================
+All antifragile tests passed!
+Exit: 0

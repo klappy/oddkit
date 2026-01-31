@@ -1,0 +1,6 @@
+
+> oddkit@0.7.0 test:mcp
+> bash tests/mcp-smoke.sh
+
+✅ MCP smoke boot attempted (stdio server started without crashing)
+Exit: 0

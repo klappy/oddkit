@@ -1,0 +1,36 @@
+
+> oddkit@0.7.0 test:preflight
+> bash tests/orchestrate-preflight.test.sh
+
+Orchestrate preflight tests
+===========================
+
+Test 1: 'preflight: wire catalog into orchestrate' -> action preflight
+PASS: preflight: -> preflight
+
+Test 2: 'before I implement the MCP handler' -> action preflight
+PASS: before I implement -> preflight
+
+Test 3: 'implement catalog action in orchestrate' -> action preflight (compound)
+PASS: implement catalog -> preflight (compound trigger)
+
+Test 4: 'what should I read first?' -> action preflight
+PASS: what should I read first -> preflight
+
+Test 5: runOrchestrate assistant_text contains required sections
+PASS: assistant_text contains "Preflight summary"
+PASS: assistant_text contains "Start here:"
+PASS: assistant_text contains "Next up:"
+
+Test 6: 'what is epistemic challenge?' -> action librarian (not preflight)
+PASS: non-preflight -> librarian
+
+Test 7: 'what\'s in ODD?' -> action catalog (not preflight)
+PASS: what's in ODD -> catalog
+
+Test 8: explain --last shows last tool was preflight
+PASS: explain last tool = preflight
+
+===========================
+All preflight tests passed!
+Exit: 0

@@ -1,0 +1,23 @@
+
+> oddkit@0.7.0 test:policy
+> bash tests/policy-tools.test.sh
+
+Policy tools tests
+==================
+
+Test 1: resolveCanonTarget returns mode + commit
+PASS (with expected error): resolveCanonTarget returned structured result
+PASS: resolveCanonTarget mode = head
+PASS: resolveCanonTarget commit = 5ed9b33
+
+Test 2: getDocByUri returns content or appropriate error
+PASS: getDocByUri returned content
+PASS: getDocByUri returned content_hash
+PASS: getDocByUri returned canon_commit
+
+Test 3: getDocByUri returns error for invalid URI
+PASS: getDocByUri returned error for invalid URI
+
+==================
+All policy tools tests passed!
+Exit: 0

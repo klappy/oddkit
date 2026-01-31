@@ -1,0 +1,124 @@
+
+> oddkit@0.7.0 test
+> bash tests/smoke.sh
+
+oddkit smoke test
+==================
+
+Setting up test environment...
+  Project root: /Users/chrisklapp/oddkit
+  Temp dir: /var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.X8YDTsoXIX
+
+Test 1: Index command
+{
+  "success": true,
+  "localIndexPath": "/var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.X8YDTsoXIX/.oddkit/index.json",
+  "baselineIndexPath": "/Users/chrisklapp/.oddkit/cache/indexes/klappy.dev-main.json",
+  "stats": {
+    "total": 157,
+    "local": 1,
+    "baseline": 156,
+    "byAuthority": {
+      "governing": 68,
+      "operational": 89,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": true,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "main",
+    "refSource": "defaulted",
+PASS - Index: returned success
+
+Test 2: Librarian query
+{
+  "status": "SUPPORTED",
+  "advisory": false,
+  "answer": "Found 5 relevant document(s) for: \"What is epistemic hygiene?\"",
+  "confidence": 0.62,
+  "confidence_factors": {
+    "margin": 0.3657657657657658,
+    "coverage": 1,
+    "conflict_penalty": 0,
+    "evidence_quality": 0.5,
+    "intent_quality": 0.8800000000000001
+  },
+  "is_confident": true,
+  "evidence": [
+    {
+      "quote": "> How the system detects when truth is decaying — and when review is required.",
+      "citation": "canon/epistemic-hygiene.md#Epistemic Hygiene",
+      "origin": "baseline",
+      "intent": "promoted",
+      "evidence_strength": "none",
+      "wordCount": 15,
+      "truncated": false
+    },
+    {
+      "quote": "> If the repository is dirty, conclusions drawn from it are invalid.",
+      "citation": "docs/appendices/repo-truth.md#Repository Truth & Epistemic Hygiene",
+      "origin": "baseline",
+      "intent": "operational",
+      "evidence_strength": "none",
+      "wordCount": 12,
+PASS - Librarian: returned status
+
+Test 3: Validate command
+{
+  "verdict": "NEEDS_ARTIFACTS",
+  "claims": [
+    "Done with the UI update. Here is a screenshot: ui.png"
+  ],
+  "types": [
+    "ui"
+  ],
+  "required_evidence": [
+    "screenshot",
+    "recording",
+    "visual artifact"
+  ],
+  "provided_artifacts": [
+    "ui.png"
+  ],
+  "matched_evidence": [
+    "screenshot",
+    "visual artifact"
+  ],
+PASS - Validate: returned verdict
+
+Test 4: Explain last result
+# oddkit explain — last run
+
+## Result
+- Tool: validate
+- Verdict: NEEDS_ARTIFACTS
+
+## Why this happened
+- **Claims parsed from message** — Completion claims were detected and extracted from your message.
+- **Completion claim needs artifacts** — You claimed completion but did not provide the required artifacts to verify it.
+
+## What to do next
+- Provide the missing artifacts listed in "Gaps" below.
+- Required: recording
+
+## Gaps
+- recording
+
+## Debug
+- Repo: /var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.X8YDTsoXIX
+- Timestamp: 2026-01-31T16:30:29.969Z
+- Claims detected: 1
+- Artifacts detected: 1
+PASS - Explain: rendered Result section
+
+Test 5: Check last.json exists
+PASS - last.json: EXISTS
+
+Test 6: Verify baseline resolution
+PASS - Baseline source tracked in debug output
+
+==================
+All smoke tests passed!
+Exit: 0

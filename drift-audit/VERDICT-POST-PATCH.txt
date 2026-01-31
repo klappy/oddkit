@@ -1,0 +1,28 @@
+==============================================
+  EPOCH 4 COMPATIBILITY AUDIT VERDICT
+  (Post-Patch Re-run)
+==============================================
+
+Date: 2026-01-31T16:34:37Z
+Baseline SHA: 5ed9b336449886adc9623c2abec6a44bb98580c8
+
+=== Patches Applied ===
+1. normalizeRef.js: Added 'odd' to ALLOWED_SCHEMES
+2. docFetch.js: Handle odd:// URI resolution
+3. buildIndex.js: Support .noindex sentinel exclusion
+
+=== Blocker Re-test Results ===
+
+BLOCKER 1: .noindex exclusion
+  Status: PASS
+  Verification: Apocrypha docs excluded from index
+
+BLOCKER 2: odd:// URI scheme
+  Status: PASS
+  Verification: odd://contract/epistemic-contract resolves with content
+
+==============================================
+  VERDICT: PASS
+==============================================
+
+oddkit is now Epoch 4 compatible.

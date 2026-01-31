@@ -1,0 +1,37 @@
+
+> oddkit@0.7.0 test:tooljson
+> bash tests/tooljson.sh
+
+oddkit tooljson contract test
+==============================
+
+Setting up test environment...
+
+Test 1: tool librarian outputs valid tooljson
+PASS - tool librarian: Valid tooljson envelope
+
+Test 2: tool validate outputs valid tooljson
+PASS - tool validate: Valid tooljson envelope
+
+Test 3: tool explain outputs valid tooljson
+PASS - tool explain: Valid tooljson envelope
+
+Test 4: --format tooljson on regular commands
+PASS - librarian --format tooljson: Valid tooljson envelope
+
+Test 5: Error outputs valid tooljson (ok=false)
+PASS - Error case: tooljson with ok=false
+
+Test 6: stdin support (@stdin)
+PASS - stdin support: Valid tooljson envelope
+
+Test 7: schema_version field present
+PASS - schema_version: 1.0
+
+Test 8: Exit code 0 for tooljson mode
+{"tool":"librarian","schema_version":"1.0","ok":false,"error":{"message":"Missing required option: --query","code":"BAD_ARGS"}}
+PASS - Exit code 0 for tooljson errors
+
+==============================
+All tooljson contract tests passed!
+Exit: 0

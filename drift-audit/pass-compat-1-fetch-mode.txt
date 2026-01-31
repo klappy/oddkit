@@ -1,0 +1,14 @@
+=== Baseline Fetch Mode ===
+Date: 2026-01-31T16:30:14Z
+
+Branch:
+* main 5ed9b33 audit: Epoch 4 drift audit Pass 0 - legacy classification complete
+
+Fetch depth (commit count):
+262
+
+Clone type:
+full
+
+Last fetch time:
+unknown

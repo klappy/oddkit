@@ -1,0 +1,24 @@
+{
+  "success": true,
+  "localIndexPath": "/Users/chrisklapp/.oddkit/cache/klappy.dev/main/.oddkit/index.json",
+  "baselineIndexPath": "/Users/chrisklapp/.oddkit/cache/indexes/klappy.dev-main.json",
+  "stats": {
+    "total": 312,
+    "local": 156,
+    "baseline": 156,
+    "byAuthority": {
+      "governing": 136,
+      "operational": 176,
+      "non-governing": 0
+    }
+  },
+  "baseline": {
+    "available": true,
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "source": "default",
+    "ref": "main",
+    "refSource": "defaulted",
+    "commit": "5ed9b336449886adc9623c2abec6a44bb98580c8",
+    "error": null
+  }
+}

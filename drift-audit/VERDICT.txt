@@ -1,0 +1,43 @@
+==============================================
+  EPOCH 4 COMPATIBILITY AUDIT VERDICT
+==============================================
+
+Date: 2026-01-31T16:33:28Z
+Baseline SHA: 5ed9b336449886adc9623c2abec6a44bb98580c8
+
+=== Test Suite Results ===
+Tests 01-08: PASS
+Test 09 (mcp-instructions-smoke): FAIL (pre-existing)
+Test 10: PASS
+Test 11 (mcp-orchestrate-test): FAIL (pre-existing)
+Tests 12-13: PASS
+
+=== Epoch 4 Smoke Checks ===
+Epistemic Architecture query: PASS
+E0004 epoch query: PASS
+
+=== Integration Assertions ===
+Phase 4A (Canon target SHA): PASS
+Phase 4B (klappy:// URIs): PASS
+Phase 4C (Epoch 4 docs in index): PASS (8 docs)
+
+=== BLOCKERS ===
+
+BLOCKER 1: .noindex exclusion
+  Status: FAIL
+  Impact: 4 apocrypha docs leaked into index
+  Contract: Apocrypha 'must remain unindexed'
+
+BLOCKER 2: odd:// URI scheme
+  Status: FAIL
+  Impact: normalizeRef() throws on odd:// URIs
+  Contract: ODD contract must be addressable as odd://
+
+==============================================
+  VERDICT: FAIL (2 blocker(s))
+==============================================
+
+Patches required for Epoch 4 compatibility:
+  1. Add 'odd' to ALLOWED_SCHEMES in normalizeRef.js
+  2. Handle odd:// URIs in docFetch.js
+  3. Support .noindex sentinel in buildIndex.js

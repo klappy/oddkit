@@ -1,0 +1,7 @@
+=== Environment Preamble ===
+Date: 2026-01-31T16:30:20Z
+Node: v22.16.0
+NPM: 10.9.2
+oddkit commit: 1b7d3f4781b079f4795377bae7d45ae216c698b1
+oddkit branch: main
+Baseline SHA: BASELINE_SHA=5ed9b336449886adc9623c2abec6a44bb98580c8

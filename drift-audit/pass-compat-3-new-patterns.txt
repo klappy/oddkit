@@ -1,0 +1,12 @@
+=== Non-klappy:// URI schemes ===
+odd/contract/epistemic-contract.md:2:uri: odd://contract/epistemic-contract
+docs/WHY.md:2:uri: oddkit://why
+docs/oddkit/SYSTEM-MAP.md:2:uri: oddkit://system/map
+
+=== .noindex files ===
+./canon/apocrypha/.noindex
+./public/content/canon/apocrypha/.noindex
+
+=== Content of .noindex file ===
+# This directory must not be indexed by tooling.
+# See CHARTER.md for rationale.

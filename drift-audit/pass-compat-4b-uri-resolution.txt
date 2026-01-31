@@ -1,0 +1,13 @@
+--- klappy://docs/appendices/epochs ---
+{
+  "uri": "klappy://docs/appendices/epochs",
+  "hasContent": true,
+  "error": null
+}
+
+--- klappy://canon/meta/epistemic-architecture ---
+{
+  "uri": "klappy://canon/meta/epistemic-architecture",
+  "hasContent": true,
+  "error": null
+}

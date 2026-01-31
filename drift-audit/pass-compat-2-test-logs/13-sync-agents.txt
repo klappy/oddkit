@@ -1,0 +1,29 @@
+=== sync-agents tests ===
+Test destination: /var/folders/xx/bcq5t4w952zgfglf69dwsjk00000gn/T/tmp.bRJWsm5qFJ
+
+Test 1: Dry-run shows plan without copying...
+  ✓ Shows sync plan
+  ✓ Prompts for --apply
+  ✓ No files copied (dry-run)
+
+Test 2: --only filters to subset...
+  ✓ Shows requested agent
+  ✓ Filtered to single agent
+
+Test 3: --apply copies files...
+  ✓ Reports success
+  ✓ File was copied
+
+Test 4: Second run shows unchanged...
+  ✓ Shows file as unchanged
+  ✓ Reports in-sync state
+
+Test 5: --apply creates backup by default...
+  ✓ Backup was created
+  ✓ Backup directory exists
+
+Test 6: --verbose shows hashes...
+  ✓ Verbose shows unchanged section
+
+=== All sync-agents tests passed ===
+Exit: 0

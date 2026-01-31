@@ -1,0 +1,100 @@
+---
+uri: klappy://meta/changelog
+title: "Canon Changelog"
+audience: canon
+exposure: nav
+tier: 3
+voice: neutral
+stability: semi_stable
+tags: ["meta", "changelog", "versioning"]
+relevance: background
+execution_posture: exploratory
+---
+
+# 📜 Canon Changelog
+
+This changelog tracks changes to the **Canon pack** as a whole.
+
+The Canon uses **pack-level versioning** (one version number) rather than per-file versioning.
+Per-file versions are intentionally omitted to reduce ceremony and prevent metadata rot.
+
+## 0.25.0 — 2026-01-31
+
+**Epoch 4 — Epistemic Separation Era**
+
+This release implements the structural foundation for E0004, formalizing the distinction between epistemic judgment and artifact production. ODD and klappy.dev now explicitly govern how understanding becomes commitment.
+
+### Added
+
+- **Epistemic Contract** (`/odd/contract/epistemic-contract.md`) — Abstract, portable contract defining how epistemic judgment is made independent of surface or tool. Defines core responsibilities: clarity confirmation, incision rules, refusal rights, evidence intake, surface invariance.
+
+- **Epistemic Architecture** (`/canon/meta/epistemic-architecture.md`) — Long-lived document explaining judgment vs embodiment separation. Defines the shared epistemic spine, surfaces (klappy.dev, oddkit, future tools), and the invariance rule.
+
+- **Epistemic Posture Defaults** (`/canon/defaults/epistemic-posture.md`) — Opinionated, overrideable defaults encoding posture, not truth: confirmation over correction, early honesty, externalization before explanation, refusal with care, incompleteness as feature, prior work first.
+
+- **Evidence Intake Defaults** (`/canon/defaults/evidence-intake.md`) — Default requiring prior work retrieval before proceeding, with explicit source vs interpretation distinction.
+
+- **Canon Apocrypha** (`/canon/apocrypha/`) — Stewardship structure for epistemic gravity that cannot be encoded as canon:
+  - `CHARTER.md` — Purpose, voice rules, content rules, stewardship, validation test
+  - `.noindex` — Sentinel file preventing tooling from indexing this directory
+  - `fragments/on-artifacts.md` — First recovered fragment documenting boundary collapse failure mode
+
+- **oddkit Epistemic Instructions** (`/docs/oddkit/epistemic-instructions.md`) — Compliance instructions defining oddkit as a compliance surface, not an epistemic engine. MUST/MUST NOT rules for oddkit behavior.
+
+- **Klappy.dev Website PoC PRD** (`/docs/guiding-artifacts/epoch-4/klappy-dev-poc-prd.md`) — Guiding artifact (not product lane) defining the single-page epistemic experience. Explicitly graduatable with documented path to product embodiment.
+
+- **Website Documentation** (`/docs/klappy-dev/`) — Supporting documentation for the PoC:
+  - `README.md` — Purpose, scope, non-goals, feature creep prevention
+  - `website-closure.md` — Closure statement
+  - `website-telemetry.md` — ODD-safe telemetry specification
+
+### Changed
+
+- **Epochs** (`/docs/appendices/epochs.md`) — Added E0004 (Epistemic Separation Era) section. Epoch 4 separates epistemic judgment from artifact production, gates success by epistemic integrity, and locks after implementation.
+
+### Philosophy
+
+- **Judgment is invariant, embodiment is contextual** — Given the same epistemic state, all surfaces must reach the same epistemic judgment. They may express that judgment differently.
+
+- **Artifacts are secondary traces** — Written artifacts are evidence that learning occurred, not the objective themselves. They are permitted only insofar as they faithfully represent the learning that produced them.
+
+- **Apocrypha gives gravity** — Canon gives legitimacy, ODD governs judgment, Apocrypha preserves failure modes discovered after the fact. They must never be merged.
+
+- **Guiding artifacts graduate** — The PoC PRD is explicitly non-product, explicitly epoch-scoped, and explicitly graduatable when ready for product embodiment.
+
+### Epoch Lock
+
+E0004 is LOCKED. No further expansion without a new epoch.
+
+---
+
+## 0.24.0 — 2026-01-30
+
+**ODD vs Documentation-Driven Development — Core Distinction**
+
+This release adds a foundational principle clarifying that documentation in ODD is epistemic infrastructure—a forcing function, not an end state. Includes both the philosophical distinction and a concrete case study showing the difference in practice.
+
+### Added
+
+- **Documentation Is the Lever, Not the Goal** (`/canon/principles/odds-relationship-to-documentation.md`) — Tier 1 Canon principle clarifying that documentation in ODD exists to answer "How does this improve our ability to achieve better outcomes?" Documentation that does not lead to revised outcomes, clearer decision rules, sharper constraints, or bolder targets is considered inert. Establishes the litmus test: "If the documentation feels comfortable, it is probably incomplete."
+
+- **From Execution to Outcome: A QA Validation Case Study** (`/docs/examples/qa-validation-odd-vs-ddd.md`) — Tier 2 case study illustrating the practical difference between documentation-driven development and outcomes-driven development. Shows how ODD constraints force outcome clarity before execution, creating leverage rather than just better reports.
+
+### Changed
+
+- **Canon README** — Added Principles section listing both existing and new principle documents.
+
+- **Docs README** — Added `examples/` subfolder to Subfolders table.
+
+### Philosophy
+
+- **Documentation is not sufficient** — Documentation that does not actively shape decisions, constrain future work, or provoke re-evaluation of goals is considered a warning sign, not progress.
+
+- **Outcomes have veto power** — In ODD, outcomes always have veto power over documentation. Principles may evolve, constraints may tighten or loosen, plans may be discarded entirely. What persists is the obligation to demonstrate that learning has translated into measurably better outcomes.
+
+- **Pressure is the signal** — ODD documentation should create pressure: to define outcomes before acting, to justify why an outcome is "good enough," to confront risk, ambiguity, and tradeoffs. If documentation merely explains what was done, ODD has failed.
+
+### Notes
+
+- This principle protects ODD from being mislabeled as documentation-driven development
+- The case study grounds the distinction in concrete behavior change

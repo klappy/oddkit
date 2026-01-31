@@ -1,0 +1,10 @@
+{
+  "mode": "head",
+  "commit": "5ed9b33",
+  "commitFull": "5ed9b336449886adc9623c2abec6a44bb98580c8",
+  "tag": null,
+  "source": "default",
+  "baselineUrl": "https://github.com/klappy/klappy.dev.git",
+  "ref": "main",
+  "error": null
+}

@@ -1,0 +1,25 @@
+Instruction sync routing tests
+===============================
+
+Test 1: instruction_sync missing both baseline_root and registry_payload => FAIL
+PASS: missing baseline_root/registry_payload errors
+      Expected error pattern: must provide either baseline_root or registry_payload
+
+Test 2: instruction_sync with both baseline_root and registry_payload => FAIL
+PASS: baseline_root XOR registry_payload enforced
+      Expected error pattern: cannot provide both baseline_root and registry_payload
+
+Test 3: Non-sync action without message => FAIL
+PASS: message required for non-sync actions
+      Expected error pattern: message is required
+
+Test 4: instruction_sync payload mode with empty registry => SUCCESS
+PASS: payload mode executes
+
+Test 5: state_payload without registry_payload => FAIL
+PASS: state_payload requires registry_payload
+      Expected error pattern: state_payload requires registry_payload
+
+===============================
+All instruction_sync routing tests passed!
+Exit: 0
