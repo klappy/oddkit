@@ -1,6 +1,19 @@
 // src/mcp/instructions.js
 
 /**
+ * Machine-stable contract for instruction invariants.
+ * Tests assert on these keys, allowing prose to evolve safely.
+ * Changes here require test updates - that's intentional.
+ */
+export const INSTRUCTION_CONTRACT = {
+  NO_PASTE_LARGE_CANON: true,
+  RETRIEVE_AND_QUOTE: true,
+  REPO_ROOT_REQUIRED: true,
+  ORCHESTRATE_IS_ENTRY: true,
+  DECISION_GATE_PATTERN: true,
+};
+
+/**
  * Returns the always-on ODD decision gate instructions for MCP clients.
  * These instructions teach agents WHEN to call oddkit, not WHAT the rules are.
  * Kept SHORT and IMPERATIVE so models actually follow them.
@@ -34,7 +47,7 @@ Epistemic context (optional):
 - Example: { "mode_ref": "klappy://canon/epistemic-modes#exploration", "confidence": "low" }
 - Upstream agents (Epistemic Guide) determine mode; oddkit just adapts to it
 
-NEVER paste large canon/docs. Use oddkit_orchestrate (pass repo_root) to retrieve + quote minimal excerpts.
+Do not pre-inject large documents. Call oddkit_orchestrate with repo_root to retrieve and quote minimal excerpts.
 `.trim();
 
   if (process.env.ODDKIT_DEBUG_MCP) {

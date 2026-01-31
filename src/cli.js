@@ -6,6 +6,7 @@ import { runIndex } from "./tasks/indexTask.js";
 import { explainLast } from "./explain/explain-last.js";
 import { runInit, getOddkitMcpSnippet } from "./cli/init.js";
 import { registerSyncAgentsCommand } from "./cli/syncAgents.js";
+import { runAuditEpoch } from "./audit/auditEpoch.js";
 
 const SCHEMA_VERSION = "1.0";
 
@@ -380,6 +381,55 @@ export function run() {
 
   // Register sync-agents command
   registerSyncAgentsCommand(program);
+
+  // Audit subcommand group
+  const auditCmd = program
+    .command("audit")
+    .description("Audit commands for epoch compatibility verification");
+
+  auditCmd
+    .command("epoch")
+    .description("Run full epoch compatibility audit against baseline")
+    .option("-b, --baseline <url>", "Baseline repo URL", "https://github.com/klappy/klappy.dev.git")
+    .option("--ref <ref>", "Baseline ref (branch or tag)", "main")
+    .option("--fresh", "Purge cache and pull fresh baseline")
+    .option("--ci", "CI mode (less verbose, exit code based on verdict)")
+    .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .option("-f, --format <type>", "Output format: json or summary", "summary")
+    .action(async (options, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const quiet = globalOpts.quiet;
+
+      try {
+        const result = await runAuditEpoch({
+          baseline: options.baseline,
+          ref: options.ref,
+          fresh: options.fresh || false,
+          ci: options.ci || false,
+          verbose: !options.ci && !quiet,
+          repoRoot: options.repo,
+        });
+
+        if (options.format === "json") {
+          console.log(JSON.stringify(result.json, null, 2));
+        } else {
+          // Summary format
+          console.log(`Verdict: ${result.verdict}`);
+          console.log(`Tests: ${result.tests.passed}/${result.tests.total} passed`);
+          console.log(`Probes: ${result.probes.passed}/${result.probes.total} passed`);
+          console.log(`Baseline: ${result.baseline.commit}`);
+          console.log(`Receipt: ${result.receipts.latest_md}`);
+        }
+
+        // Exit code based on verdict
+        process.exit(result.compatible ? EXIT_OK : EXIT_RUNTIME_ERROR);
+      } catch (err) {
+        if (!quiet) {
+          console.error("Audit error:", err.message);
+        }
+        process.exit(EXIT_RUNTIME_ERROR);
+      }
+    });
 
   program.parse();
 }
