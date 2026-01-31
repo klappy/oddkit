@@ -1,0 +1,201 @@
+{
+  "schema_version": "1.0.0",
+  "verdict": "COMPATIBLE",
+  "audit_date": "2026-01-31T17:49:25.576Z",
+  "audited_repo": "oddkit",
+  "oddkit_commit": "52a5dc291b5346784d7efc6aa7cbad9ec2a39192",
+  "baseline": {
+    "url": "https://github.com/klappy/klappy.dev.git",
+    "ref": "main",
+    "commit": "8c49b4a6b93fc81784e4236595cdd55b0e7c5a7d"
+  },
+  "cache": {
+    "fresh": false
+  },
+  "tests": {
+    "total": 15,
+    "passed": 15,
+    "failed": 0,
+    "results": [
+      {
+        "name": "smoke",
+        "description": "Core CLI: index, librarian, validate, explain",
+        "passed": true,
+        "duration": 2057,
+        "error": null
+      },
+      {
+        "name": "mcp",
+        "description": "MCP server boot",
+        "passed": true,
+        "duration": 228,
+        "error": null
+      },
+      {
+        "name": "tooljson",
+        "description": "Tool JSON contract",
+        "passed": true,
+        "duration": 3312,
+        "error": null
+      },
+      {
+        "name": "antifragile",
+        "description": "Orchestrator antifragile behavior",
+        "passed": true,
+        "duration": 883,
+        "error": null
+      },
+      {
+        "name": "catalog",
+        "description": "Catalog action routing",
+        "passed": true,
+        "duration": 1589,
+        "error": null
+      },
+      {
+        "name": "policy",
+        "description": "Policy tools (canonTarget, docFetch)",
+        "passed": true,
+        "duration": 2683,
+        "error": null
+      },
+      {
+        "name": "adversarial",
+        "description": "Relevance arbitration, URI collisions, drift detection",
+        "passed": true,
+        "duration": 3970,
+        "error": null
+      },
+      {
+        "name": "mcp-instructions",
+        "description": "MCP instructions contract",
+        "passed": true,
+        "duration": 36,
+        "error": null
+      },
+      {
+        "name": "mcp-prompts",
+        "description": "MCP prompts",
+        "passed": true,
+        "duration": 34,
+        "error": null
+      },
+      {
+        "name": "mcp-orchestrate",
+        "description": "Orchestrate citations",
+        "passed": true,
+        "duration": 1241,
+        "error": null
+      },
+      {
+        "name": "instruction-sync",
+        "description": "Instruction sync routing",
+        "passed": true,
+        "duration": 308,
+        "error": null
+      },
+      {
+        "name": "sync-agents",
+        "description": "Sync-agents command",
+        "passed": true,
+        "duration": 3317,
+        "error": null
+      },
+      {
+        "name": "noindex-exclusion",
+        "description": ".noindex epistemic exclusion",
+        "passed": true,
+        "duration": 372,
+        "error": null
+      },
+      {
+        "name": "odd-uri-scheme",
+        "description": "odd:// URI containment",
+        "passed": true,
+        "duration": 241,
+        "error": null
+      },
+      {
+        "name": "preflight",
+        "description": "Preflight action routing",
+        "passed": true,
+        "duration": 2225,
+        "error": null
+      }
+    ]
+  },
+  "probes": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "results": [
+      {
+        "name": "canon_target",
+        "passed": true,
+        "data": {
+          "mode": "head",
+          "commit": "8c49b4a",
+          "commitFull": "8c49b4a6b93fc81784e4236595cdd55b0e7c5a7d",
+          "ref": "main",
+          "source": "default"
+        },
+        "error": null
+      },
+      {
+        "name": "index_merge",
+        "passed": true,
+        "data": {
+          "total": 165,
+          "local": 8,
+          "baseline": 157,
+          "excluded_by_noindex": 3,
+          "governing": 70,
+          "operational": 95,
+          "baseline_commit": "8c49b4a6b93fc81784e4236595cdd55b0e7c5a7d",
+          "baseline_available": true
+        },
+        "error": null
+      },
+      {
+        "name": "klappy_uri_containment",
+        "passed": true,
+        "data": {
+          "resolution_works": true,
+          "traversal_blocked": true,
+          "content_length": 4591,
+          "content_hash": "sha256:85d7e6d5e23cad15aef9d08e7af70b508edf7dd9354cf416f838fd28953aa555"
+        },
+        "error": null
+      },
+      {
+        "name": "odd_uri_containment",
+        "passed": true,
+        "data": {
+          "normalization_works": true,
+          "traversal_blocked": true
+        },
+        "error": null
+      },
+      {
+        "name": "librarian_epoch4",
+        "passed": true,
+        "data": {
+          "status": "SUPPORTED",
+          "confidence": 0.51,
+          "evidence_count": 5,
+          "has_epoch4_evidence": true,
+          "advisory": true
+        },
+        "error": null
+      },
+      {
+        "name": "noindex_exclusion",
+        "passed": true,
+        "data": {
+          "excluded_by_noindex": 3
+        },
+        "error": null
+      }
+    ]
+  }
+}
