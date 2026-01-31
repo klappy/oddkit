@@ -1,7 +1,13 @@
 // src/audit/receipt.js
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CONTRACT_PATH = join(__dirname, "COMPATIBILITY-CONTRACT.md");
+const CONTRACT_VERSION = "1.0.0";
 
 /**
  * Generate audit receipt in both markdown and JSON formats.
@@ -14,20 +20,26 @@ export function generateReceipt(options) {
     baselineRef,
     baselineCommit,
     oddkitCommit,
+    oddkitDirty = false,
     cacheFresh,
+    cachePath = null,
+    cachePurged = false,
     testResults,
     probeResults,
     auditDate = new Date().toISOString(),
   } = options;
 
   const verdict = testResults.allPassed && probeResults.allPassed ? "COMPATIBLE" : "INCOMPATIBLE";
+  const contractHash = getContractHash();
 
   const json = {
     schema_version: "1.0.0",
     verdict,
     audit_date: auditDate,
-    audited_repo: "oddkit",
-    oddkit_commit: oddkitCommit,
+    oddkit: {
+      commit: oddkitCommit,
+      dirty: oddkitDirty,
+    },
     baseline: {
       url: baselineUrl,
       ref: baselineRef,
@@ -35,11 +47,19 @@ export function generateReceipt(options) {
     },
     cache: {
       fresh: cacheFresh,
+      path: cachePath,
+      purged: cachePurged,
+    },
+    contract: {
+      version: CONTRACT_VERSION,
+      sha256: contractHash,
+      path: "src/audit/COMPATIBILITY-CONTRACT.md",
     },
     tests: {
       total: testResults.total,
       passed: testResults.passed,
       failed: testResults.failed,
+      ordered: true,
       results: testResults.results.map((r) => ({
         name: r.name,
         description: r.description,
@@ -64,6 +84,19 @@ export function generateReceipt(options) {
   const markdown = renderMarkdown(json);
 
   return { json, markdown, verdict };
+}
+
+/**
+ * Get SHA256 hash of the compatibility contract (first 8 chars).
+ */
+function getContractHash() {
+  try {
+    const content = readFileSync(CONTRACT_PATH, "utf8");
+    const hash = createHash("sha256").update(content).digest("hex");
+    return hash.slice(0, 8);
+  } catch {
+    return "unknown";
+  }
 }
 
 /**
@@ -97,7 +130,7 @@ export function writeReceipts(options) {
 }
 
 /**
- * Get current oddkit commit hash.
+ * Get current oddkit commit hash and dirty state.
  */
 export function getOddkitCommit(repoRoot) {
   try {
@@ -108,6 +141,21 @@ export function getOddkitCommit(repoRoot) {
     return commit;
   } catch {
     return "unknown";
+  }
+}
+
+/**
+ * Check if oddkit repo has uncommitted changes.
+ */
+export function isOddkitDirty(repoRoot) {
+  try {
+    const status = execSync("git status --porcelain", {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+    return status.length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -125,11 +173,15 @@ function renderMarkdown(json) {
   lines.push(`| Field | Value |`);
   lines.push(`|-------|-------|`);
   lines.push(`| Audited Repo | oddkit |`);
-  lines.push(`| oddkit Commit | \`${json.oddkit_commit}\` |`);
+  lines.push(`| oddkit Commit | \`${json.oddkit.commit}\` |`);
+  lines.push(`| oddkit Dirty | ${json.oddkit.dirty} |`);
   lines.push(`| Baseline URL | ${json.baseline.url} |`);
   lines.push(`| Baseline Ref | ${json.baseline.ref} |`);
   lines.push(`| Baseline Commit | \`${json.baseline.commit}\` |`);
   lines.push(`| Cache Fresh | ${json.cache.fresh} |`);
+  lines.push(`| Cache Purged | ${json.cache.purged} |`);
+  lines.push(`| Contract Version | ${json.contract.version} |`);
+  lines.push(`| Contract SHA256 | \`${json.contract.sha256}\` |`);
   lines.push(`| Audit Date | ${json.audit_date} |`);
   lines.push("");
 

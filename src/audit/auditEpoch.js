@@ -1,11 +1,11 @@
 // src/audit/auditEpoch.js
-import { rmSync, existsSync } from "fs";
+import { rmSync, existsSync, mkdtempSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { runAuditTests, getTestList } from "./runTests.js";
 import { runAuditProbes } from "./probes.js";
-import { generateReceipt, writeReceipts, getOddkitCommit } from "./receipt.js";
-import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { generateReceipt, writeReceipts, getOddkitCommit, isOddkitDirty } from "./receipt.js";
+import { ensureBaselineRepo, getCacheDir } from "../baseline/ensureBaselineRepo.js";
 import { resolveCanonTarget } from "../policy/canonTarget.js";
 
 const DEFAULT_BASELINE_URL = "https://github.com/klappy/klappy.dev.git";
@@ -35,18 +35,29 @@ export async function runAuditEpoch(options = {}) {
   const startTime = Date.now();
   const auditDate = new Date().toISOString();
 
+  // State isolation: create temp state dir for audit mode
+  // This prevents cross-test contamination of last.json
+  const stateDir = mkdtempSync(join(tmpdir(), "oddkit-audit-"));
+  process.env.ODDKIT_STATE_DIR = stateDir;
+
   if (verbose) {
     console.error("=== Epoch Compatibility Audit ===");
     console.error(`Baseline: ${baseline}`);
     console.error(`Ref: ${ref}`);
     console.error(`Fresh: ${fresh}`);
+    console.error(`State Dir: ${stateDir}`);
     console.error("");
   }
+
+  // Track cache state
+  const cachePath = getCacheDir(baseline, ref);
+  let cachePurged = false;
 
   // Step 1: Optional cache purge
   if (fresh) {
     if (verbose) console.error("Purging baseline cache...");
     purgeBaselineCache(baseline, ref);
+    cachePurged = true;
   }
 
   // Step 2: Ensure baseline is available
@@ -98,17 +109,29 @@ export async function runAuditEpoch(options = {}) {
 
   // Step 6: Generate receipt
   const oddkitCommit = getOddkitCommit(repoRoot);
+  const oddkitDirty = isOddkitDirty(repoRoot);
   const { json, markdown, verdict } = generateReceipt({
     repoRoot,
     baselineUrl: baseline,
     baselineRef: ref,
     baselineCommit,
     oddkitCommit,
+    oddkitDirty,
     cacheFresh: fresh,
+    cachePath,
+    cachePurged,
     testResults,
     probeResults,
     auditDate,
   });
+
+  // Clean up state directory
+  try {
+    rmSync(stateDir, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup errors
+  }
+  delete process.env.ODDKIT_STATE_DIR;
 
   // Step 7: Write receipts
   const receipts = writeReceipts({ repoRoot, json, markdown });

@@ -1,19 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 /**
- * Get the oddkit state directory
+ * Get the oddkit state directory.
+ * Respects ODDKIT_STATE_DIR env var for audit isolation.
  */
 function getStateDir() {
-  return join(homedir(), '.oddkit');
+  if (process.env.ODDKIT_STATE_DIR) {
+    return process.env.ODDKIT_STATE_DIR;
+  }
+  return join(homedir(), ".oddkit");
 }
 
 /**
  * Get the path to last.json
  */
 function getLastPath() {
-  return join(getStateDir(), 'last.json');
+  return join(getStateDir(), "last.json");
 }
 
 /**
@@ -43,13 +47,11 @@ export function readLast() {
   const lastPath = getLastPath();
 
   if (!existsSync(lastPath)) {
-    throw new Error(
-      'No last result found. Run `oddkit librarian` or `oddkit validate` first.'
-    );
+    throw new Error("No last result found. Run `oddkit librarian` or `oddkit validate` first.");
   }
 
   try {
-    const raw = readFileSync(lastPath, 'utf-8');
+    const raw = readFileSync(lastPath, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     throw new Error(`Failed to read last result: ${err.message}`);

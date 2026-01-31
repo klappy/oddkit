@@ -1,76 +1,86 @@
 {
   "schema_version": "1.0.0",
   "verdict": "COMPATIBLE",
-  "audit_date": "2026-01-31T17:49:25.576Z",
-  "audited_repo": "oddkit",
-  "oddkit_commit": "52a5dc291b5346784d7efc6aa7cbad9ec2a39192",
+  "audit_date": "2026-01-31T17:57:27.963Z",
+  "oddkit": {
+    "commit": "7f8a23456048e9a23a457ddcfd23b0665d88b461",
+    "dirty": true
+  },
   "baseline": {
     "url": "https://github.com/klappy/klappy.dev.git",
     "ref": "main",
     "commit": "8c49b4a6b93fc81784e4236595cdd55b0e7c5a7d"
   },
   "cache": {
-    "fresh": false
+    "fresh": false,
+    "path": "/Users/chrisklapp/.oddkit/cache/klappy.dev/main",
+    "purged": false
+  },
+  "contract": {
+    "version": "1.0.0",
+    "sha256": "824f4fea",
+    "path": "src/audit/COMPATIBILITY-CONTRACT.md"
   },
   "tests": {
     "total": 15,
     "passed": 15,
     "failed": 0,
+    "ordered": true,
     "results": [
       {
         "name": "smoke",
         "description": "Core CLI: index, librarian, validate, explain",
         "passed": true,
-        "duration": 2057,
+        "duration": 1956,
         "error": null
       },
       {
         "name": "mcp",
         "description": "MCP server boot",
         "passed": true,
-        "duration": 228,
+        "duration": 222,
         "error": null
       },
       {
         "name": "tooljson",
         "description": "Tool JSON contract",
         "passed": true,
-        "duration": 3312,
+        "duration": 3323,
         "error": null
       },
       {
         "name": "antifragile",
         "description": "Orchestrator antifragile behavior",
         "passed": true,
-        "duration": 883,
+        "duration": 888,
         "error": null
       },
       {
         "name": "catalog",
         "description": "Catalog action routing",
         "passed": true,
-        "duration": 1589,
+        "duration": 1520,
         "error": null
       },
       {
         "name": "policy",
         "description": "Policy tools (canonTarget, docFetch)",
         "passed": true,
-        "duration": 2683,
+        "duration": 2689,
         "error": null
       },
       {
         "name": "adversarial",
         "description": "Relevance arbitration, URI collisions, drift detection",
         "passed": true,
-        "duration": 3970,
+        "duration": 3956,
         "error": null
       },
       {
         "name": "mcp-instructions",
         "description": "MCP instructions contract",
         "passed": true,
-        "duration": 36,
+        "duration": 37,
         "error": null
       },
       {
@@ -84,28 +94,28 @@
         "name": "mcp-orchestrate",
         "description": "Orchestrate citations",
         "passed": true,
-        "duration": 1241,
+        "duration": 1244,
         "error": null
       },
       {
         "name": "instruction-sync",
         "description": "Instruction sync routing",
         "passed": true,
-        "duration": 308,
+        "duration": 307,
         "error": null
       },
       {
         "name": "sync-agents",
         "description": "Sync-agents command",
         "passed": true,
-        "duration": 3317,
+        "duration": 3318,
         "error": null
       },
       {
         "name": "noindex-exclusion",
         "description": ".noindex epistemic exclusion",
         "passed": true,
-        "duration": 372,
+        "duration": 354,
         "error": null
       },
       {
@@ -119,7 +129,7 @@
         "name": "preflight",
         "description": "Preflight action routing",
         "passed": true,
-        "duration": 2225,
+        "duration": 2246,
         "error": null
       }
     ]
