@@ -34,7 +34,7 @@ Epistemic context (optional):
 - Example: { "mode_ref": "klappy://canon/epistemic-modes#exploration", "confidence": "low" }
 - Upstream agents (Epistemic Guide) determine mode; oddkit just adapts to it
 
-Do NOT pre-inject docs. Retrieve minimal excerpts via oddkit, quote with citations.
+NEVER paste large canon/docs. Use oddkit_orchestrate (pass repo_root) to retrieve + quote minimal excerpts.
 `.trim();
 
   if (process.env.ODDKIT_DEBUG_MCP) {

@@ -1,4 +1,4 @@
-const ALLOWED_SCHEMES = ["klappy", "oddkit"];
+const ALLOWED_SCHEMES = ["klappy", "oddkit", "odd"];
 
 /**
  * Normalize a ref strictly (shape only), with explicit scheme allowlist.
@@ -16,8 +16,8 @@ export function normalizeRef(ref) {
   const protocolMatch = ref.match(/^([a-zA-Z]+):\/\/(.+)$/);
   if (!protocolMatch) {
     throw new Error(
-      `Ref "${ref}" invalid. Must be scheme://path where scheme is klappy or oddkit. ` +
-        `Examples: klappy://canon/foo, oddkit://tools/bar.json`,
+      `Ref "${ref}" invalid. Must be scheme://path where scheme is one of: ${ALLOWED_SCHEMES.join(", ")}. ` +
+        `Examples: klappy://canon/foo, odd://contract/epistemic-contract, oddkit://tools/bar.json`,
     );
   }
 
@@ -29,6 +29,15 @@ export function normalizeRef(ref) {
   }
 
   let path = protocolMatch[2];
+
+  // Security: reject path traversal, absolute paths, and illegal characters
+  // normalizeRef is "shape-only", but shape includes "not dangerous"
+  if (path.includes("\0") || path.includes("\\")) {
+    throw new Error(`Ref "${ref}" invalid: illegal characters`);
+  }
+  if (path.startsWith("/") || path === ".." || path.startsWith("../") || path.includes("/../")) {
+    throw new Error(`Ref "${ref}" invalid: path traversal not allowed`);
+  }
 
   path = path.replace(/\.md$/, "");
   path = path.replace(/\/+/g, "/");

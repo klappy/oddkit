@@ -22,6 +22,26 @@ const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md"];
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
 
 /**
+ * Check if a file is excluded by a .noindex sentinel in any ancestor directory.
+ * @param {string} relFilePath - Relative file path (e.g., "canon/apocrypha/fragments/on-artifacts.md")
+ * @param {string} rootPath - Root directory path
+ * @returns {boolean} - True if excluded by .noindex
+ */
+function isExcludedByNoindex(relFilePath, rootPath) {
+  const parts = relFilePath.split("/");
+  let current = rootPath;
+
+  // Only walk directory parts (exclude filename)
+  for (const part of parts.slice(0, -1)) {
+    current = join(current, part);
+    if (existsSync(join(current, ".noindex"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Extract headings with line numbers from content
  */
 function extractHeadings(content) {
@@ -54,9 +74,11 @@ function extractHeadings(content) {
 
 /**
  * Build index for a single root directory
+ * @returns {{ docs: Array, excludedByNoindex: number }}
  */
 async function indexRoot(rootPath, origin) {
   const docs = [];
+  let excludedByNoindex = 0;
 
   // Find all matching files
   const files = await fg(INCLUDE_PATTERNS, {
@@ -65,7 +87,16 @@ async function indexRoot(rootPath, origin) {
     absolute: false,
   });
 
-  for (const filePath of files) {
+  // Filter out files in directories with .noindex sentinel
+  const filteredFiles = files.filter((f) => {
+    if (isExcludedByNoindex(f, rootPath)) {
+      excludedByNoindex++;
+      return false;
+    }
+    return true;
+  });
+
+  for (const filePath of filteredFiles) {
     const absolutePath = join(rootPath, filePath);
 
     try {
@@ -101,7 +132,7 @@ async function indexRoot(rootPath, origin) {
     }
   }
 
-  return docs;
+  return { docs, excludedByNoindex };
 }
 
 /**
@@ -166,11 +197,16 @@ function inferAuthorityBand(filePath, frontmatter) {
  * Build complete index for local repo + baseline
  */
 export async function buildIndex(repoRoot, baselineRoot = null) {
-  const localDocs = await indexRoot(repoRoot, "local");
+  const localResult = await indexRoot(repoRoot, "local");
+  const localDocs = localResult.docs;
+  const localExcluded = localResult.excludedByNoindex;
 
   let baselineDocs = [];
+  let baselineExcluded = 0;
   if (baselineRoot) {
-    baselineDocs = await indexRoot(baselineRoot, "baseline");
+    const baselineResult = await indexRoot(baselineRoot, "baseline");
+    baselineDocs = baselineResult.docs;
+    baselineExcluded = baselineResult.excludedByNoindex;
   }
 
   const allDocs = [...localDocs, ...baselineDocs];
@@ -182,6 +218,7 @@ export async function buildIndex(repoRoot, baselineRoot = null) {
       total: allDocs.length,
       local: localDocs.length,
       baseline: baselineDocs.length,
+      excluded_by_noindex: localExcluded + baselineExcluded,
       byAuthority: {
         governing: allDocs.filter((d) => d.authority_band === "governing").length,
         operational: allDocs.filter((d) => d.authority_band === "operational").length,

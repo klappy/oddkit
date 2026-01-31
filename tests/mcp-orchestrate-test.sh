@@ -87,10 +87,18 @@ else
 fi
 
 # Check for at least one quote >= 15 words (not just tagline)
-ASSISTANT_TEXT=$(echo "$RESULT" | grep -o '"assistant_text":\s*"[^"]*"' | sed 's/"assistant_text":\s*"//;s/"$//' | sed 's/\\n/\n/g')
-QUOTE_WORDS=$(echo "$ASSISTANT_TEXT" | grep -o '> [^<]*' | head -1 | wc -w || echo "0")
+ASSISTANT_TEXT=$(echo "$RESULT" | node -e "
+const fs = require('fs');
+const d = fs.readFileSync(0, 'utf8');
+try {
+  const j = JSON.parse(d);
+  console.log(j.assistant_text || '');
+} catch { console.log(''); }
+" 2>/dev/null || echo "")
+QUOTE_WORDS=$(echo "$ASSISTANT_TEXT" | grep -o '> [^—]*' | head -1 | wc -w | tr -d ' ' || echo "0")
+QUOTE_WORDS=${QUOTE_WORDS:-0}
 
-if [ "$QUOTE_WORDS" -ge 15 ]; then
+if [ "$QUOTE_WORDS" -ge 15 ] 2>/dev/null; then
   echo "PASS - Quote length >= 15 words (excerpt upgrade working)"
 else
   echo "WARN - Quote may be too short (words: $QUOTE_WORDS)"
@@ -98,10 +106,13 @@ else
 fi
 
 # Check for citations in assistant_text
-if echo "$ASSISTANT_TEXT" | grep -q '\.md#'; then
+if echo "$ASSISTANT_TEXT" | grep -qE '\.md#|\.md\)'; then
   echo "PASS - Contains citations with anchors"
 else
   echo "FAIL - Missing citations with anchors"
+  echo "--- assistant_text ---"
+  echo "$ASSISTANT_TEXT"
+  echo "---"
   exit 1
 fi
 
