@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-01-31
+
+### Changed
+
+- **MCP prompts now load from registry** — DRY/KISS approach:
+  - Prompts dynamically loaded from `klappy.dev/canon/instructions/REGISTRY.json`
+  - All agents in registry automatically available as MCP prompts
+  - Single source of truth: update agents in klappy.dev, all consumers get updates
+  - Removes hardcoded `oddkit_compass` and `oddkit_compass_prd` prompts
+
 ## [0.8.0] - 2026-01-31
 
 ### Added

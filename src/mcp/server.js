@@ -307,17 +307,17 @@ async function main() {
     };
   });
 
-  // Handle list prompts request
+  // Handle list prompts request (async - loads from registry)
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
     return {
-      prompts: listPrompts(),
+      prompts: await listPrompts(),
     };
   });
 
-  // Handle get prompt request
+  // Handle get prompt request (async - loads from registry)
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const { name } = request.params;
-    const prompt = getPrompt(name);
+    const prompt = await getPrompt(name);
     if (!prompt) {
       throw new Error(`Unknown prompt: ${name}`);
     }

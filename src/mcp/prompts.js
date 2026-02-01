@@ -1,117 +1,110 @@
 /**
- * ODD Compass Prompts
+ * MCP Prompts from Registry
  *
- * MCP prompts that teach agents WHEN to call oddkit, WHAT to ask for,
- * and HOW to apply results — WITHOUT preinjecting or duplicating any canon/docs content.
+ * Loads prompts dynamically from the baseline's instruction registry.
+ * Single source of truth: klappy.dev/canon/instructions/REGISTRY.json
  *
- * These are navigation + triggers + tool contracts only. No doctrine text.
+ * DRY: No content duplication - agents defined once in klappy.dev
+ * KISS: Just reads files from cached baseline
  */
 
-const COMPASS_CODING = `You are working in a repo and you have access to ONE tool: \`oddkit_orchestrate\`.
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 
-Do NOT guess policy, process, or definitions when uncertainty matters. Instead, consult oddkit on-demand.
-
-Use these triggers:
-
-1) Policy/Process uncertainty trigger:
-- If you are about to state "the rule is…", "we should…", "definition of done is…", "required evidence is…", or you are unsure where guidance lives:
-→ Call \`oddkit_orchestrate\` with your question.
-
-Suggested queries:
-- "What is the definition of done?"
-- "What evidence is required for X?"
-- "What are the constraints governing X?"
-- "Is this a workaround or promoted policy?"
-
-2) Completion claim trigger:
-- If you are about to claim completion ("done", "implemented", "fixed", "shipped", "merged"):
-→ Call \`oddkit_orchestrate\` with a completion message that includes artifacts:
-  - artifact path(s)
-  - commit/PR link
-  - command output (or test output)
-If missing artifacts, ask for them instead of claiming done.
-
-3) Confusion/contradiction trigger:
-- If you see conflicting guidance, low confidence, or "this feels brittle":
-→ Call \`oddkit_orchestrate\` asking what governs and what to do next.
-
-How to call:
-- Send your natural language message + \`repo_root\` (the workspace root).
-- If tool returns advisory/low confidence, do not launder certainty. Ask for the cheapest next artifact.
-
-Output rule:
-- If \`assistant_text\` is present, print it verbatim as your answer.
-- Otherwise summarize the \`result\` clearly with citations.`;
-
-const COMPASS_PRD = `You are drafting a PRD/discovery doc. You have one tool: \`oddkit_orchestrate\`.
-
-Do NOT invent process requirements. Retrieve them.
-
-Triggers:
-
-1) Before defining success metrics:
-→ Ask oddkit: "What is the definition of done for this repo / PRDs?"
-
-2) When you propose constraints/requirements:
-→ Ask oddkit: "What constraints or governing docs apply to: <topic>?"
-
-3) When you define evidence/verification:
-→ Ask oddkit: "What evidence is required to verify <claim>?"
-
-4) When you finish a PRD draft:
-→ Run a completion-style validation message including:
-- PRD file path
-- key success metrics summary
-- how it would be verified
-
-Output rule:
-- If \`assistant_text\` exists, print it verbatim.
-- If advisory, explicitly state it and propose the cheapest next step.`;
+let cachedRegistry = null;
+let cachedBaselineRoot = null;
 
 /**
- * All available prompts
+ * Load registry from baseline (cached)
  */
-const PROMPTS = [
-  {
-    name: "oddkit_compass",
-    description:
-      "Operational triggers for when an agent should call oddkit_orchestrate during normal coding.",
-    content: COMPASS_CODING,
-  },
-  {
-    name: "oddkit_compass_prd",
-    description: "Operational triggers for discovery and PRD creation.",
-    content: COMPASS_PRD,
-  },
-];
+async function loadRegistry() {
+  if (cachedRegistry && cachedBaselineRoot) {
+    return { registry: cachedRegistry, baselineRoot: cachedBaselineRoot };
+  }
+
+  const baseline = await ensureBaselineRepo();
+  if (!baseline.root) {
+    return { registry: null, baselineRoot: null, error: baseline.error };
+  }
+
+  const registryPath = join(baseline.root, "canon/instructions/REGISTRY.json");
+  if (!existsSync(registryPath)) {
+    return { registry: null, baselineRoot: baseline.root, error: "Registry not found" };
+  }
+
+  try {
+    cachedRegistry = JSON.parse(readFileSync(registryPath, "utf-8"));
+    cachedBaselineRoot = baseline.root;
+    return { registry: cachedRegistry, baselineRoot: baseline.root };
+  } catch (err) {
+    return { registry: null, baselineRoot: baseline.root, error: err.message };
+  }
+}
 
 /**
- * List all available prompts
- * @returns {Array<{name: string, description: string}>}
+ * List all available prompts from registry
+ * @returns {Promise<Array<{name: string, description: string}>>}
  */
-export function listPrompts() {
-  return PROMPTS.map(({ name, description }) => ({ name, description }));
+export async function listPrompts() {
+  const { registry, error } = await loadRegistry();
+
+  if (!registry) {
+    console.error(`oddkit: failed to load registry: ${error}`);
+    return [];
+  }
+
+  return registry.instructions
+    .filter((inst) => inst.audience === "agent")
+    .map((inst) => ({
+      name: inst.id,
+      description: `Agent: ${inst.id} (${inst.uri})`,
+    }));
 }
 
 /**
  * Get a specific prompt by name
- * @param {string} name - Prompt name
- * @returns {{name: string, description: string, messages: Array<{role: string, content: {type: string, text: string}}>} | null}
+ * @param {string} name - Prompt name (agent id from registry)
+ * @returns {Promise<{description: string, messages: Array}>}
  */
-export function getPrompt(name) {
-  const prompt = PROMPTS.find((p) => p.name === name);
-  if (!prompt) return null;
+export async function getPrompt(name) {
+  const { registry, baselineRoot } = await loadRegistry();
 
-  return {
-    description: prompt.description,
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: prompt.content,
+  if (!registry) {
+    return null;
+  }
+
+  const instruction = registry.instructions.find((i) => i.id === name);
+  if (!instruction) {
+    return null;
+  }
+
+  const agentPath = join(baselineRoot, instruction.path);
+  if (!existsSync(agentPath)) {
+    console.error(`oddkit: agent file not found: ${agentPath}`);
+    return null;
+  }
+
+  try {
+    const content = readFileSync(agentPath, "utf-8");
+
+    // Strip YAML frontmatter if present
+    const contentWithoutFrontmatter = content.replace(/^---[\s\S]*?---\n/, "");
+
+    return {
+      description: `Agent: ${instruction.id}`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: contentWithoutFrontmatter.trim(),
+          },
         },
-      },
-    ],
-  };
+      ],
+    };
+  } catch (err) {
+    console.error(`oddkit: failed to read agent: ${err.message}`);
+    return null;
+  }
 }
