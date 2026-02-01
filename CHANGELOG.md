@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-31
+
+### Added
+
+- **ODD Orchestrator** — Unified Guide + Scribe for mode-aware agentic work:
+  - Tracks epistemic mode (discovery/planning/execution) with distinct postures
+  - Discovery: High fuzziness tolerance, constructive adversarial pushback
+  - Planning: Options crystallizing, decisions locking, constraints surfacing
+  - Execution: Concrete, locked, artifact delivery
+
+- **Mode transitions with gates** — Prevents premature advancement:
+  - Discovery → Planning: requires captured requirements and defined scope
+  - Planning → Execution: requires DoD, constraints, and locked decisions
+  - Execution → Discovery: requires completion claimed and validated
+
+- **Scribe smell detection** — Captures learnings/decisions in flight:
+  - Detects learning signals ("realized", "discovered", "turns out")
+  - Detects decision signals ("decided to", "choosing", "going with")
+  - Detects override signals ("actually", "scratch that", "correction")
+  - Consent-gated capture to `odd/ledger/*.jsonl`
+
+- **Session state persistence** — Maintains mode across MCP calls:
+  - State stored in `~/.oddkit/orchestrator-state.json`
+  - Auto-expires after 1 hour of inactivity
+  - Explicit `reset_session` parameter to start fresh
+
+- **New MCP tool `oddkit_orchestrator`** — Parameters:
+  - `message` — User message or context
+  - `mode` — Explicit mode override
+  - `transition_to` — Request mode transition
+  - `capture_consent` / `capture_entry` — Consent-gated ledger capture
+  - `reset_session` — Reset to fresh discovery mode
+
+- **New files:**
+  - `src/orchestrator/mode.js` — Mode definitions with postures
+  - `src/orchestrator/state.js` — Session state persistence
+  - `src/orchestrator/transitions.js` — Mode transition rules
+  - `src/orchestrator/guide.js` — Posture enforcement, action gating
+  - `src/orchestrator/scribe.js` — Smell detection, ledger capture
+  - `src/orchestrator/index.js` — Main orchestrator
+
+### Philosophy
+
+- **Guide + Scribe as minimal core** — Everything else can be an extension
+- **Mode-appropriate posture** — Behavior adapts to epistemic phase
+- **Consent-gated capture** — Scribe proposes, human decides
+- **Extension pattern** — When guide fails, extract the concern as a specialist
+
 ## [0.7.0] - 2026-01-30
 
 ### Added

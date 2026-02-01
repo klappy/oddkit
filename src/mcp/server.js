@@ -32,6 +32,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readFileSync } from "fs";
 import { runOrchestrate } from "./orchestrate.js";
+import { runOrchestrator } from "../orchestrator/index.js";
 import { listPrompts, getPrompt } from "./prompts.js";
 import { getOddkitInstructions } from "./instructions.js";
 import { resolveCanonTarget } from "../policy/canonTarget.js";
@@ -211,6 +212,58 @@ Returns content, commit, and content hash.`,
         },
       },
       required: ["uri"],
+    },
+  },
+  {
+    name: "oddkit_orchestrator",
+    description: `Unified Guide + Scribe orchestrator with mode-aware posture.
+
+Tracks current mode (discovery/planning/execution) and applies appropriate behavior:
+- Discovery: High fuzziness tolerance, constructive adversarial pushback
+- Planning: Options crystallizing, decisions locking, constraints surfacing
+- Execution: Concrete, locked, artifact delivery
+
+Also detects learnings/decisions/overrides in conversation and proposes ledger capture.
+
+Use when:
+- Starting or continuing agentic work
+- Navigating mode transitions
+- Capturing learnings or decisions`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: "The user message or context" },
+        action: {
+          type: "string",
+          enum: ["orient", "catalog", "preflight", "librarian", "validate", "explain"],
+          description: "Explicit action to take (optional, detected from message if omitted)",
+        },
+        mode: {
+          type: "string",
+          enum: ["discovery", "planning", "execution"],
+          description: "Explicit mode override (optional, uses session state if omitted)",
+        },
+        transition_to: {
+          type: "string",
+          enum: ["discovery", "planning", "execution"],
+          description: "Request mode transition",
+        },
+        capture_consent: {
+          type: "boolean",
+          description: "Consent to capture pending learnings/decisions",
+        },
+        capture_entry: {
+          type: "object",
+          description: "Specific entry to capture (requires capture_consent: true)",
+        },
+        reset_session: {
+          type: "boolean",
+          description: "Reset orchestrator state to fresh discovery mode",
+        },
+        repo_root: { type: "string", description: "Path to target repo" },
+        baseline: { type: "string", description: "Optional baseline git URL or local path" },
+      },
+      required: [],
     },
   },
 ];
@@ -477,6 +530,57 @@ async function main() {
                       code: "DOC_FETCH_ERROR",
                       message: err.message || "Failed to fetch document",
                     },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_orchestrator": {
+        const {
+          message,
+          action,
+          mode,
+          transition_to,
+          capture_consent,
+          capture_entry,
+          reset_session,
+          baseline,
+        } = args;
+        try {
+          const result = await runOrchestrator({
+            message,
+            repoRoot,
+            baseline,
+            action,
+            mode,
+            transition_to,
+            capture_consent,
+            capture_entry,
+            reset_session,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "error",
+                    success: false,
+                    error: err.message,
                   },
                   null,
                   2,
