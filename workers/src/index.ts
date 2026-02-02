@@ -65,6 +65,199 @@ Use when:
   },
 ];
 
+// Resource definitions
+const RESOURCES = [
+  {
+    uri: "oddkit://instructions",
+    name: "ODDKIT Decision Gate",
+    description: "When and how to call oddkit_orchestrate",
+    mimeType: "text/plain",
+  },
+  {
+    uri: "oddkit://quickstart",
+    name: "ODDKIT Quick Start for Agents",
+    description: "Essential oddkit usage patterns for spawned agents",
+    mimeType: "text/plain",
+  },
+  {
+    uri: "oddkit://examples",
+    name: "ODDKIT Usage Examples",
+    description: "Common oddkit_orchestrate call patterns",
+    mimeType: "text/plain",
+  },
+];
+
+// Resource content
+function getInstructionsResource(): string {
+  return `ODDKIT DECISION GATE
+
+You have access to oddkit for epistemic governance.
+
+CALL oddkit_orchestrate WHEN:
+1. About to implement something → preflight first
+2. Have a policy/rules question → ask librarian
+3. Claiming completion → validate with artifacts
+4. Need to understand available docs → catalog
+
+DO NOT CALL WHEN:
+- Simple file operations with no policy implications
+- Continuing work already preflighted
+- User explicitly says to skip
+
+The tool returns ready-to-use assistant_text with citations.`;
+}
+
+function getQuickStartResource(): string {
+  return `ODDKIT QUICK START FOR AGENTS
+
+You have access to oddkit_orchestrate for policy retrieval and completion validation.
+
+THREE CRITICAL MOMENTS TO CALL ODDKIT:
+
+1. BEFORE IMPLEMENTING
+   Call: oddkit_orchestrate({ message: "preflight: <what you're implementing>" })
+   Returns: Start here / Constraints / Definition of Done / Pitfalls
+
+2. WHEN YOU HAVE QUESTIONS
+   Call: oddkit_orchestrate({ message: "<your question>" })
+   Returns: Answer with citations and evidence quotes
+
+3. BEFORE CLAIMING DONE
+   Call: oddkit_orchestrate({ message: "done: <what you completed>" })
+   Returns: VERIFIED or NEEDS_ARTIFACTS with missing evidence list
+
+RESPONSE HANDLING:
+- Use the "assistant_text" field from the response directly
+- It contains a complete answer with citations
+- Don't add extra narration - the text is ready to use
+
+COMMON PATTERNS:
+- Policy question: { "message": "What is the definition of done?" }
+- Preflight: { "message": "preflight: add user authentication" }
+- Validate: { "message": "done: implemented login. Screenshot: login.png" }
+- Discovery: { "message": "What's in ODD?" }
+
+IMPORTANT: Never pre-inject large documents. Always retrieve on-demand via oddkit.`;
+}
+
+function getExamplesResource(): string {
+  return `ODDKIT USAGE EXAMPLES
+
+=== PREFLIGHT (before implementing) ===
+
+Request:
+{
+  "message": "preflight: implement user authentication with OAuth"
+}
+
+Response includes:
+- Start here: files to read first
+- Constraints: rules that apply
+- Definition of Done: what completion looks like
+- Pitfalls: common mistakes to avoid
+
+
+=== POLICY QUESTION ===
+
+Request:
+{
+  "message": "What evidence is required for UI changes?"
+}
+
+Response includes:
+- Answer with 2-4 substantial quotes
+- Citations (file#section format)
+- Read next suggestions
+
+
+=== COMPLETION VALIDATION ===
+
+Request:
+{
+  "message": "done: implemented search feature with tests. Screenshot: search.png, Test output: npm test passed"
+}
+
+Response verdict:
+- VERIFIED: All required evidence provided
+- NEEDS_ARTIFACTS: Lists what's missing
+
+
+=== DISCOVERY (what's available) ===
+
+Request:
+{
+  "message": "What's in ODD? Show me the canon."
+}
+
+Response includes:
+- Start here documents
+- Top canon by category
+- Playbooks and guides
+
+
+=== EXPLICIT ACTION ===
+
+Sometimes you want to force a specific action:
+
+Request:
+{
+  "message": "...",
+  "action": "preflight"
+}
+
+Valid actions: preflight, catalog, librarian, validate, explain, orient`;
+}
+
+function getResourceContent(uri: string): string | null {
+  switch (uri) {
+    case "oddkit://instructions":
+      return getInstructionsResource();
+    case "oddkit://quickstart":
+      return getQuickStartResource();
+    case "oddkit://examples":
+      return getExamplesResource();
+    default:
+      return null;
+  }
+}
+
+// Prompt registry interface
+interface PromptRegistryEntry {
+  id: string;
+  uri: string;
+  path: string;
+  audience: string;
+}
+
+interface PromptRegistry {
+  version: string;
+  instructions: PromptRegistryEntry[];
+}
+
+// Fetch prompts registry from GitHub
+async function fetchPromptsRegistry(baselineUrl: string): Promise<PromptRegistry | null> {
+  try {
+    const response = await fetch(`${baselineUrl}/canon/instructions/REGISTRY.json`);
+    if (!response.ok) return null;
+    return (await response.json()) as PromptRegistry;
+  } catch {
+    return null;
+  }
+}
+
+// Fetch prompt content from GitHub
+async function fetchPromptContent(baselineUrl: string, path: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${baselineUrl}/${path}`);
+    if (!response.ok) return null;
+    const content = await response.text();
+    // Strip YAML frontmatter if present
+    return content.replace(/^---[\s\S]*?---\n/, "").trim();
+  } catch {
+    return null;
+  }
+}
+
 // Server info
 function getServerInfo(version: string) {
   return {
@@ -99,6 +292,8 @@ async function handleMcpRequest(
             serverInfo: getServerInfo(env.ODDKIT_VERSION),
             capabilities: {
               tools: {},
+              resources: {},
+              prompts: {},
             },
           },
         };
@@ -109,6 +304,124 @@ async function handleMcpRequest(
           id,
           result: { tools: TOOLS },
         };
+
+      case "resources/list":
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { resources: RESOURCES },
+        };
+
+      case "resources/read": {
+        const { uri } = params as { uri: string };
+        const content = getResourceContent(uri);
+
+        if (!content) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: `Unknown resource: ${uri}`,
+            },
+          };
+        }
+
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            contents: [
+              {
+                uri,
+                mimeType: "text/plain",
+                text: content,
+              },
+            ],
+          },
+        };
+      }
+
+      case "prompts/list": {
+        const registry = await fetchPromptsRegistry(env.BASELINE_URL);
+        if (!registry) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: { prompts: [] },
+          };
+        }
+
+        const prompts = registry.instructions
+          .filter((inst) => inst.audience === "agent")
+          .map((inst) => ({
+            name: inst.id,
+            description: `Agent: ${inst.id} (${inst.uri})`,
+          }));
+
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: { prompts },
+        };
+      }
+
+      case "prompts/get": {
+        const { name } = params as { name: string };
+        const registry = await fetchPromptsRegistry(env.BASELINE_URL);
+
+        if (!registry) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: "Failed to load prompts registry",
+            },
+          };
+        }
+
+        const instruction = registry.instructions.find((i) => i.id === name);
+        if (!instruction) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: `Unknown prompt: ${name}`,
+            },
+          };
+        }
+
+        const content = await fetchPromptContent(env.BASELINE_URL, instruction.path);
+        if (!content) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: `Failed to fetch prompt content: ${instruction.path}`,
+            },
+          };
+        }
+
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: `Agent: ${instruction.id}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: content,
+                },
+              },
+            ],
+          },
+        };
+      }
 
       case "tools/call": {
         const { name, arguments: args } = params as {
@@ -230,6 +543,7 @@ export default {
             mcp: "/mcp",
             health: "/health",
           },
+          capabilities: ["tools", "resources", "prompts"],
         }),
         {
           headers: {
