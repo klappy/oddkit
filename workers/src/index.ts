@@ -263,7 +263,7 @@ function getServerInfo(version: string) {
   return {
     name: "oddkit",
     version,
-    protocolVersion: "2024-11-05",
+    protocolVersion: "2025-03-26",
   };
 }
 
@@ -288,7 +288,7 @@ async function handleMcpRequest(
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: "2024-11-05",
+            protocolVersion: "2025-03-26",
             serverInfo: getServerInfo(env.ODDKIT_VERSION),
             capabilities: {
               tools: {},
@@ -510,12 +510,13 @@ async function handleMcpRequest(
   }
 }
 
-// CORS headers
+// CORS headers for MCP Streamable HTTP transport
 function corsHeaders(origin: string = "*"): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, Last-Event-ID",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
 
