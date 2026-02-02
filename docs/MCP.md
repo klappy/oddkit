@@ -44,8 +44,14 @@ Use this config to run oddkit as an MCP server via **npx from GitHub** (no npm p
 The easiest way to set up oddkit MCP:
 
 ```bash
-# Global Cursor config (recommended)
-npx oddkit init
+# Claude Code (recommended for Claude Code users)
+npx oddkit init --claude
+
+# Cursor config
+npx oddkit init --cursor
+
+# Configure ALL targets (Cursor + Claude Code)
+npx oddkit init --all
 
 # Project-local config
 npx oddkit init --project
@@ -54,7 +60,13 @@ npx oddkit init --project
 npx oddkit init --print
 ```
 
-This writes config to `~/.cursor/mcp.json` (or `<repo>/.cursor/mcp.json` for `--project`). The `init` command safely merges with existing config—it won't overwrite other MCP servers.
+Config locations:
+- **Claude Code:** `~/.claude.json` (global) or `.mcp.json` (project)
+- **Cursor:** `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project)
+
+The `init` command safely merges with existing config—it won't overwrite other MCP servers.
+
+See [CLAUDE-CODE.md](CLAUDE-CODE.md) for Claude Code specific setup and features.
 
 ## Compass Prompts
 
@@ -236,16 +248,25 @@ Use the [Cursor config (long-term)](#cursor-config-long-term-run-from-anywhere) 
 
 ### For Claude Code
 
+**Location:** `~/.claude.json` (global) or `.mcp.json` (project-local)
+
 ```json
 {
   "mcpServers": {
     "oddkit": {
       "command": "npx",
-      "args": ["oddkit-mcp"]
+      "args": ["--yes", "--package", "github:klappy/oddkit", "oddkit-mcp"]
     }
   }
 }
 ```
+
+**Recommended:** Use `npx oddkit init --claude` instead of manual setup.
+
+See [CLAUDE-CODE.md](CLAUDE-CODE.md) for:
+- CLAUDE.md generator (`npx oddkit claudemd`)
+- Claude Code hooks (`npx oddkit hooks`)
+- Spawned agent context
 
 ### From local clone
 

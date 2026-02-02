@@ -18,6 +18,7 @@ oddkit has three layers:
 
 ## Quick Links
 
+- [Claude Code Guide](CLAUDE-CODE.md) — Claude Code specific setup
 - [Agents Guide](getting-started/agents.md) — Set up Epistemic Guide + Scribe
 - [Ledger Guide](getting-started/ledger.md) — Capture learnings and decisions
 - [MCP.md](MCP.md) — Full MCP integration details
@@ -25,20 +26,37 @@ oddkit has three layers:
 
 ---
 
+## Claude Code Setup (Recommended)
+
+```bash
+npx oddkit init --claude
+# Restart Claude Code
+```
+
+This writes MCP config to `~/.claude.json`. See [CLAUDE-CODE.md](CLAUDE-CODE.md) for full details.
+
+**Configure both Cursor and Claude Code:**
+
+```bash
+npx oddkit init --all
+```
+
+---
+
 ## Cursor Setup
 
-To use oddkit as an MCP server in Cursor (or Claude Code / Codex), see **[docs/MCP.md](MCP.md)**. You can run oddkit from anywhere via:
+To use oddkit as an MCP server in Cursor, see **[docs/MCP.md](MCP.md)**. You can run oddkit from anywhere via:
 
 ```bash
 npx --yes --package github:klappy/oddkit oddkit-mcp
 ```
 
-## Use in Cursor (recommended)
+## Use in Cursor
 
 ### Option A: One command (global)
 
 ```bash
-npx oddkit init
+npx oddkit init --cursor
 # Restart Cursor if prompted
 ```
 
@@ -47,7 +65,7 @@ This writes MCP config to `~/.cursor/mcp.json` and wires oddkit as a tool.
 ### Option B: Project-local config
 
 ```bash
-npx oddkit init --project
+npx oddkit init --cursor --project
 ```
 
 This writes to `<repo>/.cursor/mcp.json` instead.

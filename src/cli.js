@@ -5,6 +5,8 @@ import { runValidate } from "./tasks/validate.js";
 import { runIndex } from "./tasks/indexTask.js";
 import { explainLast } from "./explain/explain-last.js";
 import { runInit, getOddkitMcpSnippet } from "./cli/init.js";
+import { runClaudeMd } from "./cli/claudemd.js";
+import { runHooks } from "./cli/hooks.js";
 import { registerSyncAgentsCommand } from "./cli/syncAgents.js";
 import { runAuditEpoch } from "./audit/auditEpoch.js";
 
@@ -252,9 +254,11 @@ export function run() {
   // Init command - setup MCP configuration
   program
     .command("init")
-    .description("Set up MCP configuration for Cursor")
-    .option("--project", "Write to project-local config (<repo>/.cursor/mcp.json)")
-    .option("--cursor", "Write to global Cursor config (default)")
+    .description("Set up MCP configuration for Cursor or Claude Code")
+    .option("--project", "Write to project-local config")
+    .option("--cursor", "Write to Cursor config (~/.cursor/mcp.json)")
+    .option("--claude", "Write to Claude Code config (~/.claude.json)")
+    .option("--all", "Configure all supported MCP targets (Cursor + Claude Code)")
     .option("--print", "Print JSON snippet only (no file writes)")
     .option("--force", "Replace existing oddkit entry if different")
     .option("-r, --repo <path>", "Repository root path (for --project)")
@@ -269,6 +273,28 @@ export function run() {
           // Print mode: just output the JSON snippet
           console.log(JSON.stringify(result.snippet, null, 2));
           process.exit(EXIT_OK);
+          return;
+        }
+
+        // Handle --all mode with multiple results
+        if (result.action === "all") {
+          let hasErrors = false;
+          for (const r of result.results) {
+            if (!quiet) {
+              if (r.action === "wrote") {
+                console.log(`Wrote ${r.targetName} config: ${r.targetPath}`);
+              } else if (r.action === "unchanged") {
+                console.log(`${r.targetName}: ${r.message}`);
+              } else if (r.action === "conflict") {
+                console.error(`${r.targetName}: ${r.message}`);
+                hasErrors = true;
+              } else if (r.action === "error") {
+                console.error(`${r.targetName} error: ${r.error || r.message}`);
+                hasErrors = true;
+              }
+            }
+          }
+          process.exit(hasErrors ? EXIT_RUNTIME_ERROR : EXIT_OK);
           return;
         }
 
@@ -290,8 +316,7 @@ export function run() {
         // Success
         if (!quiet) {
           if (result.action === "wrote") {
-            const typeLabel = result.targetType === "project" ? "project" : "Cursor";
-            console.log(`Wrote ${typeLabel} MCP config: ${result.targetPath}`);
+            console.log(`Wrote ${result.targetName} config: ${result.targetPath}`);
           } else if (result.action === "unchanged") {
             console.log(result.message);
           }
@@ -300,6 +325,91 @@ export function run() {
       } catch (err) {
         if (!quiet) {
           console.error("Init error:", err.message);
+        }
+        process.exit(EXIT_RUNTIME_ERROR);
+      }
+    });
+
+  // CLAUDE.md generator command
+  program
+    .command("claudemd")
+    .description("Generate CLAUDE.md with oddkit integration instructions")
+    .option("--print", "Print to stdout only (no file write)")
+    .option("--force", "Overwrite existing CLAUDE.md")
+    .option("--advanced", "Include advanced epistemic mode documentation")
+    .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .action(async (options, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const quiet = globalOpts.quiet;
+
+      try {
+        const result = await runClaudeMd(options);
+
+        if (options.print) {
+          console.log(result.content);
+          process.exit(EXIT_OK);
+          return;
+        }
+
+        if (!result.success) {
+          if (!quiet) {
+            console.error(result.message);
+          }
+          process.exit(result.action === "exists" ? EXIT_BAD_ARGS : EXIT_RUNTIME_ERROR);
+          return;
+        }
+
+        if (!quiet) {
+          console.log(result.message);
+          console.log(`Path: ${result.path}`);
+        }
+        process.exit(EXIT_OK);
+      } catch (err) {
+        if (!quiet) {
+          console.error("claudemd error:", err.message);
+        }
+        process.exit(EXIT_RUNTIME_ERROR);
+      }
+    });
+
+  // Hooks command - generate Claude Code hooks
+  program
+    .command("hooks")
+    .description("Generate Claude Code hooks for automatic oddkit integration")
+    .option("--print", "Print hooks config to stdout only")
+    .option("--force", "Overwrite existing oddkit hooks")
+    .option("--minimal", "Use minimal hooks (just completion detection)")
+    .option("--strict", "Use strict hooks (validation reminders)")
+    .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .action(async (options, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const quiet = globalOpts.quiet;
+
+      try {
+        const result = await runHooks(options);
+
+        if (options.print) {
+          console.log(result.content);
+          process.exit(EXIT_OK);
+          return;
+        }
+
+        if (!result.success) {
+          if (!quiet) {
+            console.error(result.message);
+          }
+          process.exit(result.action === "exists" ? EXIT_BAD_ARGS : EXIT_RUNTIME_ERROR);
+          return;
+        }
+
+        if (!quiet) {
+          console.log(result.message);
+          console.log(`Path: ${result.path}`);
+        }
+        process.exit(EXIT_OK);
+      } catch (err) {
+        if (!quiet) {
+          console.error("hooks error:", err.message);
         }
         process.exit(EXIT_RUNTIME_ERROR);
       }

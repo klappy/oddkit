@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-02
+
+### Added
+
+- **Claude Code integration** — First-class support for Claude Code:
+  - `oddkit init --claude` — Configure `~/.claude.json` for Claude Code
+  - `oddkit init --all` — Configure both Cursor and Claude Code at once
+  - Auto-detects Claude Code environment and defaults to claude target
+
+- **CLAUDE.md generator** — New command `oddkit claudemd`:
+  - Generates project-level context file for Claude Code
+  - Includes oddkit integration instructions and examples
+  - `--advanced` flag for epistemic mode documentation
+  - Safe append to existing CLAUDE.md files
+
+- **Claude Code hooks** — New command `oddkit hooks`:
+  - Generates `.claude/settings.local.json` with Claude Code hooks
+  - Detects completion claims and reminds about validation
+  - `--minimal` for basic completion detection
+  - `--strict` for preflight reminders before edits
+
+- **Enhanced MCP resources** — Better context for spawned agents:
+  - `oddkit://quickstart` — Essential patterns for subagents
+  - `oddkit://examples` — Common usage patterns with examples
+  - Improved `oddkit://instructions` with spawned agent guidance
+
+- **Documentation** — New `docs/CLAUDE-CODE.md`:
+  - Claude Code specific setup guide
+  - Spawned agent usage patterns
+  - Troubleshooting and configuration reference
+
+### Changed
+
+- **MCP targets are now configurable** — `oddkit init` supports:
+  - `--cursor` — Cursor config (previous default)
+  - `--claude` — Claude Code config
+  - `--project` — Project-local config for either target
+
+- **Updated instructions** — MCP instructions now include spawned agent guidance
+
 ## [0.8.1] - 2026-01-31
 
 ### Changed

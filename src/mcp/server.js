@@ -282,6 +282,121 @@ function getTools() {
 }
 
 /**
+ * Quick start resource for spawned agents
+ * Provides essential context without overwhelming detail
+ */
+function getQuickStartResource() {
+  return `ODDKIT QUICK START FOR AGENTS
+
+You have access to oddkit_orchestrate for policy retrieval and completion validation.
+
+THREE CRITICAL MOMENTS TO CALL ODDKIT:
+
+1. BEFORE IMPLEMENTING
+   Call: oddkit_orchestrate({ message: "preflight: <what you're implementing>", repo_root: "." })
+   Returns: Start here / Constraints / Definition of Done / Pitfalls
+
+2. WHEN YOU HAVE QUESTIONS
+   Call: oddkit_orchestrate({ message: "<your question>", repo_root: "." })
+   Returns: Answer with citations and evidence quotes
+
+3. BEFORE CLAIMING DONE
+   Call: oddkit_orchestrate({ message: "done: <what you completed>", repo_root: "." })
+   Returns: VERIFIED or NEEDS_ARTIFACTS with missing evidence list
+
+RESPONSE HANDLING:
+- Use the "assistant_text" field from the response directly
+- It contains a complete answer with citations
+- Don't add extra narration - the text is ready to use
+
+COMMON PATTERNS:
+- Policy question: { "message": "What is the definition of done?" }
+- Preflight: { "message": "preflight: add authentication" }
+- Validate: { "message": "done: implemented login. Screenshot: login.png" }
+- Discovery: { "message": "What's in ODD?" }
+
+IMPORTANT: Never pre-inject large documents. Always retrieve on-demand via oddkit.
+`.trim();
+}
+
+/**
+ * Examples resource showing common usage patterns
+ */
+function getExamplesResource() {
+  return `ODDKIT USAGE EXAMPLES
+
+=== PREFLIGHT (before implementing) ===
+
+Request:
+{
+  "message": "preflight: implement user authentication with OAuth",
+  "repo_root": "."
+}
+
+Response includes:
+- Start here: files to read first
+- Constraints: rules that apply
+- Definition of Done: what completion looks like
+- Pitfalls: common mistakes to avoid
+
+
+=== POLICY QUESTION ===
+
+Request:
+{
+  "message": "What evidence is required for UI changes?",
+  "repo_root": "."
+}
+
+Response includes:
+- Answer with 2-4 substantial quotes
+- Citations (file#section format)
+- Read next suggestions
+
+
+=== COMPLETION VALIDATION ===
+
+Request:
+{
+  "message": "done: implemented search feature with tests. Screenshot: search.png, Test output: npm test passed",
+  "repo_root": "."
+}
+
+Response verdict:
+- VERIFIED: All required evidence provided
+- NEEDS_ARTIFACTS: Lists what's missing
+
+
+=== DISCOVERY (what's available) ===
+
+Request:
+{
+  "message": "What's in ODD? Show me the canon.",
+  "repo_root": "."
+}
+
+Response includes:
+- Start here documents
+- Top canon by category
+- Playbooks and guides
+
+
+=== EXPLICIT ACTION ===
+
+Sometimes you want to force a specific action:
+
+Request:
+{
+  "message": "...",
+  "action": "preflight",
+  "repo_root": "."
+}
+
+Valid actions: preflight, catalog, librarian, validate, explain, orient
+`.trim();
+}
+
+/**
  * Create and start the MCP server
  */
 async function main() {
@@ -334,6 +449,18 @@ async function main() {
           description: "When and how to call oddkit_orchestrate",
           mimeType: "text/plain",
         },
+        {
+          uri: "oddkit://quickstart",
+          name: "ODDKIT Quick Start for Agents",
+          description: "Essential oddkit usage patterns for spawned agents",
+          mimeType: "text/plain",
+        },
+        {
+          uri: "oddkit://examples",
+          name: "ODDKIT Usage Examples",
+          description: "Common oddkit_orchestrate call patterns",
+          mimeType: "text/plain",
+        },
       ],
     };
   });
@@ -341,21 +468,31 @@ async function main() {
   // Handle read resource request
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
+
     if (uri === "oddkit://instructions") {
       const text = getOddkitInstructions();
       if (process.env.ODDKIT_DEBUG_MCP) {
         console.error(`oddkit: served resource uri=${uri} len=${text.length}`);
       }
       return {
-        contents: [
-          {
-            uri,
-            mimeType: "text/plain",
-            text,
-          },
-        ],
+        contents: [{ uri, mimeType: "text/plain", text }],
       };
     }
+
+    if (uri === "oddkit://quickstart") {
+      const text = getQuickStartResource();
+      return {
+        contents: [{ uri, mimeType: "text/plain", text }],
+      };
+    }
+
+    if (uri === "oddkit://examples") {
+      const text = getExamplesResource();
+      return {
+        contents: [{ uri, mimeType: "text/plain", text }],
+      };
+    }
+
     throw new Error(`Unknown resource: ${uri}`);
   });
 
