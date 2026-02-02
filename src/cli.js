@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { createInterface } from "readline";
+import { createRequire } from "module";
 import { runLibrarian } from "./tasks/librarian.js";
 import { runValidate } from "./tasks/validate.js";
 import { runIndex } from "./tasks/indexTask.js";
@@ -9,6 +10,9 @@ import { runClaudeMd } from "./cli/claudemd.js";
 import { runHooks } from "./cli/hooks.js";
 import { registerSyncAgentsCommand } from "./cli/syncAgents.js";
 import { runAuditEpoch } from "./audit/auditEpoch.js";
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require("../package.json");
 
 const SCHEMA_VERSION = "1.0";
 
@@ -123,7 +127,7 @@ export function run() {
   program
     .name("oddkit")
     .description("Agent-first CLI for ODD-governed repos")
-    .version("0.1.0")
+    .version(PKG_VERSION)
     // Global options
     .option("--quiet", "Suppress non-essential output (logs, banners)")
     .option("--no-color", "Disable colored output");
