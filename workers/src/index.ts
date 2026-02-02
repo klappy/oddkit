@@ -266,7 +266,7 @@ function getServerInfo(version: string) {
   return {
     name: "oddkit",
     version,
-    protocolVersion: PROTOCOL_VERSION,
+protocolVersion: PROTOCOL_VERSION,
   };
 }
 
@@ -321,7 +321,7 @@ async function handleMcpRequest(
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: PROTOCOL_VERSION,
+protocolVersion: PROTOCOL_VERSION,
             serverInfo: getServerInfo(env.ODDKIT_VERSION),
             capabilities: {
               tools: {},
@@ -545,7 +545,7 @@ async function handleMcpRequest(
   }
 }
 
-// CORS headers with MCP-specific headers
+// CORS headers for MCP Streamable HTTP transport
 function corsHeaders(origin: string = "*"): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
