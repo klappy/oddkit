@@ -6,6 +6,18 @@ Agent-first CLI for ODD-governed repos. Portable Librarian + Validation with bas
 >
 > OddKit is epistemic terrain rendering (map), not epistemic authority (compass).
 
+## Deployment Methods
+
+oddkit runs in three ways:
+
+| Method | Use Case | Setup |
+|--------|----------|-------|
+| **CLI** | Terminal usage | `npx oddkit <command>` |
+| **MCP (local)** | Cursor, Claude Code | `npx oddkit init --claude` |
+| **MCP (remote)** | Claude.ai iOS/iPad/web | Deploy `workers/` to Cloudflare |
+
+See [workers/README.md](workers/README.md) for Cloudflare deployment.
+
 ## Documentation
 
 | Doc                                                               | What It Covers                  |

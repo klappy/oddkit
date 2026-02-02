@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-02-02
+
+### Added
+
+- **Cloudflare Workers deployment** — Remote MCP server for Claude.ai on iOS/iPad/web:
+  - New `workers/` directory with Cloudflare Worker implementation
+  - Streamable HTTP transport for MCP communication
+  - Fetches baseline from GitHub raw content API (no git clone required)
+  - Full MCP capabilities: tools, resources, and prompts
+  - CORS enabled for cross-origin requests
+  - Deploy with `cd workers && npm run deploy`
+
+- **Three deployment methods** — oddkit now runs everywhere:
+  - **CLI** — `npx oddkit <command>` for terminal usage
+  - **MCP (local)** — `npx oddkit-mcp` for Cursor/Claude Code
+  - **MCP (remote)** — Cloudflare Worker for Claude.ai mobile/web
+
+- **MCP resources in Worker** — Same resources as CLI version:
+  - `oddkit://instructions` — Decision gate
+  - `oddkit://quickstart` — Agent quick start
+  - `oddkit://examples` — Usage patterns
+
+- **MCP prompts in Worker** — Fetched live from baseline registry:
+  - Agent prompts like odd-epistemic-guide, odd-scribe
+  - Loaded from `klappy.dev/canon/instructions/REGISTRY.json`
+
+### Changed
+
+- **Updated documentation** — All docs now cover CLI, npx, and HTTP deployment methods
+
 ## [0.9.1] - 2026-02-02
 
 ### Fixed

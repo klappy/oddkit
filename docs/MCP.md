@@ -2,6 +2,15 @@
 
 oddkit exposes an MCP (Model Context Protocol) server that allows Cursor, Claude Code, and other MCP-compatible hosts to use oddkit as a tool.
 
+## Deployment Options
+
+| Method | Transport | Use Case |
+|--------|-----------|----------|
+| **Local MCP** | stdio | Cursor, Claude Code (desktop) |
+| **Remote MCP** | HTTP | Claude.ai (iOS, iPad, web) |
+
+For remote deployment, see [workers/README.md](../workers/README.md).
+
 ## Zero-config Behavior (recommended)
 
 Once oddkit MCP is installed (globally or project-local), agents automatically receive always-on guidance via MCP GetInstructions. This means:

@@ -28,6 +28,22 @@ npx oddkit init --claude --project
 
 This creates `.mcp.json` in your repository for project-specific configuration.
 
+### Option 4: Claude.ai Mobile/Web (Remote MCP)
+
+For Claude.ai on iOS, iPad, or web browsers, deploy oddkit as a Cloudflare Worker:
+
+```bash
+cd workers
+npm install
+npm run deploy
+```
+
+Then add the remote MCP server in Claude.ai:
+1. Go to Settings → Integrations → MCP
+2. Add server URL: `https://oddkit-mcp.<your-subdomain>.workers.dev/mcp`
+
+See [workers/README.md](../workers/README.md) for full deployment instructions.
+
 ## Verify Setup
 
 After init, restart Claude Code. You should see `oddkit_orchestrate` available as a tool.
