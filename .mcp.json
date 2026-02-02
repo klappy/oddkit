@@ -1,6 +1,7 @@
 {
   "mcpServers": {
     "oddkit": {
+      "type": "http",
       "url": "https://oddkit.klappy.dev/mcp"
     }
   }
