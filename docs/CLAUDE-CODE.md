@@ -40,7 +40,7 @@ npm run deploy
 
 Then add the remote MCP server in Claude.ai:
 1. Go to Settings → Integrations → MCP
-2. Add server URL: `https://oddkit-mcp.<your-subdomain>.workers.dev/mcp`
+2. Add server URL: `https://oddkit.klappy.dev/mcp`
 
 See [workers/README.md](../workers/README.md) for full deployment instructions.
 

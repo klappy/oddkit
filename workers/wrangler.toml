@@ -1,7 +1,7 @@
 # oddkit MCP Worker
 # Exposes oddkit as a remote MCP server for Claude.ai
 
-name = "oddkit-mcp"
+name = "oddkit"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
