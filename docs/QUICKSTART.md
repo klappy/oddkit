@@ -4,13 +4,14 @@ Get running in 60 seconds.
 
 ## What's in the Box
 
-oddkit has three layers:
+oddkit has four layers:
 
-| Layer      | What It Is                                                | Setup                       |
-| ---------- | --------------------------------------------------------- | --------------------------- |
-| **CLI**    | Command-line tools (`oddkit librarian`, `validate`, etc.) | `npx oddkit <command>`      |
-| **MCP**    | Model Context Protocol server for IDE integration         | `npx oddkit init`           |
-| **Agents** | Subagent prompts (Epistemic Guide, Scribe)                | Copy to `~/.cursor/agents/` |
+| Layer            | What It Is                                                | Setup                          |
+| ---------------- | --------------------------------------------------------- | ------------------------------ |
+| **CLI**          | Command-line tools (`oddkit librarian`, `validate`, etc.) | `npx oddkit <command>`         |
+| **MCP (local)**  | Model Context Protocol server for IDE integration         | `npx oddkit init`              |
+| **MCP (remote)** | Cloudflare Worker for Claude.ai iOS/iPad/web              | Deploy `workers/` to Cloudflare |
+| **Agents**       | Subagent prompts (Epistemic Guide, Scribe)                | Copy to `~/.cursor/agents/`    |
 
 **New to ODD?** Start with [ODD Agents](getting-started/agents.md) to understand the system.
 
