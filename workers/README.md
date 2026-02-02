@@ -4,26 +4,24 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 
 ## Features
 
+- **Streamable HTTP transport** — MCP 2025-03-26 spec compliant
+  - Session management via `Mcp-Session-Id` header
+  - GET/SSE support for server-initiated messages
+  - POST for JSON-RPC requests
 - **oddkit_orchestrate** — Routes messages to librarian/validate/preflight/catalog
 - **oddkit_librarian** — Policy Q&A with citations
 - **oddkit_validate** — Completion claim validation
 
-## Setup
+## Deployment
 
-1. **Install dependencies:**
-   ```bash
-   cd workers
-   npm install
-   ```
+The worker deploys automatically via Cloudflare's GitHub integration when changes are pushed to main. No manual deployment required.
 
-2. **Configure Cloudflare:**
-   - Update `wrangler.toml` with your account details
-   - Optionally add KV namespace for caching
-
-3. **Deploy:**
-   ```bash
-   npm run deploy
-   ```
+For local development only:
+```bash
+cd workers
+npm install
+npm run dev
+```
 
 ## Endpoints
 
@@ -31,7 +29,9 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 |------|--------|-------------|
 | `/` | GET | Health check |
 | `/health` | GET | Health check |
-| `/mcp` | POST | MCP JSON-RPC endpoint |
+| `/mcp` | POST | MCP JSON-RPC requests |
+| `/mcp` | GET | SSE streaming (server-initiated messages) |
+| `/mcp` | DELETE | Session termination |
 
 ## Connecting to Claude.ai
 
@@ -45,7 +45,7 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BASELINE_URL` | GitHub raw content URL for baseline | `https://raw.githubusercontent.com/klappy/klappy.dev/main` |
-| `ODDKIT_VERSION` | Version string | `0.10.0` |
+| `ODDKIT_VERSION` | Version string | `0.10.1` |
 
 ## Optional: KV Caching
 
@@ -66,14 +66,23 @@ To enable baseline index caching:
 ## Local Development
 
 ```bash
+cd workers
+npm install
 npm run dev
 ```
 
 Then test with:
 ```bash
+# Test tool list
 curl -X POST http://localhost:8787/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# Test initialize (returns Mcp-Session-Id header)
+curl -X POST http://localhost:8787/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}' -i
 ```
 
 ## Architecture

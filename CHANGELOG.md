@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-02-02
+
+### Fixed
+
+- **MCP Streamable HTTP transport hang** — Claude Code's MCP client was hanging with AbortError when calling tools:
+  - Added `Mcp-Session-Id` header on initialize response (required by MCP 2025-03-26 spec)
+  - Added GET request support for SSE streaming connections
+  - Added DELETE request support for session termination
+  - Updated protocol version from 2024-11-05 to 2025-03-26
+  - Updated CORS headers to include MCP-specific headers (Accept, Mcp-Session-Id, Last-Event-ID)
+
+### Changed
+
+- **Production tests** — Updated to test protocol version 2025-03-26 and new transport features
+- **Deployment** — Worker deploys automatically via GitHub webhook on push to main (no manual `npm run deploy` needed)
+
 ## [0.10.0] - 2026-02-02
 
 ### Added

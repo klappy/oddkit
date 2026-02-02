@@ -107,8 +107,38 @@ echo ""
 
 # Test 4: Initialize
 echo "Test 4: MCP initialize"
-RESULT=$(mcp_call "initialize" '{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}')
-check_json "MCP initialize" "$RESULT" "assert d.get('result',{}).get('protocolVersion') == '2024-11-05', 'wrong protocol'"
+RESULT=$(mcp_call "initialize" '{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}')
+check_json "MCP initialize" "$RESULT" "assert d.get('result',{}).get('protocolVersion') == '2025-03-26', 'wrong protocol'"
+
+# Test 4b: Initialize returns Mcp-Session-Id header
+echo ""
+echo "Test 4b: MCP initialize returns Mcp-Session-Id header"
+SESSION_HEADER=$(curl -sf "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -D - \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' 2>&1 | grep -i "mcp-session-id" || true)
+if [ -n "$SESSION_HEADER" ]; then
+  echo "PASS - Mcp-Session-Id header present: $SESSION_HEADER"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - Mcp-Session-Id header missing"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 4c: GET /mcp with SSE Accept header returns stream
+echo ""
+echo "Test 4c: GET /mcp with SSE Accept returns text/event-stream"
+CONTENT_TYPE=$(curl -sf "$WORKER_URL/mcp" -X GET \
+  -H "Accept: text/event-stream" \
+  -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
+if echo "$CONTENT_TYPE" | grep -qi "text/event-stream"; then
+  echo "PASS - GET returns text/event-stream: $CONTENT_TYPE"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - GET did not return text/event-stream: $CONTENT_TYPE"
+  FAILED=$((FAILED + 1))
+fi
 
 # Test 5: tools/list
 echo ""

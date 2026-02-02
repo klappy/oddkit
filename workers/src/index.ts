@@ -258,20 +258,51 @@ async function fetchPromptContent(baselineUrl: string, path: string): Promise<st
   }
 }
 
+// Protocol version - using 2025-03-26 for Streamable HTTP transport
+const PROTOCOL_VERSION = "2025-03-26";
+
 // Server info
 function getServerInfo(version: string) {
   return {
     name: "oddkit",
     version,
-    protocolVersion: "2024-11-05",
+    protocolVersion: PROTOCOL_VERSION,
   };
+}
+
+// Generate a unique session ID
+function generateSessionId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `oddkit-${timestamp}-${random}`;
+}
+
+// Format a JSON-RPC response as an SSE event
+function formatSseEvent(data: unknown, eventId?: string): string {
+  const lines: string[] = [];
+  if (eventId) {
+    lines.push(`id: ${eventId}`);
+  }
+  lines.push(`data: ${JSON.stringify(data)}`);
+  lines.push(""); // Empty line to end the event
+  return lines.join("\n") + "\n";
+}
+
+// MCP request/response types with session tracking
+interface McpResponse {
+  jsonrpc: string;
+  id?: unknown;
+  result?: unknown;
+  error?: unknown;
+  _sessionId?: string; // Internal: session ID to return in header
 }
 
 // Handle MCP JSON-RPC requests
 async function handleMcpRequest(
   body: unknown,
-  env: Env
-): Promise<{ jsonrpc: string; id?: unknown; result?: unknown; error?: unknown }> {
+  env: Env,
+  sessionId?: string
+): Promise<McpResponse> {
   const request = body as {
     jsonrpc: string;
     id?: unknown;
@@ -283,12 +314,14 @@ async function handleMcpRequest(
 
   try {
     switch (method) {
-      case "initialize":
+      case "initialize": {
+        // Generate new session ID for this connection
+        const newSessionId = generateSessionId();
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: "2024-11-05",
+            protocolVersion: PROTOCOL_VERSION,
             serverInfo: getServerInfo(env.ODDKIT_VERSION),
             capabilities: {
               tools: {},
@@ -296,7 +329,9 @@ async function handleMcpRequest(
               prompts: {},
             },
           },
+          _sessionId: newSessionId,
         };
+      }
 
       case "tools/list":
         return {
@@ -510,12 +545,13 @@ async function handleMcpRequest(
   }
 }
 
-// CORS headers
+// CORS headers with MCP-specific headers
 function corsHeaders(origin: string = "*"): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, Last-Event-ID",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
 
@@ -554,8 +590,55 @@ export default {
       );
     }
 
-    // MCP endpoint - streamable HTTP
+    // MCP endpoint - streamable HTTP transport
     if (url.pathname === "/mcp") {
+      const acceptHeader = request.headers.get("Accept") || "";
+      const wantsSSE = acceptHeader.includes("text/event-stream");
+      const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
+
+      // Handle GET requests for SSE streaming (server-initiated messages)
+      if (request.method === "GET") {
+        if (!wantsSSE) {
+          return new Response("GET requires Accept: text/event-stream", {
+            status: 400,
+            headers: corsHeaders(origin),
+          });
+        }
+
+        // For now, return an SSE stream that stays open but sends no events
+        // This satisfies clients that open GET connections for server notifications
+        // In the future, this could be used for progress updates on long-running operations
+        const stream = new ReadableStream({
+          start(controller) {
+            // Send a comment to keep the connection alive
+            controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+          },
+          cancel() {
+            // Client closed the connection
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
+            ...corsHeaders(origin),
+          },
+        });
+      }
+
+      // Handle DELETE for session termination
+      if (request.method === "DELETE") {
+        // Session terminated - acknowledge it
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders(origin),
+        });
+      }
+
+      // POST requests for JSON-RPC
       if (request.method !== "POST") {
         return new Response("Method not allowed", {
           status: 405,
@@ -565,7 +648,11 @@ export default {
 
       try {
         const body = await request.json();
-        const response = await handleMcpRequest(body, env);
+        const response = await handleMcpRequest(body, env, sessionId);
+
+        // Extract session ID if set (for initialize response)
+        const responseSessionId = response._sessionId;
+        delete response._sessionId;
 
         // Don't return response for notifications
         if (!response.id && !response.error) {
@@ -575,11 +662,19 @@ export default {
           });
         }
 
+        // Build response headers
+        const responseHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          ...corsHeaders(origin),
+        };
+
+        // Include session ID in header if this was an initialize response
+        if (responseSessionId) {
+          responseHeaders["Mcp-Session-Id"] = responseSessionId;
+        }
+
         return new Response(JSON.stringify(response), {
-          headers: {
-            "Content-Type": "application/json",
-            ...corsHeaders(origin),
-          },
+          headers: responseHeaders,
         });
       } catch (err) {
         return new Response(
