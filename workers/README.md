@@ -37,7 +37,7 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 
 1. Go to Claude.ai Settings → Integrations → MCP
 2. Add new MCP server:
-   - URL: `https://oddkit-mcp.<your-subdomain>.workers.dev/mcp`
+   - URL: `https://oddkit.klappy.dev/mcp`
    - Name: `oddkit`
 
 ## Environment Variables
@@ -45,7 +45,7 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BASELINE_URL` | GitHub raw content URL for baseline | `https://raw.githubusercontent.com/klappy/klappy.dev/main` |
-| `ODDKIT_VERSION` | Version string | `0.9.1` |
+| `ODDKIT_VERSION` | Version string | `0.10.0` |
 
 ## Optional: KV Caching
 
