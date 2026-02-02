@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-02
+
+### Fixed
+
+- **CLI version now reads from package.json** — `oddkit --version` was hardcoded as 0.1.0, now correctly shows the actual version
+
 ## [0.9.0] - 2026-02-02
 
 ### Added
