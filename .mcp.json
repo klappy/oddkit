@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "oddkit": {
-      "command": "node",
-      "args": ["/home/user/oddkit/src/mcp/server.js"]
+      "url": "https://oddkit.klappy.dev/mcp"
     }
   }
 }
