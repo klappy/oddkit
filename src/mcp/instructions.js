@@ -25,33 +25,40 @@ export function getOddkitInstructions() {
   const instructions = `
 ODDKIT DECISION GATE
 
-MUST: Before editing files or implementing a spec, call oddkit_orchestrate with your implementation plan.
-Use the returned Start here / Constraints / DoD / Pitfalls to guide your work.
+You have access to oddkit_orchestrate for policy retrieval and completion validation.
 
-MUST: Before claiming done/fixed/shipped/merged, call oddkit_orchestrate with your completion claim + artifacts.
-If it returns NEEDS_ARTIFACTS, provide missing evidence before asserting completion.
+CRITICAL MOMENTS (MUST call oddkit):
 
-Call oddkit_orchestrate when:
-- Policy/canon questions ("what's the rule?", "is this allowed?")
-- Contradictions or low confidence
-- Discoverability ("what's in ODD?", "list canon", "what should I read?")
-- Orientation (pass action="orient" explicitly to render epistemic terrain)
+1. BEFORE IMPLEMENTING: Call oddkit_orchestrate({ message: "preflight: <plan>", repo_root: "." })
+   → Returns: Start here / Constraints / DoD / Pitfalls
 
-Action parameter:
-- Pass action="orient" to explicitly request orientation (oddkit does NOT infer this from message)
-- Pass action="preflight|catalog|librarian|validate|explain" to force a specific action
-- Without action, oddkit detects from message content (but never detects ORIENT)
+2. BEFORE CLAIMING DONE: Call oddkit_orchestrate({ message: "done: <claim> [artifacts]", repo_root: "." })
+   → If NEEDS_ARTIFACTS: provide missing evidence before asserting completion
 
-Epistemic context (optional):
-- Pass epistemic.mode_ref (canon URI) and epistemic.confidence when known
-- Example: { "mode_ref": "klappy://canon/epistemic-modes#exploration", "confidence": "low" }
-- Upstream agents (Epistemic Guide) determine mode; oddkit just adapts to it
+CALL oddkit_orchestrate WHEN:
+- Policy questions ("what's the rule?", "is this allowed?")
+- Low confidence or contradictions
+- Discoverability ("what's in ODD?", "list canon")
+- Orientation (pass action="orient" explicitly)
 
-Do not pre-inject large documents. Call oddkit_orchestrate with repo_root to retrieve and quote minimal excerpts.
+RESPONSE HANDLING:
+- Use the "assistant_text" field directly - it's a complete answer with citations
+- Don't add extra narration - print assistant_text verbatim
+
+ACTION PARAMETER (optional):
+- Without action: oddkit detects intent from message
+- Explicit: action="preflight|catalog|librarian|validate|explain|orient"
+
+FOR SPAWNED AGENTS:
+- You inherit oddkit access from parent context
+- Read oddkit://quickstart resource for usage patterns
+- Always pass repo_root when calling tools
+
+NEVER pre-inject large documents. Retrieve on-demand via oddkit_orchestrate.
 `.trim();
 
   if (process.env.ODDKIT_DEBUG_MCP) {
-    console.error(`oddkit: served instructions tag=ODDKIT_GATE_v0.5.0 len=${instructions.length}`);
+    console.error(`oddkit: served instructions tag=ODDKIT_GATE_v0.6.0 len=${instructions.length}`);
   }
 
   return instructions;
