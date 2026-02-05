@@ -74,16 +74,22 @@ check_json() {
 echo "--- Health & Connectivity ---"
 echo ""
 
-# Test 1: Health endpoint returns ok
-echo "Test 1: Health endpoint (GET /)"
-RESULT=$(curl -sf "$WORKER_URL/" 2>&1) || { echo "FAIL - Health endpoint unreachable"; exit 1; }
-check_json "Health endpoint" "$RESULT" "assert d.get('ok') == True, 'ok not true'"
+# Test 1: Root serves chat UI (HTML)
+echo "Test 1: Chat UI (GET /)"
+CONTENT_TYPE_ROOT=$(curl -sf "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
+if echo "$CONTENT_TYPE_ROOT" | grep -qi "text/html"; then
+  echo "PASS - Root returns text/html"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - Root did not return text/html: $CONTENT_TYPE_ROOT"
+  FAILED=$((FAILED + 1))
+fi
 
-# Test 2: /health alias
+# Test 2: /health returns JSON
 echo ""
-echo "Test 2: Health alias (GET /health)"
+echo "Test 2: Health endpoint (GET /health)"
 RESULT=$(curl -sf "$WORKER_URL/health" 2>&1) || { echo "FAIL - /health unreachable"; exit 1; }
-check_json "Health alias" "$RESULT" "assert d.get('service') == 'oddkit-mcp', 'wrong service'"
+check_json "Health endpoint" "$RESULT" "assert d.get('service') == 'oddkit', 'wrong service'"
 
 # Test 3: Version present
 echo ""

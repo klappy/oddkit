@@ -8,6 +8,8 @@
  */
 
 import { runOrchestrate, type OrchestrateResult, type Env } from "./orchestrate";
+import { renderChatPage } from "./chat-ui";
+import { handleChatRequest } from "./chat-api";
 
 export type { Env };
 
@@ -621,18 +623,36 @@ export default {
       return new Response(null, { headers: corsHeaders(origin) });
     }
 
+    // Chat UI at root
+    if (url.pathname === "/" && request.method === "GET") {
+      return new Response(renderChatPage(), {
+        headers: {
+          "Content-Type": "text/html;charset=utf-8",
+          "Cache-Control": "no-cache",
+          ...corsHeaders(origin),
+        },
+      });
+    }
+
+    // Chat API endpoint
+    if (url.pathname === "/api/chat" && request.method === "POST") {
+      return handleChatRequest(request, env);
+    }
+
     // Health check
-    if (url.pathname === "/" || url.pathname === "/health") {
+    if (url.pathname === "/health") {
       return new Response(
         JSON.stringify({
           ok: true,
-          service: "oddkit-mcp",
+          service: "oddkit",
           version: env.ODDKIT_VERSION,
           endpoints: {
+            chat: "/",
+            api: "/api/chat",
             mcp: "/mcp",
             health: "/health",
           },
-          capabilities: ["tools", "resources", "prompts"],
+          capabilities: ["chat", "tools", "resources", "prompts"],
         }),
         {
           headers: {

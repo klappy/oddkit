@@ -15,6 +15,7 @@ export interface Env {
   ODDKIT_VERSION: string;
   BASELINE_CACHE?: KVNamespace;
   BASELINE?: R2Bucket;
+  OPENAI_API_KEY?: string;
 }
 
 export interface IndexEntry {
