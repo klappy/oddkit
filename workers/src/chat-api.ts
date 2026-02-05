@@ -9,7 +9,7 @@
 import { runOrchestrate, type Env } from "./orchestrate";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const MODEL = "o4-mini";
+const MODEL = "gpt-5.2-mini";
 
 const SYSTEM_PROMPT = `You are the oddkit guide — a refined, helpful assistant whose purpose is to help people quickly understand and start using oddkit.
 
