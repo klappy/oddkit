@@ -7,13 +7,9 @@
  * Uses streamable-http transport for MCP communication.
  */
 
-import { runOrchestrate, type OrchestrateResult } from "./orchestrate";
+import { runOrchestrate, type OrchestrateResult, type Env } from "./orchestrate";
 
-export interface Env {
-  BASELINE_URL: string;
-  ODDKIT_VERSION: string;
-  BASELINE_CACHE?: KVNamespace;
-}
+export type { Env };
 
 // Tool definitions
 const TOOLS = [
@@ -38,6 +34,10 @@ Use when:
           enum: ["orient", "catalog", "preflight", "librarian", "validate", "explain"],
           description: "Explicit action override (optional, auto-detected from message)",
         },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override (e.g., https://github.com/org/repo). Canon docs override klappy.dev baseline.",
+        },
       },
     },
   },
@@ -48,6 +48,10 @@ Use when:
       type: "object" as const,
       properties: {
         query: { type: "string", description: "The policy question to answer" },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override",
+        },
       },
       required: ["query"],
     },
@@ -61,6 +65,32 @@ Use when:
         message: { type: "string", description: "The completion claim with artifact references" },
       },
       required: ["message"],
+    },
+  },
+  {
+    name: "oddkit_catalog",
+    description: "Lists available documentation with categories and counts.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override",
+        },
+      },
+    },
+  },
+  {
+    name: "oddkit_invalidate_cache",
+    description: "Force refresh of cached baseline/canon data.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL to invalidate cache for",
+        },
+      },
     },
   },
 ];
@@ -465,14 +495,15 @@ protocolVersion: PROTOCOL_VERSION,
         };
 
         let result: OrchestrateResult;
+        const canonUrl = args?.canon_url as string | undefined;
 
         switch (name) {
           case "oddkit_orchestrate":
             result = await runOrchestrate({
               message: (args?.message as string) || "",
               action: args?.action as string | undefined,
-              baselineUrl: env.BASELINE_URL,
-              cache: env.BASELINE_CACHE,
+              env,
+              canonUrl,
             });
             break;
 
@@ -480,8 +511,8 @@ protocolVersion: PROTOCOL_VERSION,
             result = await runOrchestrate({
               message: (args?.query as string) || "",
               action: "librarian",
-              baselineUrl: env.BASELINE_URL,
-              cache: env.BASELINE_CACHE,
+              env,
+              canonUrl,
             });
             break;
 
@@ -489,10 +520,32 @@ protocolVersion: PROTOCOL_VERSION,
             result = await runOrchestrate({
               message: (args?.message as string) || "",
               action: "validate",
-              baselineUrl: env.BASELINE_URL,
-              cache: env.BASELINE_CACHE,
+              env,
+              canonUrl,
             });
             break;
+
+          case "oddkit_catalog":
+            result = await runOrchestrate({
+              message: "what's in odd",
+              action: "catalog",
+              env,
+              canonUrl,
+            });
+            break;
+
+          case "oddkit_invalidate_cache": {
+            // Import the fetcher to invalidate cache
+            const { ZipBaselineFetcher } = await import("./zip-baseline-fetcher");
+            const fetcher = new ZipBaselineFetcher(env);
+            await fetcher.invalidateCache(canonUrl);
+            result = {
+              action: "invalidate_cache",
+              result: { success: true, canon_url: canonUrl },
+              assistant_text: `Cache invalidated${canonUrl ? ` for ${canonUrl}` : ""}. Next request will fetch fresh data.`,
+            };
+            break;
+          }
 
           default:
             return {

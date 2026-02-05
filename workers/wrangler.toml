@@ -15,13 +15,20 @@ ODDKIT_VERSION = "0.10.0"
 # OAUTH_CLIENT_ID = ""
 # OAUTH_CLIENT_SECRET = ""
 
+# KV for caching baseline index
+[[kv_namespaces]]
+binding = "BASELINE_CACHE"
+id = "oddkit-baseline-cache"
+preview_id = "oddkit-baseline-cache-preview"
+
+# R2 for storing ZIP files and extracted content
+[[r2_buckets]]
+binding = "BASELINE_R2"
+bucket_name = "oddkit-baseline"
+preview_bucket_name = "oddkit-baseline-preview"
+
 # Optional: Durable Objects for session state
 # [durable_objects]
 # bindings = [
 #   { name = "SESSIONS", class_name = "SessionState" }
 # ]
-
-# Optional: KV for caching baseline index
-# [[kv_namespaces]]
-# binding = "BASELINE_CACHE"
-# id = "your-kv-namespace-id"

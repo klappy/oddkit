@@ -9,6 +9,9 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250124.0",
     "typescript": "^5.7.0",
