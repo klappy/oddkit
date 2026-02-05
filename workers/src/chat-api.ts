@@ -104,7 +104,14 @@ export async function handleChatRequest(
     );
   }
 
-  const userMessages = body.messages || [];
+  if (!body || !Array.isArray(body.messages)) {
+    return new Response(
+      JSON.stringify({ error: "messages must be an array" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const userMessages = body.messages;
   const lastUserMsg = [...userMessages].reverse().find((m) => m.role === "user");
 
   // Always enrich with oddkit context — this assistant dogfoods oddkit
@@ -140,9 +147,9 @@ export async function handleChatRequest(
   });
 
   if (!openaiRes.ok) {
-    const errBody = await openaiRes.text();
+    const detail = await openaiRes.text().catch(() => "");
     return new Response(
-      JSON.stringify({ error: "OpenAI API error", status: openaiRes.status }),
+      JSON.stringify({ error: "OpenAI API error", status: openaiRes.status, detail }),
       { status: openaiRes.status, headers: { "Content-Type": "application/json" } }
     );
   }

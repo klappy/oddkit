@@ -350,11 +350,13 @@ export function renderChatPage(): string {
 
   /* ── Minimal markdown → HTML ─────────────────── */
   function md(text){
-    // Escape HTML
+    // Escape HTML (including quotes to prevent attribute breakout)
     let s = text
       .replace(/&/g,"&amp;")
       .replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;");
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#39;");
 
     // Code blocks
     s = s.replace(/\`\`\`(\\w*)\n([\\s\\S]*?)\`\`\`/g, function(_,lang,code){
