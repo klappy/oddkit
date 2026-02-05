@@ -111,7 +111,10 @@ export async function handleChatRequest(
     );
   }
 
-  const userMessages = body.messages;
+  // Only allow user and assistant roles — drop any client-injected system messages
+  const userMessages = body.messages.filter(
+    (m) => m.role === "user" || m.role === "assistant"
+  );
   const lastUserMsg = [...userMessages].reverse().find((m) => m.role === "user");
 
   // Always enrich with oddkit context — this assistant dogfoods oddkit

@@ -387,8 +387,11 @@ export function renderChatPage(): string {
     s = s.replace(/^[\\-\\*] (.+)$/gm, "<li>$1</li>");
     s = s.replace(/((?:<li>.*<\\/li>\\n?)+)/g, "<ul>$1</ul>");
 
-    // Links
-    s = s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Links (only allow http/https schemes)
+    s = s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function(_,label,url){
+      if(/^https?:\\/\\//i.test(url)) return '<a href="'+url+'" target="_blank" rel="noopener">'+label+'</a>';
+      return label;
+    });
 
     // Paragraphs
     s = s.replace(/\\n{2,}/g, "</p><p>");
@@ -506,7 +509,11 @@ export function renderChatPage(): string {
     msgs.querySelectorAll(".msg").forEach(function(el){
       if(el.id === "typing-msg") return;
       const role = el.classList.contains("user") ? "user" : "assistant";
-      const text = el.querySelector(".bubble").textContent || "";
+      // Replace <br> with newlines before extracting text so multi-line messages survive
+      var bubble = el.querySelector(".bubble");
+      var clone = bubble.cloneNode(true);
+      clone.querySelectorAll("br").forEach(function(br){ br.replaceWith("\\n"); });
+      var text = clone.textContent || "";
       if(text.trim()) history.push({role: role, content: text.trim()});
     });
     return history;
