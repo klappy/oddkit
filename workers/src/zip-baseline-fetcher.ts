@@ -40,6 +40,15 @@ export interface BaselineIndex {
     canon: number;
     baseline: number;
   };
+  commit_sha?: string;
+  canon_commit_sha?: string;
+}
+
+export interface ChangeCheckResult {
+  changed: boolean;
+  current_sha?: string;
+  cached_sha?: string;
+  error?: string;
 }
 
 interface FrontmatterResult {
@@ -154,12 +163,137 @@ function getCacheKey(url: string): string {
     .slice(0, 100);
 }
 
+/**
+ * Extract owner/repo from GitHub URL
+ * e.g., "https://github.com/klappy/klappy.dev" -> { owner: "klappy", repo: "klappy.dev" }
+ */
+function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
+  const cleanUrl = url
+    .replace(/\.git$/, "")
+    .replace(/\/$/, "");
+
+  // Handle raw.githubusercontent.com URLs
+  if (cleanUrl.includes("raw.githubusercontent.com")) {
+    const match = cleanUrl.match(/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)/);
+    if (match) {
+      return { owner: match[1], repo: match[2] };
+    }
+  }
+
+  // Handle github.com URLs
+  const match = cleanUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+
+  return null;
+}
+
 export class ZipBaselineFetcher {
   private env: Env;
   private zipCache: Map<string, Uint8Array> = new Map();
+  private commitCache: Map<string, string> = new Map();
 
   constructor(env: Env) {
     this.env = env;
+  }
+
+  /**
+   * Get latest commit SHA from GitHub API (lightweight ~100 bytes)
+   * Uses Accept header to get just the SHA, not full commit object
+   */
+  private async getLatestCommitSha(
+    repoUrl: string,
+    ref: string = "main"
+  ): Promise<string | null> {
+    const parsed = parseGitHubUrl(repoUrl);
+    if (!parsed) {
+      console.warn(`Cannot parse GitHub URL: ${repoUrl}`);
+      return null;
+    }
+
+    const { owner, repo } = parsed;
+    const cacheKey = `${owner}/${repo}/${ref}`;
+
+    // Check memory cache (very short-lived, per-request dedup)
+    if (this.commitCache.has(cacheKey)) {
+      return this.commitCache.get(cacheKey)!;
+    }
+
+    try {
+      // Use GitHub API with Accept header for just SHA (minimal response)
+      const response = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits/${ref}`,
+        {
+          headers: {
+            "User-Agent": "oddkit-mcp",
+            Accept: "application/vnd.github.v3.sha",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        console.warn(`GitHub API error: ${response.status} for ${owner}/${repo}`);
+        return null;
+      }
+
+      const sha = await response.text();
+      this.commitCache.set(cacheKey, sha);
+      return sha;
+    } catch (error) {
+      console.error(`Error fetching commit SHA: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Check if a repo has changed since last cache
+   * Returns { changed, current_sha, cached_sha } for observability
+   */
+  async checkForChanges(
+    repoUrl: string,
+    ref: string = "main"
+  ): Promise<ChangeCheckResult> {
+    const parsed = parseGitHubUrl(repoUrl);
+    if (!parsed) {
+      return { changed: true, error: "Cannot parse repo URL" };
+    }
+
+    // Get current SHA from GitHub API
+    const currentSha = await this.getLatestCommitSha(repoUrl, ref);
+    if (!currentSha) {
+      // Can't check, assume changed to be safe
+      return { changed: true, error: "Could not fetch current commit SHA" };
+    }
+
+    // Get cached SHA from KV
+    const cacheKey = `sha/${getCacheKey(repoUrl)}`;
+    let cachedSha: string | null = null;
+
+    if (this.env.BASELINE_CACHE) {
+      cachedSha = await this.env.BASELINE_CACHE.get(cacheKey);
+    }
+
+    if (!cachedSha) {
+      // No cached SHA, first time or expired
+      return { changed: true, current_sha: currentSha };
+    }
+
+    const changed = currentSha !== cachedSha;
+    return { changed, current_sha: currentSha, cached_sha: cachedSha };
+  }
+
+  /**
+   * Store commit SHA in cache
+   */
+  private async cacheCommitSha(repoUrl: string, sha: string): Promise<void> {
+    const cacheKey = `sha/${getCacheKey(repoUrl)}`;
+    if (this.env.BASELINE_CACHE) {
+      // Cache SHA for longer than index (1 hour) since it's cheap to check
+      await this.env.BASELINE_CACHE.put(cacheKey, sha, {
+        expirationTtl: 3600,
+      });
+    }
   }
 
   /**
@@ -316,26 +450,48 @@ export class ZipBaselineFetcher {
 
   /**
    * Get or build the combined index
+   * Uses efficient change detection: checks commit SHA before re-fetching
    */
   async getIndex(canonUrl?: string): Promise<BaselineIndex> {
     const cacheKey = `index/${getCacheKey(canonUrl || "default")}`;
+    const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
     // Check KV cache first
     if (this.env.BASELINE_CACHE) {
-      const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json");
+      const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
       if (cached) {
-        return cached as BaselineIndex;
+        // Cache hit - but check if source repos have changed
+        // This is lightweight (~200 bytes) compared to re-fetching ZIPs
+        const baselineCheck = await this.checkForChanges(baselineRepoUrl);
+        const canonCheck = canonUrl ? await this.checkForChanges(canonUrl) : { changed: false };
+
+        // Compare cached SHAs with current
+        const baselineUnchanged = !baselineCheck.changed ||
+          (baselineCheck.current_sha && cached.commit_sha === baselineCheck.current_sha);
+        const canonUnchanged = !canonCheck.changed ||
+          (canonCheck.current_sha && cached.canon_commit_sha === canonCheck.current_sha);
+
+        if (baselineUnchanged && canonUnchanged) {
+          // No changes detected - return cached index
+          return cached;
+        }
+        // Changes detected - fall through to rebuild
+        console.log(`Changes detected: baseline=${!baselineUnchanged}, canon=${!canonUnchanged}`);
       }
     }
 
     // Build index from repos
     const baselineUrl = this.env.BASELINE_URL;
 
+    // Get current commit SHAs for tracking
+    const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
+    const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
+
     // Always fetch baseline (klappy.dev)
     const baselineEntries = await this.buildIndexFromRepo(
       baselineUrl.includes("raw.githubusercontent.com")
         ? baselineUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
-        : "https://github.com/klappy/klappy.dev",
+        : baselineRepoUrl,
       "baseline"
     );
 
@@ -359,6 +515,8 @@ export class ZipBaselineFetcher {
         canon: canonEntries.length,
         baseline: baselineEntries.length,
       },
+      commit_sha: baselineSha || undefined,
+      canon_commit_sha: canonSha || undefined,
     };
 
     // Cache in KV
@@ -366,6 +524,14 @@ export class ZipBaselineFetcher {
       await this.env.BASELINE_CACHE.put(cacheKey, JSON.stringify(index), {
         expirationTtl: INDEX_TTL,
       });
+    }
+
+    // Cache commit SHAs for future change checks
+    if (baselineSha) {
+      await this.cacheCommitSha(baselineRepoUrl, baselineSha);
+    }
+    if (canonUrl && canonSha) {
+      await this.cacheCommitSha(canonUrl, canonSha);
     }
 
     return index;
