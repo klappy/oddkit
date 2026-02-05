@@ -14,7 +14,7 @@ export interface Env {
   BASELINE_URL: string;
   ODDKIT_VERSION: string;
   BASELINE_CACHE?: KVNamespace;
-  BASELINE_R2?: R2Bucket;
+  BASELINE?: R2Bucket;
 }
 
 export interface IndexEntry {
@@ -174,8 +174,8 @@ export class ZipBaselineFetcher {
     }
 
     // Check R2 cache
-    if (this.env.BASELINE_R2) {
-      const r2Object = await this.env.BASELINE_R2.get(cacheKey);
+    if (this.env.BASELINE) {
+      const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
         const data = new Uint8Array(await r2Object.arrayBuffer());
         this.zipCache.set(cacheKey, data);
@@ -197,8 +197,8 @@ export class ZipBaselineFetcher {
       const data = new Uint8Array(await response.arrayBuffer());
 
       // Cache in R2
-      if (this.env.BASELINE_R2) {
-        await this.env.BASELINE_R2.put(cacheKey, data, {
+      if (this.env.BASELINE) {
+        await this.env.BASELINE.put(cacheKey, data, {
           httpMetadata: { contentType: "application/zip" },
           customMetadata: { fetchedAt: new Date().toISOString() },
         });
@@ -378,8 +378,8 @@ export class ZipBaselineFetcher {
     const cacheKey = `file/${getCacheKey(canonUrl || "baseline")}/${getCacheKey(path)}`;
 
     // Check R2 cache
-    if (this.env.BASELINE_R2) {
-      const r2Object = await this.env.BASELINE_R2.get(cacheKey);
+    if (this.env.BASELINE) {
+      const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
         return await r2Object.text();
       }
@@ -412,8 +412,8 @@ export class ZipBaselineFetcher {
             const content = new TextDecoder().decode(fileData);
 
             // Cache in R2
-            if (this.env.BASELINE_R2) {
-              await this.env.BASELINE_R2.put(cacheKey, content, {
+            if (this.env.BASELINE) {
+              await this.env.BASELINE.put(cacheKey, content, {
                 httpMetadata: { contentType: "text/markdown" },
                 customMetadata: { fetchedAt: new Date().toISOString() },
               });

@@ -18,14 +18,12 @@ ODDKIT_VERSION = "0.11.0"
 # KV for caching baseline index
 [[kv_namespaces]]
 binding = "BASELINE_CACHE"
-id = "oddkit-baseline-cache"
-preview_id = "oddkit-baseline-cache-preview"
+id = "6baa38d843404fc9b703f3c9053d8c52"
 
 # R2 for storing ZIP files and extracted content
 [[r2_buckets]]
-binding = "BASELINE_R2"
+binding = "BASELINE"
 bucket_name = "oddkit-baseline"
-preview_bucket_name = "oddkit-baseline-preview"
 
 # Optional: Durable Objects for session state
 # [durable_objects]
