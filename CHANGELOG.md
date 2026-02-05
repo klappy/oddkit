@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Efficient change detection** — Check if canon repos have changed without downloading content:
+  - **CLI**: `checkRemoteForChanges()` uses `git ls-remote` to fetch only refs (~100 bytes)
+  - **Worker**: `checkForChanges()` uses GitHub API with SHA-only Accept header
+  - **Helper module**: `src/baseline/checkForChanges.js` provides `checkBaselineForChanges()`
+  - `ensureBaselineRepo()` now supports `checkOnly` and `skipFetchIfUnchanged` options
+  - Returns `changed`, `currentSha`, `cachedSha` for observability
+  - Worker caches commit SHA in KV and compares before re-fetching ZIPs
+  - Dramatically reduces bandwidth when source repos haven't changed
+
 ## [0.11.0] - 2026-02-05
 
 ### Added

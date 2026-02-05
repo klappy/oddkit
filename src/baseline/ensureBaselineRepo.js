@@ -7,6 +7,44 @@ const DEFAULT_BASELINE_URL = "https://github.com/klappy/klappy.dev.git";
 const DEFAULT_REF = "main";
 
 /**
+ * Check for changes in remote repo without fetching content.
+ * Uses `git ls-remote` which only fetches refs (~100 bytes).
+ *
+ * @param {string} repoUrl - Git repository URL
+ * @param {string} ref - Branch/tag to check (default: "main")
+ * @param {string|null} cachedSha - Previously cached commit SHA
+ * @returns {{ changed: boolean, currentSha: string|null, cachedSha: string|null, error: string|null }}
+ */
+export function checkRemoteForChanges(repoUrl, ref = "main", cachedSha = null) {
+  try {
+    // git ls-remote is lightweight - only fetches refs, not objects
+    const output = execSync(`git ls-remote ${repoUrl} refs/heads/${ref}`, {
+      stdio: "pipe",
+      timeout: 10000, // 10 second timeout
+    })
+      .toString()
+      .trim();
+
+    // Output format: "<sha>\trefs/heads/<ref>"
+    const currentSha = output.split("\t")[0];
+
+    if (!currentSha) {
+      return { changed: true, currentSha: null, cachedSha, error: "Could not parse remote SHA" };
+    }
+
+    if (!cachedSha) {
+      // No cached SHA to compare against
+      return { changed: true, currentSha, cachedSha: null, error: null };
+    }
+
+    const changed = currentSha !== cachedSha;
+    return { changed, currentSha, cachedSha, error: null };
+  } catch (err) {
+    return { changed: true, currentSha: null, cachedSha, error: err.message };
+  }
+}
+
+/**
  * Check if a string looks like a git URL
  */
 function isGitUrl(str) {
@@ -78,9 +116,14 @@ export function getCacheDir(baselineUrl, ref) {
  *   2. ODDKIT_BASELINE environment variable
  *   3. Default: https://github.com/klappy/klappy.dev.git
  *
- * Returns { root, ref, source, baselineUrl, commitSha } or { root: null, error }
+ * Options:
+ *   - checkOnly: If true, only check for changes without fetching (returns changed: boolean)
+ *   - skipFetchIfUnchanged: If true, skip fetch if remote hasn't changed
+ *
+ * Returns { root, ref, source, baselineUrl, commitSha, changed, skippedFetch } or { root: null, error }
  */
-export async function ensureBaselineRepo(cliOverride = null) {
+export async function ensureBaselineRepo(cliOverride = null, options = {}) {
+  const { checkOnly = false, skipFetchIfUnchanged = false } = options;
   const { url: baselineUrl, source: baselineSource } = resolveBaselineSource(cliOverride);
   const ref = getBaselineRef();
   const refSource = process.env.ODDKIT_BASELINE_REF ? "environment" : "defaulted";
@@ -158,20 +201,62 @@ export async function ensureBaselineRepo(cliOverride = null) {
       mkdirSync(parentDir, { recursive: true });
     }
 
+    let skippedFetch = false;
+    let changed = null;
+
     if (existsSync(join(cacheDir, ".git"))) {
-      // Repo exists, fetch and checkout
+      // Repo exists - check if we should skip fetch
+      let cachedSha = null;
       try {
-        execSync(`git fetch origin`, { cwd: cacheDir, stdio: "pipe" });
-        execSync(`git checkout ${ref}`, { cwd: cacheDir, stdio: "pipe" });
-        // If ref is a branch, pull latest
-        if (ref === "main" || ref === "master") {
-          execSync(`git pull origin ${ref}`, { cwd: cacheDir, stdio: "pipe" });
-        }
+        cachedSha = execSync("git rev-parse HEAD", { cwd: cacheDir, stdio: "pipe" })
+          .toString()
+          .trim();
       } catch {
-        // Fetch failed, but we have a cached version - use it
+        // Couldn't get cached SHA
+      }
+
+      // Efficient change check using git ls-remote (only fetches refs, ~100 bytes)
+      if (checkOnly || skipFetchIfUnchanged) {
+        const changeCheck = checkRemoteForChanges(baselineUrl, ref, cachedSha);
+        changed = changeCheck.changed;
+
+        if (checkOnly) {
+          // Just return change status, don't fetch
+          return {
+            root: cacheDir,
+            ref,
+            refSource,
+            baselineUrl,
+            baselineSource,
+            commitSha: cachedSha,
+            changed,
+            remoteSha: changeCheck.currentSha,
+            error: changeCheck.error,
+          };
+        }
+
+        if (!changed && skipFetchIfUnchanged) {
+          // No changes detected, skip expensive fetch
+          skippedFetch = true;
+        }
+      }
+
+      if (!skippedFetch) {
+        // Fetch and checkout
+        try {
+          execSync(`git fetch origin`, { cwd: cacheDir, stdio: "pipe" });
+          execSync(`git checkout ${ref}`, { cwd: cacheDir, stdio: "pipe" });
+          // If ref is a branch, pull latest
+          if (ref === "main" || ref === "master") {
+            execSync(`git pull origin ${ref}`, { cwd: cacheDir, stdio: "pipe" });
+          }
+        } catch {
+          // Fetch failed, but we have a cached version - use it
+        }
       }
     } else {
       // Clone fresh
+      changed = true; // First clone is always a change
       execSync(`git clone --branch ${ref} --single-branch ${baselineUrl} ${cacheDir}`, {
         stdio: "pipe",
       });
@@ -194,6 +279,8 @@ export async function ensureBaselineRepo(cliOverride = null) {
       baselineUrl,
       baselineSource,
       commitSha,
+      changed,
+      skippedFetch,
       error: null,
     };
   } catch (err) {
