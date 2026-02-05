@@ -4,6 +4,8 @@
  * A designer-grade, label-free chat interface.
  * Deep charcoal + warm ivory + champagne gold palette.
  * Serif headings, clean sans-serif body, generous whitespace.
+ *
+ * Markdown rendering via marked + DOMPurify from CDN.
  */
 
 export function renderChatPage(): string {
@@ -316,97 +318,62 @@ export function renderChatPage(): string {
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"><\/script>
 <script>
 (function(){
-  const msgs   = document.getElementById("messages");
-  const empty   = document.getElementById("empty");
-  const input   = document.getElementById("input");
-  const send    = document.getElementById("send");
-  let busy = false;
+  var renderer = new marked.Renderer();
+  renderer.link = function(token) {
+    var href = (token && token.href) || "";
+    var text = (token && token.text) || href;
+    if (!/^https?:\\/\\//i.test(href)) return text;
+    return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
+  };
+  marked.setOptions({ renderer: renderer, breaks: true, gfm: true });
 
-  // Auto-resize textarea
-  input.addEventListener("input", function(){
+  function md(text) {
+    var raw = marked.parse(text || "");
+    return DOMPurify.sanitize(raw, { ADD_ATTR: ["target"] });
+  }
+
+  var msgs  = document.getElementById("messages");
+  var empty = document.getElementById("empty");
+  var input = document.getElementById("input");
+  var send  = document.getElementById("send");
+  var busy  = false;
+
+  input.addEventListener("input", function() {
     this.style.height = "auto";
     this.style.height = Math.min(this.scrollHeight, 160) + "px";
     send.disabled = !this.value.trim() || busy;
   });
 
-  input.addEventListener("keydown", function(e){
-    if(e.key === "Enter" && !e.shiftKey){
+  input.addEventListener("keydown", function(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if(!send.disabled) submit();
+      if (!send.disabled) doSubmit();
     }
   });
 
-  send.addEventListener("click", submit);
+  send.addEventListener("click", doSubmit);
 
-  function scrollBottom(){
-    msgs.scrollTo({top: msgs.scrollHeight, behavior: "smooth"});
+  function scrollBottom() {
+    msgs.scrollTo({ top: msgs.scrollHeight, behavior: "smooth" });
   }
 
-  function hideEmpty(){
-    if(empty) empty.style.opacity = "0";
+  function hideEmpty() {
+    if (empty) empty.style.opacity = "0";
   }
 
-  /* ── Minimal markdown → HTML ─────────────────── */
-  function md(text){
-    // Escape HTML (including quotes to prevent attribute breakout)
-    let s = text
-      .replace(/&/g,"&amp;")
-      .replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;")
-      .replace(/"/g,"&quot;")
-      .replace(/'/g,"&#39;");
-
-    // Code blocks
-    s = s.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, function(_,lang,code){
-      return "<pre><code>" + code.trim() + "</code></pre>";
-    });
-
-    // Inline code
-    s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
-
-    // Bold
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-    // Italic
-    s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-
-    // Headings
-    s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-    s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-    s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-
-    // Horizontal rules
-    s = s.replace(/^---$/gm, "<hr/>");
-
-    // Blockquotes
-    s = s.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
-
-    // Unordered lists
-    s = s.replace(/^[\\-\\*] (.+)$/gm, "<li>$1</li>");
-    s = s.replace(/((?:<li>.*<\\/li>\\n?)+)/g, "<ul>$1</ul>");
-
-    // Links (only allow http/https schemes)
-    s = s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function(_,label,url){
-      if(/^https?:\\/\\//i.test(url)) return '<a href="'+url+'" target="_blank" rel="noopener">'+label+'</a>';
-      return label;
-    });
-
-    // Paragraphs
-    s = s.replace(/\\n{2,}/g, "</p><p>");
-    s = "<p>" + s + "</p>";
-    s = s.replace(/<p><(h[1-3]|pre|ul|ol|blockquote|hr)/g, "<$1");
-    s = s.replace(/<\\/(h[1-3]|pre|ul|ol|blockquote)><\\/p>/g, "</$1>");
-    s = s.replace(/<hr\\/><\\/p>/g, "<hr/>");
-    s = s.replace(/<p><\\/p>/g, "");
-
-    return s;
+  function escapeHtml(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
   }
 
-  function addMsg(role, html){
+  function addMsg(role, html) {
     hideEmpty();
-    const el = document.createElement("div");
+    var el = document.createElement("div");
     el.className = "msg " + role;
     el.innerHTML = '<div class="bubble">' + html + '</div>';
     msgs.appendChild(el);
@@ -414,9 +381,9 @@ export function renderChatPage(): string {
     return el;
   }
 
-  function addTyping(){
+  function addTyping() {
     hideEmpty();
-    const el = document.createElement("div");
+    var el = document.createElement("div");
     el.className = "msg assistant";
     el.id = "typing-msg";
     el.innerHTML = '<div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>';
@@ -425,77 +392,73 @@ export function renderChatPage(): string {
     return el;
   }
 
-  async function submit(){
-    const text = input.value.trim();
-    if(!text || busy) return;
+  async function doSubmit() {
+    var text = input.value.trim();
+    if (!text || busy) return;
 
     busy = true;
     send.disabled = true;
+    var rawText = text;
     input.value = "";
     input.style.height = "auto";
 
-    addMsg("user", text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>"));
-    const typingEl = addTyping();
+    addMsg("user", escapeHtml(rawText).replace(/\\n/g, "<br>"));
+    var typingEl = addTyping();
 
-    try{
-      const res = await fetch("/api/chat", {
+    try {
+      var res = await fetch("/api/chat", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({
-          messages: collectHistory()
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: collectHistory() })
       });
 
-      if(!res.ok){
-        const errText = await res.text();
-        typingEl.querySelector(".bubble").innerHTML = '<p style="color:#a05050">Unable to respond. ' +
+      if (!res.ok) {
+        typingEl.querySelector(".bubble").innerHTML =
+          '<p style="color:#a05050">Unable to respond. ' +
           (res.status === 401 ? "API key not configured." : "Please try again.") + '</p>';
         busy = false;
         send.disabled = false;
         return;
       }
 
-      // Stream the response
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let full = "";
-      let buffer = "";
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var full = "";
+      var buffer = "";
       typingEl.querySelector(".bubble").innerHTML = "";
 
-      while(true){
-        const {done, value} = await reader.read();
-        if(done) break;
-        buffer += decoder.decode(value, {stream: true});
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
 
-        // Parse SSE lines
-        const lines = buffer.split("\\n");
+        var lines = buffer.split("\\n");
         buffer = lines.pop() || "";
 
-        for(const line of lines){
-          if(line.startsWith("data: ")){
-            const data = line.slice(6);
-            if(data === "[DONE]") break;
-            try{
-              const j = JSON.parse(data);
-              const delta = j.choices?.[0]?.delta?.content;
-              if(delta){
+        for (var i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("data: ")) {
+            var data = lines[i].slice(6);
+            if (data === "[DONE]") break;
+            try {
+              var j = JSON.parse(data);
+              var delta = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+              if (delta) {
                 full += delta;
                 typingEl.querySelector(".bubble").innerHTML = md(full);
                 scrollBottom();
               }
-            }catch(e){}
+            } catch(e) {}
           }
         }
       }
 
-      // Final render
-      if(full){
+      if (full) {
         typingEl.querySelector(".bubble").innerHTML = md(full);
       } else {
         typingEl.querySelector(".bubble").innerHTML = '<p style="color:var(--muted)">No response received.</p>';
       }
 
-    }catch(e){
+    } catch(e) {
       typingEl.querySelector(".bubble").innerHTML = '<p style="color:#a05050">Connection error. Please try again.</p>';
     }
 
@@ -504,22 +467,21 @@ export function renderChatPage(): string {
     scrollBottom();
   }
 
-  function collectHistory(){
-    const history = [];
-    msgs.querySelectorAll(".msg").forEach(function(el){
-      if(el.id === "typing-msg") return;
-      const role = el.classList.contains("user") ? "user" : "assistant";
-      // Replace <br> with newlines before extracting text so multi-line messages survive
+  function collectHistory() {
+    var history = [];
+    msgs.querySelectorAll(".msg").forEach(function(el) {
+      if (el.id === "typing-msg") return;
+      var role = el.classList.contains("user") ? "user" : "assistant";
       var bubble = el.querySelector(".bubble");
       var clone = bubble.cloneNode(true);
-      clone.querySelectorAll("br").forEach(function(br){ br.replaceWith("\\n"); });
+      clone.querySelectorAll("br").forEach(function(br) { br.replaceWith("\\n"); });
       var text = clone.textContent || "";
-      if(text.trim()) history.push({role: role, content: text.trim()});
+      if (text.trim()) history.push({ role: role, content: text.trim() });
     });
     return history;
   }
 })();
-</script>
+<\/script>
 </body>
 </html>`;
 }
