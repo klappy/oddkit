@@ -359,7 +359,7 @@ export function renderChatPage(): string {
       .replace(/'/g,"&#39;");
 
     // Code blocks
-    s = s.replace(/\`\`\`(\\w*)\n([\\s\\S]*?)\`\`\`/g, function(_,lang,code){
+    s = s.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, function(_,lang,code){
       return "<pre><code>" + code.trim() + "</code></pre>";
     });
 
