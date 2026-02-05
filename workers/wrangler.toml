@@ -9,7 +9,7 @@ compatibility_flags = ["nodejs_compat"]
 # Environment variables
 [vars]
 BASELINE_URL = "https://raw.githubusercontent.com/klappy/klappy.dev/main"
-ODDKIT_VERSION = "0.11.0"
+# ODDKIT_VERSION injected at deploy time from root package.json
 
 # OAuth configuration (set via wrangler secret)
 # OAUTH_CLIENT_ID = ""
