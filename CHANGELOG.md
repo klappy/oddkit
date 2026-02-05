@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-02-05
+
+### Added
+
+- **ZIP-based baseline fetching** — Remote MCP worker now fetches entire repos as ZIP files instead of expecting pre-built index:
+  - Fetches repo ZIP from GitHub (e.g., `https://github.com/klappy/klappy.dev/archive/main.zip`)
+  - Extracts markdown files lazily using `fflate` library
+  - Builds index dynamically from `canon/**/*.md`, `odd/**/*.md`, `docs/**/*.md`
+  - Parses YAML frontmatter for title, intent, authority_band, tags, uri
+
+- **Tiered caching architecture** — Inspired by translation-helps-mcp:
+  - **KV cache** — Index cached for 5 minutes
+  - **R2 bucket** — ZIP files and extracted documents cached for fast access
+  - **Memory cache** — In-flight request deduplication
+  - New bindings in `wrangler.toml`: `BASELINE_CACHE` (KV), `BASELINE_R2` (R2)
+
+- **Canon repo override** — Projects can override klappy.dev baseline with custom canon:
+  - New `canon_url` parameter on `oddkit_orchestrate`, `oddkit_librarian`, `oddkit_catalog`
+  - Canon docs override baseline docs with same path/uri
+  - Arbitration merges unique docs from both sources
+  - Example: `{ "message": "what's in ODD?", "canon_url": "https://github.com/myorg/mycanon" }`
+
+- **New MCP tools**:
+  - `oddkit_catalog` — Lists available documentation with counts by source (canon vs baseline)
+  - `oddkit_invalidate_cache` — Force refresh of cached baseline/canon data
+
+- **New file**: `workers/src/zip-baseline-fetcher.ts` — Tiered cache implementation with ZIP extraction
+
+### Fixed
+
+- **"0 documents" issue** — Remote MCP worker no longer requires pre-built `.oddkit/index.json` in baseline repo. Index is now built dynamically from repo content.
+
+### Changed
+
+- **orchestrate.ts rewritten** — Now uses `ZipBaselineFetcher` instead of raw GitHub fetch
+- **Scoring improved** — Entries scored by term matching with boosts for governing/promoted docs and canon source
+
 ## [0.10.1] - 2026-02-02
 
 ### Fixed

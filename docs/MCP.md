@@ -119,12 +119,39 @@ The agent now has a standing internal habit: consult oddkit at decision points â
 
 To expose all tools for debugging, set `ODDKIT_DEV_TOOLS=1` in your MCP server environment.
 
-| Tool                 | Description                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `oddkit_orchestrate` | **Recommended.** Smart router that auto-detects intent and returns ready-to-send `assistant_text` |
-| `oddkit_librarian`   | Ask a policy/lookup question against ODD-governed documentation (dev only)                        |
-| `oddkit_validate`    | Validate a completion claim with verdict and gaps (dev only)                                      |
-| `oddkit_explain`     | Explain the last oddkit result (dev only)                                                         |
+| Tool                       | Description                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `oddkit_orchestrate`       | **Recommended.** Smart router that auto-detects intent and returns ready-to-send `assistant_text` |
+| `oddkit_librarian`         | Ask a policy/lookup question against ODD-governed documentation (dev only)                        |
+| `oddkit_validate`          | Validate a completion claim with verdict and gaps (dev only)                                      |
+| `oddkit_catalog`           | List available documentation with counts by source (canon vs baseline)                            |
+| `oddkit_invalidate_cache`  | Force refresh of cached baseline/canon data (remote MCP only)                                     |
+| `oddkit_explain`           | Explain the last oddkit result (dev only)                                                         |
+
+## Canon Override (Remote MCP)
+
+When using the remote MCP worker (Claude.ai iOS/web), you can override the default klappy.dev baseline with your own canon repository:
+
+```json
+{
+  "name": "oddkit_orchestrate",
+  "arguments": {
+    "message": "What's in ODD?",
+    "canon_url": "https://github.com/myorg/mycanon"
+  }
+}
+```
+
+**How arbitration works:**
+- Documents from `canon_url` override klappy.dev baseline docs with the same path or URI
+- Unique documents from both sources are merged
+- Canon source is indicated in responses: `(canon)` vs `(baseline)`
+
+**Supported on these tools:**
+- `oddkit_orchestrate`
+- `oddkit_librarian`
+- `oddkit_catalog`
+- `oddkit_invalidate_cache`
 
 ## Recommended: Use `oddkit_orchestrate`
 
