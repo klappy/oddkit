@@ -413,9 +413,13 @@ export function renderChatPage(): string {
       });
 
       if (!res.ok) {
+        var errMsg = "Please try again.";
+        try {
+          var errBody = await res.json();
+          errMsg = errBody.detail || errBody.error || errMsg;
+        } catch(e) {}
         typingEl.querySelector(".bubble").innerHTML =
-          '<p style="color:#a05050">Unable to respond. ' +
-          (res.status === 401 ? "API key not configured." : "Please try again.") + '</p>';
+          '<p style="color:#a05050">' + escapeHtml(String(errMsg)) + '</p>';
         busy = false;
         send.disabled = false;
         return;
