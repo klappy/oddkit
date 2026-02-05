@@ -298,17 +298,19 @@ export class ZipBaselineFetcher {
 
   /**
    * Fetch and cache a ZIP file
+   * @param url - GitHub ZIP URL
+   * @param skipCache - If true, bypass R2 cache and fetch fresh (used when changes detected)
    */
-  private async fetchZip(url: string): Promise<Uint8Array | null> {
+  private async fetchZip(url: string, skipCache: boolean = false): Promise<Uint8Array | null> {
     const cacheKey = `zip/${getCacheKey(url)}`;
 
-    // Check memory cache first
-    if (this.zipCache.has(cacheKey)) {
+    // Check memory cache first (unless skipping cache)
+    if (!skipCache && this.zipCache.has(cacheKey)) {
       return this.zipCache.get(cacheKey)!;
     }
 
-    // Check R2 cache
-    if (this.env.BASELINE) {
+    // Check R2 cache (unless skipping cache)
+    if (!skipCache && this.env.BASELINE) {
       const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
         const data = new Uint8Array(await r2Object.arrayBuffer());
@@ -410,13 +412,15 @@ export class ZipBaselineFetcher {
 
   /**
    * Build index from a repo URL
+   * @param skipCache - If true, bypass ZIP cache and fetch fresh
    */
   private async buildIndexFromRepo(
     repoUrl: string,
-    source: "canon" | "baseline"
+    source: "canon" | "baseline",
+    skipCache: boolean = false
   ): Promise<IndexEntry[]> {
     const zipUrl = getZipUrl(repoUrl);
-    const zipData = await this.fetchZip(zipUrl);
+    const zipData = await this.fetchZip(zipUrl, skipCache);
 
     if (!zipData) {
       console.warn(`Could not fetch ZIP for ${repoUrl}`);
@@ -475,30 +479,33 @@ export class ZipBaselineFetcher {
           // No changes detected - return cached index
           return cached;
         }
-        // Changes detected - fall through to rebuild
+        // Changes detected - fall through to rebuild with fresh fetch
         console.log(`Changes detected: baseline=${!baselineUnchanged}, canon=${!canonUnchanged}`);
       }
     }
 
     // Build index from repos
+    // Skip cache when we detected changes to ensure fresh data
+    const skipCache = true; // Always fetch fresh when rebuilding index
     const baselineUrl = this.env.BASELINE_URL;
 
     // Get current commit SHAs for tracking
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
     const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
 
-    // Always fetch baseline (klappy.dev)
+    // Always fetch baseline (klappy.dev) - skip cache to get fresh ZIP
     const baselineEntries = await this.buildIndexFromRepo(
       baselineUrl.includes("raw.githubusercontent.com")
         ? baselineUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
         : baselineRepoUrl,
-      "baseline"
+      "baseline",
+      skipCache
     );
 
     // Fetch canon if provided
     let canonEntries: IndexEntry[] = [];
     if (canonUrl) {
-      canonEntries = await this.buildIndexFromRepo(canonUrl, "canon");
+      canonEntries = await this.buildIndexFromRepo(canonUrl, "canon", skipCache);
     }
 
     // Arbitrate - canon overrides baseline
@@ -601,15 +608,31 @@ export class ZipBaselineFetcher {
    */
   async invalidateCache(repoUrl?: string): Promise<void> {
     const key = getCacheKey(repoUrl || "default");
+    const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Clear KV cache
+    // Clear KV index cache
     if (this.env.BASELINE_CACHE) {
       await this.env.BASELINE_CACHE.delete(`index/${key}`);
+      // Also clear SHA caches to force re-check
+      await this.env.BASELINE_CACHE.delete(`sha/${getCacheKey(baselineRepoUrl)}`);
+      if (repoUrl) {
+        await this.env.BASELINE_CACHE.delete(`sha/${getCacheKey(repoUrl)}`);
+      }
+    }
+
+    // Clear R2 ZIP cache for baseline
+    if (this.env.BASELINE) {
+      const baselineZipKey = `zip/${getCacheKey(getZipUrl(baselineRepoUrl))}`;
+      await this.env.BASELINE.delete(baselineZipKey);
+      // Also clear canon ZIP if specified
+      if (repoUrl) {
+        const canonZipKey = `zip/${getCacheKey(getZipUrl(repoUrl))}`;
+        await this.env.BASELINE.delete(canonZipKey);
+      }
     }
 
     // Clear memory cache
     this.zipCache.clear();
-
-    // Note: R2 files have longer TTL and will expire naturally
+    this.commitCache.clear();
   }
 }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-02-05
+
 ### Added
 
 - **Efficient change detection** — Check if canon repos have changed without downloading content:
@@ -17,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Returns `changed`, `currentSha`, `cachedSha` for observability
   - Worker caches commit SHA in KV and compares before re-fetching ZIPs
   - Dramatically reduces bandwidth when source repos haven't changed
+
+- **Commit SHA tracking** — Index now includes `commit_sha` and `canon_commit_sha` for reproducibility and change detection
+
+### Fixed
+
+- **Cache invalidation now clears R2 ZIP cache** — Previously `invalidate_cache` only cleared the KV index (5 min TTL) but left the R2 ZIP cache (24 hour TTL) intact, causing stale data to be served. Now clears:
+  - KV index cache
+  - KV SHA caches (for change detection)
+  - R2 ZIP cache for baseline and canon repos
+  - Memory caches (ZIP and commit)
+
+- **Fresh fetch on index rebuild** — When rebuilding the index (cache miss or change detected), always fetch fresh ZIPs instead of using potentially stale R2 cache
 
 ## [0.11.0] - 2026-02-05
 
