@@ -1,11 +1,11 @@
 {
   "name": "oddkit-mcp-worker",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "ODDKIT_VERSION=$(node -p \"require('../package.json').version\") wrangler dev",
+    "deploy": "ODDKIT_VERSION=$(node -p \"require('../package.json').version\") wrangler deploy",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
