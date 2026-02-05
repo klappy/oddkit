@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "ODDKIT_VERSION=$(node -p \"require('../package.json').version\") wrangler dev",
-    "deploy": "ODDKIT_VERSION=$(node -p \"require('../package.json').version\") wrangler deploy",
+    "dev": "wrangler dev --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\")",
+    "deploy": "wrangler deploy --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\")",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
