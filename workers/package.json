@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\")",
-    "deploy": "wrangler deploy --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\")",
+    "dev": "wrangler dev --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\") --var OPENAI_API_KEY:${OPENAI_API_KEY:-notset}",
+    "deploy": "wrangler deploy --var ODDKIT_VERSION:$(node -p \"require('../package.json').version\") --var OPENAI_API_KEY:${OPENAI_API_KEY:?Set OPENAI_API_KEY env var before deploying}",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit"
   },
