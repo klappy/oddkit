@@ -367,10 +367,10 @@ export function renderChatPage(): string {
     s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
 
     // Bold
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
 
     // Italic
-    s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+    s = s.replace(/(?<!\\*)\\*([^*]+)\\*(?!\\*)/g, "<em>$1</em>");
 
     // Headings
     s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
