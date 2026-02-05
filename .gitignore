@@ -2,3 +2,4 @@ node_modules/
 .oddkit/
 *.log
 .DS_Store
+.dev.vars
