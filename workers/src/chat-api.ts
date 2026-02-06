@@ -2,8 +2,8 @@
  * Chat API handler
  *
  * Streams OpenAI responses back to the client via SSE.
- * Always enriches the system prompt with oddkit documentation context
- * from oddkit.klappy.dev — dogfooding the governance system itself.
+ * Uses function calling so the LLM decides when and what to query
+ * oddkit for, rather than blindly injecting context on every message.
  */
 
 import { runOrchestrate, type Env } from "./orchestrate";
@@ -13,14 +13,24 @@ const MODEL = "gpt-5-mini";
 
 const SYSTEM_PROMPT = `You are the oddkit guide — a refined, helpful assistant whose purpose is to help people quickly understand and start using oddkit.
 
-oddkit is an agent-first CLI and MCP server for ODD-governed repositories. Your knowledge about ODD, oddkit, and its concepts comes exclusively from the oddkit documentation context provided below — never invent or assume definitions. If no documentation context is available for a question, say so honestly rather than guessing.
+oddkit is an agent-first CLI and MCP server for ODD-governed repositories.
 
-Your primary goals:
-- Help users understand what oddkit is and why it matters
-- Show how to get started simply (CLI, MCP, or remote worker)
-- Explain the value: policy retrieval, completion validation, documentation discovery
-- Guide users to the right commands and workflows
-- Make governance feel approachable, not bureaucratic
+CONVERSATION RULES:
+- Answer ONLY the user's latest message. Do not re-answer or revisit questions from earlier in the conversation.
+- Treat each user message as the current focus. Prior messages are context, not questions to re-address.
+- Keep responses focused and scannable — avoid repeating information already covered.
+
+You have access to a "query_oddkit_docs" tool that searches the oddkit and ODD documentation. Use it when:
+- The user asks about a concept, definition, or policy you haven't already looked up in this conversation
+- You need to verify or cite specific documentation
+- The user asks about getting started, commands, or workflows
+
+Do NOT call the tool if:
+- You already looked up this information earlier in the conversation
+- The question is conversational and doesn't need documentation
+- The user is asking a follow-up about something you already answered
+
+When you use the tool, formulate a focused query for the specific concept needed — don't pass the user's raw message.
 
 Your communication style:
 - Warm but precise — like a knowledgeable concierge
@@ -41,7 +51,7 @@ Quick start paths:
 - MCP in Claude Code: \`npx oddkit init --claude\`
 - Remote: Connect to oddkit.klappy.dev as a remote MCP server
 
-IMPORTANT: Always ground your responses in the oddkit documentation context provided below. The context is retrieved live from the project's governing documentation. Never hardcode or assume definitions for terms like ODD, canon, baseline, or any other concept — use exactly what the documentation says, and cite the source.`;
+IMPORTANT: Ground your responses in documentation retrieved via the query_oddkit_docs tool. Never invent or assume definitions for terms like ODD, CST, canon, baseline, or any other concept — look them up first, then cite the source.`;
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -52,48 +62,143 @@ interface ChatRequest {
   messages: ChatMessage[];
 }
 
-/** Maximum time to wait for oddkit context before proceeding without it. */
-const CONTEXT_TIMEOUT_MS = 5000;
+/** Maximum time to wait for oddkit tool execution. */
+const ODDKIT_TIMEOUT_MS = 5000;
 
 /**
- * Fetch oddkit context for the user's latest message.
- * Always attempts retrieval — this assistant dogfoods oddkit.
- * Bounded by CONTEXT_TIMEOUT_MS to keep TTFT reasonable.
+ * Maximum number of history messages to send to OpenAI.
+ * Prevents context bloat from long conversations.
  */
-async function getOddkitContext(
-  message: string,
-  env: Env
-): Promise<string | null> {
+const MAX_HISTORY_MESSAGES = 20;
+
+/**
+ * Maximum character length for assistant messages in history.
+ * Even with function calling, the client sends full rendered text
+ * of prior assistant responses which can be very long. Truncating
+ * older responses prevents the model from losing focus.
+ */
+const MAX_ASSISTANT_MSG_LENGTH = 600;
+
+/** OpenAI tool definition for oddkit documentation lookup. */
+const ODDKIT_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "query_oddkit_docs",
+    description:
+      "Search oddkit and ODD documentation for definitions, concepts, how-to guides, constraints, and policy information. Formulate a focused search query for the specific concept or information you need.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string" as const,
+          description:
+            "A focused search query (e.g., 'cognitive saturation threshold definition' or 'how to validate completion claims').",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/**
+ * Trim conversation history to prevent context bloat.
+ *
+ * The chat UI sends the full text of every prior message. Assistant
+ * responses can be 1000-3000+ chars. After a few turns, accumulated
+ * history overwhelms the model, causing it to re-answer old questions
+ * or lose focus on the current one.
+ */
+function trimHistory(messages: ChatMessage[]): ChatMessage[] {
+  const capped = messages.slice(-MAX_HISTORY_MESSAGES);
+
+  return capped.map((m, i) => {
+    // Always keep the last message (latest user question) in full
+    if (i === capped.length - 1) return m;
+
+    // Truncate long assistant messages in history
+    if (m.role === "assistant" && m.content.length > MAX_ASSISTANT_MSG_LENGTH) {
+      return {
+        ...m,
+        content: m.content.slice(0, MAX_ASSISTANT_MSG_LENGTH) + "\n…",
+      };
+    }
+
+    return m;
+  });
+}
+
+/**
+ * Execute an oddkit documentation query with timeout.
+ */
+async function executeOddkitQuery(query: string, env: Env): Promise<string> {
   try {
     const result = await Promise.race([
-      runOrchestrate({ message, env }).catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), CONTEXT_TIMEOUT_MS)),
+      runOrchestrate({ message: query, env }).catch(() => null),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), ODDKIT_TIMEOUT_MS)
+      ),
     ]);
-
     if (result?.assistant_text && result.action !== "error") {
-      return `[oddkit ${result.action} context]\n${result.assistant_text}`;
+      return result.assistant_text;
     }
   } catch {
-    // Context enrichment is best-effort; don't block the response.
+    // Best-effort — return fallback below.
   }
-  return null;
+  return "No relevant documentation found for this query.";
+}
+
+/**
+ * Send an SSE error event to the client.
+ */
+async function writeSSEError(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  encoder: TextEncoder,
+  message: string,
+  extra?: Record<string, unknown>
+): Promise<void> {
+  await writer.write(
+    encoder.encode(
+      `data: ${JSON.stringify({ error: true, message, ...extra })}\n\n`
+    )
+  );
+}
+
+/**
+ * Pipe a ReadableStream directly to the SSE writer (raw byte passthrough).
+ */
+async function pipeStream(
+  body: ReadableStream<Uint8Array>,
+  writer: WritableStreamDefaultWriter<Uint8Array>
+): Promise<void> {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await writer.write(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /**
  * Handle POST /api/chat
  *
- * Accepts { messages: ChatMessage[] } and streams back SSE.
+ * Flow:
+ *  1. Send user messages + oddkit tool definition to OpenAI (streaming)
+ *  2. Parse the stream: if the model produces content, forward to client
+ *  3. If the model calls query_oddkit_docs, execute it, then make a
+ *     second OpenAI call with the tool result and stream that response
  *
- * Returns the SSE response immediately (reducing TTFT) and pipes
- * OpenAI tokens through asynchronously.  The oddkit context fetch
- * and OpenAI call happen inside the stream so the HTTP connection
- * is open before any slow network work begins.
+ * This lets the LLM decide when documentation context is needed
+ * and formulate focused queries, instead of blind injection.
  */
 export async function handleChatRequest(
   request: Request,
   env: Env
 ): Promise<Response> {
-  // --- Fast, synchronous validation (before opening the stream) ---
+  // --- Fast validation (before opening the stream) ---
 
   if (!env.OPENAI_API_KEY) {
     return new Response(
@@ -123,7 +228,6 @@ export async function handleChatRequest(
   const userMessages = body.messages.filter(
     (m) => m.role === "user" || m.role === "assistant"
   );
-  const lastUserMsg = [...userMessages].reverse().find((m) => m.role === "user");
 
   // --- Stream setup: return SSE headers immediately ---
 
@@ -132,25 +236,18 @@ export async function handleChatRequest(
   const encoder = new TextEncoder();
 
   // Async pipeline — runs after the Response is returned to the client.
-  // The worker stays alive as long as the writable side is open.
   const pipeline = (async () => {
     try {
-      // Enrich with oddkit context (bounded by CONTEXT_TIMEOUT_MS)
-      let system = SYSTEM_PROMPT;
-      if (lastUserMsg) {
-        const ctx = await getOddkitContext(lastUserMsg.content, env);
-        if (ctx) {
-          system += `\n\n---\n\n${ctx}`;
-        }
-      }
-
-      const openaiMessages: ChatMessage[] = [
-        { role: "system", content: system },
-        ...userMessages,
+      const trimmed = trimHistory(userMessages);
+      // Use a broad type since follow-up messages include tool_calls/tool roles
+      const baseMessages: Record<string, unknown>[] = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...trimmed,
       ];
 
-      // Call OpenAI with streaming
-      const openaiRes = await fetch(OPENAI_URL, {
+      // --- First OpenAI call: model decides whether to use the tool ---
+
+      const firstRes = await fetch(OPENAI_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -158,45 +255,168 @@ export async function handleChatRequest(
         },
         body: JSON.stringify({
           model: MODEL,
-          messages: openaiMessages,
+          messages: baseMessages,
+          tools: [ODDKIT_TOOL],
           stream: true,
           max_completion_tokens: 2048,
         }),
       });
 
-      if (!openaiRes.ok) {
-        const detail = await openaiRes.text().catch(() => "");
-        await writer.write(
-          encoder.encode(
-            `data: ${JSON.stringify({ error: true, message: "OpenAI API error", status: openaiRes.status, detail })}\n\n`
-          )
-        );
+      if (!firstRes.ok) {
+        const detail = await firstRes.text().catch(() => "");
+        await writeSSEError(writer, encoder, "OpenAI API error", {
+          status: firstRes.status,
+          detail,
+        });
         return;
       }
 
-      // Pipe OpenAI SSE stream through to the client
-      if (openaiRes.body) {
-        const reader = openaiRes.body.getReader();
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            await writer.write(value);
+      // Parse the SSE stream to detect content vs tool_calls
+      let hasContent = false;
+      let toolCallId = "";
+      let toolCallName = "";
+      let toolCallArgs = "";
+      let finishReason = "";
+
+      const reader = firstRes.body!.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") continue;
+
+          let chunk: Record<string, unknown>;
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            continue;
           }
-        } finally {
-          reader.releaseLock();
+
+          const choices = chunk.choices as
+            | Array<Record<string, unknown>>
+            | undefined;
+          const choice = choices?.[0];
+          if (!choice) continue;
+
+          if (choice.finish_reason)
+            finishReason = choice.finish_reason as string;
+
+          const delta = choice.delta as Record<string, unknown> | undefined;
+          if (!delta) continue;
+
+          // Content delta → forward to client immediately
+          if (delta.content) {
+            hasContent = true;
+            await writer.write(
+              encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`)
+            );
+          }
+
+          // Tool call delta → buffer (don't send to client)
+          if (delta.tool_calls) {
+            const tcs = delta.tool_calls as Array<Record<string, unknown>>;
+            for (const tc of tcs) {
+              if (tc.id) toolCallId = tc.id as string;
+              const fn = tc.function as
+                | Record<string, unknown>
+                | undefined;
+              if (fn?.name) toolCallName = fn.name as string;
+              if (fn?.arguments) toolCallArgs += fn.arguments as string;
+            }
+          }
         }
       }
+      reader.releaseLock();
+
+      // --- Handle the result ---
+
+      if (
+        finishReason === "tool_calls" &&
+        toolCallName === "query_oddkit_docs"
+      ) {
+        // Model wants to look up documentation — execute the tool
+        let query = "";
+        try {
+          query = (JSON.parse(toolCallArgs) as { query: string }).query || "";
+        } catch {
+          // Malformed args — proceed with empty query
+        }
+
+        const toolResult = await executeOddkitQuery(query, env);
+
+        // Second call: include the tool result so the model can answer
+        const followUpMessages: Record<string, unknown>[] = [
+          ...baseMessages,
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: toolCallId,
+                type: "function",
+                function: { name: toolCallName, arguments: toolCallArgs },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            tool_call_id: toolCallId,
+            content: toolResult,
+          },
+        ];
+
+        const secondRes = await fetch(OPENAI_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: MODEL,
+            messages: followUpMessages,
+            stream: true,
+            max_completion_tokens: 2048,
+          }),
+        });
+
+        if (!secondRes.ok) {
+          const detail = await secondRes.text().catch(() => "");
+          await writeSSEError(writer, encoder, "OpenAI API error", {
+            status: secondRes.status,
+            detail,
+          });
+          return;
+        }
+
+        // Pipe the second response directly to the client
+        if (secondRes.body) {
+          await pipeStream(secondRes.body, writer);
+        }
+      } else if (hasContent) {
+        // Content was already streamed in the first pass — send [DONE]
+        await writer.write(encoder.encode("data: [DONE]\n\n"));
+      } else {
+        await writeSSEError(writer, encoder, "No response from model");
+      }
     } catch (err) {
-      // Send error as SSE event so the client can display it
       try {
-        await writer.write(
-          encoder.encode(
-            `data: ${JSON.stringify({ error: true, message: err instanceof Error ? err.message : "Internal error" })}\n\n`
-          )
+        await writeSSEError(
+          writer,
+          encoder,
+          err instanceof Error ? err.message : "Internal error"
         );
       } catch {
-        // Writer already closed (client disconnected) — nothing to do.
+        // Writer already closed (client disconnected).
       }
     } finally {
       try {
@@ -207,11 +427,8 @@ export async function handleChatRequest(
     }
   })();
 
-  // Prevent unhandled-rejection warnings if the pipeline throws after
-  // all catch blocks (shouldn't happen, but belt-and-suspenders).
   pipeline.catch(() => {});
 
-  // Return SSE response immediately — tokens will arrive via the pipeline.
   return new Response(readable, {
     headers: {
       "Content-Type": "text/event-stream",
