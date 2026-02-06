@@ -71,13 +71,15 @@ const ODDKIT_TIMEOUT_MS = 5000;
  */
 const MAX_HISTORY_MESSAGES = 20;
 
+/** Maximum time to wait for conversation summarization. */
+const SUMMARY_TIMEOUT_MS = 4000;
+
 /**
- * Maximum character length for assistant messages in history.
- * Even with function calling, the client sends full rendered text
- * of prior assistant responses which can be very long. Truncating
- * older responses prevents the model from losing focus.
+ * Minimum number of older messages (beyond the recent window)
+ * before we bother summarizing. For 1-2 older messages, just
+ * include them in full — not worth an extra API call.
  */
-const MAX_ASSISTANT_MSG_LENGTH = 600;
+const SUMMARIZE_OLDER_THRESHOLD = 4;
 
 /** OpenAI tool definition for oddkit documentation lookup. */
 const ODDKIT_TOOL = {
@@ -101,41 +103,119 @@ const ODDKIT_TOOL = {
 };
 
 /**
- * Number of recent messages to keep in full (no truncation).
- * This preserves the last few exchanges so the model has complete
- * context for the immediate conversation. Only older messages
- * get truncated.
+ * Number of recent messages to keep in full (no summarization).
+ * Preserves the last 2 exchanges so the model has complete
+ * context for the immediate conversation.
  */
 const RECENT_FULL_COUNT = 4;
 
 /**
- * Trim conversation history to prevent context bloat.
+ * Summarize older conversation messages using the LLM.
+ *
+ * Instead of naively truncating (losing information), we ask the
+ * model to produce a concise summary that preserves key facts,
+ * definitions, citations, and user intent. This way the user's
+ * early questions are still remembered in later turns.
+ *
+ * Returns null if summarization fails (caller should fall back
+ * to including older messages as-is).
+ */
+async function summarizeOlderMessages(
+  messages: ChatMessage[],
+  env: Env
+): Promise<string | null> {
+  const transcript = messages
+    .map((m) => `${m.role}: ${m.content}`)
+    .join("\n\n");
+
+  try {
+    const res = await Promise.race([
+      fetch(OPENAI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Summarize this conversation concisely. Preserve: (1) specific definitions and facts discussed, (2) document paths and citations referenced, (3) what the user asked about and the key answers given. Output only the summary.",
+            },
+            { role: "user", content: transcript },
+          ],
+          max_completion_tokens: 400,
+        }),
+      }),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), SUMMARY_TIMEOUT_MS)
+      ),
+    ]);
+
+    if (!res || !("ok" in res) || !res.ok) return null;
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build conversation context for the OpenAI call.
  *
  * Strategy:
  *  - Cap total messages to MAX_HISTORY_MESSAGES
- *  - Keep the last RECENT_FULL_COUNT messages in full (current
- *    exchange + the one before it — so the model knows what it
- *    just said and can judge whether it needs to re-query oddkit)
- *  - Truncate older assistant messages to MAX_ASSISTANT_MSG_LENGTH
+ *  - Split into older + recent (last RECENT_FULL_COUNT)
+ *  - If few older messages: include them in full
+ *  - If many older messages: summarize them into a single system
+ *    message (preserving key facts without bloat)
+ *  - Always keep recent messages in full
+ *
+ * Uses a SYSTEM message for the summary (per OpenAI cookbook
+ * recommendation — avoids confusing the model into thinking
+ * the summary is an assistant response).
  */
-function trimHistory(messages: ChatMessage[]): ChatMessage[] {
+async function buildConversationContext(
+  messages: ChatMessage[],
+  env: Env
+): Promise<Record<string, unknown>[]> {
   const capped = messages.slice(-MAX_HISTORY_MESSAGES);
-  const recentStart = capped.length - RECENT_FULL_COUNT;
+  const splitAt = Math.max(0, capped.length - RECENT_FULL_COUNT);
+  const older = capped.slice(0, splitAt);
+  const recent = capped.slice(splitAt);
 
-  return capped.map((m, i) => {
-    // Keep recent messages in full
-    if (i >= recentStart) return m;
+  const context: Record<string, unknown>[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+  ];
 
-    // Truncate older assistant messages
-    if (m.role === "assistant" && m.content.length > MAX_ASSISTANT_MSG_LENGTH) {
-      return {
-        ...m,
-        content: m.content.slice(0, MAX_ASSISTANT_MSG_LENGTH) + "\n…",
-      };
+  // Map ChatMessage to plain objects for Record<string, unknown>[] compatibility
+  const toPlain = (msgs: ChatMessage[]) =>
+    msgs.map((m) => ({ role: m.role, content: m.content }));
+
+  if (older.length >= SUMMARIZE_OLDER_THRESHOLD) {
+    // Enough older messages to warrant summarization
+    const summary = await summarizeOlderMessages(older, env);
+    if (summary) {
+      context.push({
+        role: "system",
+        content: `Conversation so far:\n${summary}`,
+      });
+    } else {
+      // Summarization failed — include older messages as-is
+      context.push(...toPlain(older));
     }
+  } else {
+    // Few older messages — include them in full
+    context.push(...toPlain(older));
+  }
 
-    return m;
-  });
+  context.push(...toPlain(recent));
+  return context;
 }
 
 /**
@@ -249,12 +329,8 @@ export async function handleChatRequest(
   // Async pipeline — runs after the Response is returned to the client.
   const pipeline = (async () => {
     try {
-      const trimmed = trimHistory(userMessages);
-      // Use a broad type since follow-up messages include tool_calls/tool roles
-      const baseMessages: Record<string, unknown>[] = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...trimmed,
-      ];
+      // Build context: summarize older messages, keep recent in full
+      const baseMessages = await buildConversationContext(userMessages, env);
 
       // --- First OpenAI call: model decides whether to use the tool ---
 
