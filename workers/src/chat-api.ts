@@ -144,7 +144,6 @@ export async function handleChatRequest(
       model: MODEL,
       messages: openaiMessages,
       stream: true,
-      temperature: 0.7,
       max_completion_tokens: 2048,
     }),
   });
