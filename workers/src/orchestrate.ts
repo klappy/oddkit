@@ -76,7 +76,7 @@ function detectAction(message: string): string {
  * Score entries against a query
  */
 function scoreEntries(entries: IndexEntry[], query: string): Array<IndexEntry & { score: number }> {
-  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+  const terms = query.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter(t => t.length > 2);
 
   return entries
     .map((entry) => {
