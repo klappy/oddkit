@@ -62,7 +62,34 @@ oddkit_orchestrate({ message: "done: <what you completed> [artifacts: ...]", rep
 4. **Quote evidence** — when citing policy, include the source
 
 
-## Project Context
+## STOP. READ THE LEARNINGS FIRST.
 
-<!-- Add project-specific context below -->
+This is the oddkit repo. You are dogfooding oddkit itself. Before doing ANYTHING:
 
+```bash
+# Read past mistakes so you don't repeat them
+cat odd/ledger/learnings.jsonl | jq -r '.summary'
+
+# Ask oddkit before implementing
+npx oddkit librarian --query "What are the constraints for <your task>?" --format json
+
+# Run preflight before any changes
+npx oddkit preflight --message "preflight: <what you're about to do>"
+```
+
+Past agents have repeatedly broken things by not checking learnings first. The ledger at `odd/ledger/learnings.jsonl` contains hard-won lessons about:
+- OpenAI API gotchas (model names, parameter names)
+- Cloudflare Worker deployment traps (secrets, wrangler.toml)
+- Template literal escaping bugs
+- Security requirements for the chat API
+
+READ THEM. USE ODDKIT. DON'T GUESS.
+
+## Project Structure
+
+- `workers/` — Cloudflare Worker (MCP + chat UI)
+- `workers/src/chat-ui.ts` — Chat HTML (marked@15 + DOMPurify@3 from CDN)
+- `workers/src/chat-api.ts` — OpenAI streaming proxy with oddkit context
+- `workers/src/index.ts` — Routes: GET / (chat), POST /api/chat, GET /health, POST /mcp
+- `odd/ledger/` — Learnings and decisions (JSONL, append-only)
+- `tests/cloudflare-production.test.sh` — Production deployment tests
