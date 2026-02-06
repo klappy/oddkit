@@ -101,21 +101,32 @@ const ODDKIT_TOOL = {
 };
 
 /**
+ * Number of recent messages to keep in full (no truncation).
+ * This preserves the last few exchanges so the model has complete
+ * context for the immediate conversation. Only older messages
+ * get truncated.
+ */
+const RECENT_FULL_COUNT = 4;
+
+/**
  * Trim conversation history to prevent context bloat.
  *
- * The chat UI sends the full text of every prior message. Assistant
- * responses can be 1000-3000+ chars. After a few turns, accumulated
- * history overwhelms the model, causing it to re-answer old questions
- * or lose focus on the current one.
+ * Strategy:
+ *  - Cap total messages to MAX_HISTORY_MESSAGES
+ *  - Keep the last RECENT_FULL_COUNT messages in full (current
+ *    exchange + the one before it — so the model knows what it
+ *    just said and can judge whether it needs to re-query oddkit)
+ *  - Truncate older assistant messages to MAX_ASSISTANT_MSG_LENGTH
  */
 function trimHistory(messages: ChatMessage[]): ChatMessage[] {
   const capped = messages.slice(-MAX_HISTORY_MESSAGES);
+  const recentStart = capped.length - RECENT_FULL_COUNT;
 
   return capped.map((m, i) => {
-    // Always keep the last message (latest user question) in full
-    if (i === capped.length - 1) return m;
+    // Keep recent messages in full
+    if (i >= recentStart) return m;
 
-    // Truncate long assistant messages in history
+    // Truncate older assistant messages
     if (m.role === "assistant" && m.content.length > MAX_ASSISTANT_MSG_LENGTH) {
       return {
         ...m,
