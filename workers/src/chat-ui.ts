@@ -429,7 +429,7 @@ export function renderChatPage(): string {
       var decoder = new TextDecoder();
       var full = "";
       var buffer = "";
-      typingEl.querySelector(".bubble").innerHTML = "";
+      var gotFirstToken = false;
 
       while (true) {
         var chunk = await reader.read();
@@ -445,8 +445,19 @@ export function renderChatPage(): string {
             if (data === "[DONE]") break;
             try {
               var j = JSON.parse(data);
+              if (j.error) {
+                typingEl.querySelector(".bubble").innerHTML =
+                  '<p style="color:#a05050">' + escapeHtml(String(j.detail || j.message || "Server error")) + '</p>';
+                busy = false;
+                send.disabled = false;
+                return;
+              }
               var delta = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
               if (delta) {
+                if (!gotFirstToken) {
+                  typingEl.querySelector(".bubble").innerHTML = "";
+                  gotFirstToken = true;
+                }
                 full += delta;
                 typingEl.querySelector(".bubble").innerHTML = md(full);
                 scrollBottom();
