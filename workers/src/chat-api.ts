@@ -52,21 +52,25 @@ interface ChatRequest {
   messages: ChatMessage[];
 }
 
+/** Maximum time to wait for oddkit context before proceeding without it. */
+const CONTEXT_TIMEOUT_MS = 5000;
+
 /**
  * Fetch oddkit context for the user's latest message.
  * Always attempts retrieval — this assistant dogfoods oddkit.
+ * Bounded by CONTEXT_TIMEOUT_MS to keep TTFT reasonable.
  */
 async function getOddkitContext(
   message: string,
   env: Env
 ): Promise<string | null> {
   try {
-    const result = await runOrchestrate({
-      message,
-      env,
-    });
+    const result = await Promise.race([
+      runOrchestrate({ message, env }).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), CONTEXT_TIMEOUT_MS)),
+    ]);
 
-    if (result.assistant_text && result.action !== "error") {
+    if (result?.assistant_text && result.action !== "error") {
       return `[oddkit ${result.action} context]\n${result.assistant_text}`;
     }
   } catch {
@@ -78,13 +82,19 @@ async function getOddkitContext(
 /**
  * Handle POST /api/chat
  *
- * Accepts { messages: ChatMessage[] } and streams back SSE
- * in the same format as the OpenAI streaming API.
+ * Accepts { messages: ChatMessage[] } and streams back SSE.
+ *
+ * Returns the SSE response immediately (reducing TTFT) and pipes
+ * OpenAI tokens through asynchronously.  The oddkit context fetch
+ * and OpenAI call happen inside the stream so the HTTP connection
+ * is open before any slow network work begins.
  */
 export async function handleChatRequest(
   request: Request,
   env: Env
 ): Promise<Response> {
+  // --- Fast, synchronous validation (before opening the stream) ---
+
   if (!env.OPENAI_API_KEY) {
     return new Response(
       JSON.stringify({ error: "OPENAI_API_KEY not configured" }),
@@ -115,47 +125,94 @@ export async function handleChatRequest(
   );
   const lastUserMsg = [...userMessages].reverse().find((m) => m.role === "user");
 
-  // Always enrich with oddkit context — this assistant dogfoods oddkit
-  let system = SYSTEM_PROMPT;
+  // --- Stream setup: return SSE headers immediately ---
 
-  if (lastUserMsg) {
-    const ctx = await getOddkitContext(lastUserMsg.content, env);
-    if (ctx) {
-      system += `\n\n---\n\n${ctx}`;
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  // Async pipeline — runs after the Response is returned to the client.
+  // The worker stays alive as long as the writable side is open.
+  const pipeline = (async () => {
+    try {
+      // Enrich with oddkit context (bounded by CONTEXT_TIMEOUT_MS)
+      let system = SYSTEM_PROMPT;
+      if (lastUserMsg) {
+        const ctx = await getOddkitContext(lastUserMsg.content, env);
+        if (ctx) {
+          system += `\n\n---\n\n${ctx}`;
+        }
+      }
+
+      const openaiMessages: ChatMessage[] = [
+        { role: "system", content: system },
+        ...userMessages,
+      ];
+
+      // Call OpenAI with streaming
+      const openaiRes = await fetch(OPENAI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: openaiMessages,
+          stream: true,
+          max_completion_tokens: 2048,
+        }),
+      });
+
+      if (!openaiRes.ok) {
+        const detail = await openaiRes.text().catch(() => "");
+        await writer.write(
+          encoder.encode(
+            `data: ${JSON.stringify({ error: true, message: "OpenAI API error", status: openaiRes.status, detail })}\n\n`
+          )
+        );
+        return;
+      }
+
+      // Pipe OpenAI SSE stream through to the client
+      if (openaiRes.body) {
+        const reader = openaiRes.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    } catch (err) {
+      // Send error as SSE event so the client can display it
+      try {
+        await writer.write(
+          encoder.encode(
+            `data: ${JSON.stringify({ error: true, message: err instanceof Error ? err.message : "Internal error" })}\n\n`
+          )
+        );
+      } catch {
+        // Writer already closed (client disconnected) — nothing to do.
+      }
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        // Already closed or aborted.
+      }
     }
-  }
+  })();
 
-  // Build the messages array for OpenAI
-  const openaiMessages: ChatMessage[] = [
-    { role: "system", content: system },
-    ...userMessages,
-  ];
+  // Prevent unhandled-rejection warnings if the pipeline throws after
+  // all catch blocks (shouldn't happen, but belt-and-suspenders).
+  pipeline.catch(() => {});
 
-  // Call OpenAI with streaming
-  const openaiRes = await fetch(OPENAI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: openaiMessages,
-      stream: true,
-      max_completion_tokens: 2048,
-    }),
-  });
-
-  if (!openaiRes.ok) {
-    const detail = await openaiRes.text().catch(() => "");
-    return new Response(
-      JSON.stringify({ error: "OpenAI API error", status: openaiRes.status, detail }),
-      { status: openaiRes.status, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  // Proxy the SSE stream directly to the client
-  return new Response(openaiRes.body, {
+  // Return SSE response immediately — tokens will arrive via the pipeline.
+  return new Response(readable, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
