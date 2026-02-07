@@ -85,6 +85,40 @@ else
   FAILED=$((FAILED + 1))
 fi
 
+# Test 1b: Root includes Link header for MCP discovery
+echo ""
+echo "Test 1b: Root Link header points to MCP endpoint"
+LINK_HEADER=$(curl -sf "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "^link:" | head -1 || true)
+if echo "$LINK_HEADER" | grep -qi "mcp"; then
+  echo "PASS - Root has Link header with MCP reference: $LINK_HEADER"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - Root missing Link header with MCP reference"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 1c: .well-known/mcp.json discovery endpoint
+echo ""
+echo "Test 1c: MCP discovery (GET /.well-known/mcp.json)"
+RESULT=$(curl -sf "$WORKER_URL/.well-known/mcp.json" 2>&1) || { echo "FAIL - /.well-known/mcp.json unreachable"; FAILED=$((FAILED + 1)); }
+if [ -n "$RESULT" ]; then
+  check_json "MCP discovery" "$RESULT" "assert 'oddkit' in d.get('mcpServers', {}), 'no oddkit server in mcpServers'"
+fi
+
+# Test 1d: .well-known/mcp.json contains correct URL
+echo ""
+echo "Test 1d: MCP discovery URL points to /mcp"
+if [ -n "$RESULT" ]; then
+  MCP_URL=$(echo "$RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('mcpServers',{}).get('oddkit',{}).get('url',''))" 2>/dev/null)
+  if echo "$MCP_URL" | grep -q "/mcp$"; then
+    echo "PASS - Discovery URL ends with /mcp: $MCP_URL"
+    PASSED=$((PASSED + 1))
+  else
+    echo "FAIL - Discovery URL doesn't point to /mcp: $MCP_URL"
+    FAILED=$((FAILED + 1))
+  fi
+fi
+
 # Test 2: /health returns JSON
 echo ""
 echo "Test 2: Health endpoint (GET /health)"
@@ -144,6 +178,14 @@ if echo "$CONTENT_TYPE" | grep -qi "text/event-stream"; then
 else
   echo "FAIL - GET did not return text/event-stream: $CONTENT_TYPE"
   FAILED=$((FAILED + 1))
+fi
+
+# Test 4d: GET /mcp without SSE Accept returns JSON server info (not 400)
+echo ""
+echo "Test 4d: GET /mcp without SSE Accept returns JSON server info"
+RESULT=$(curl -sf "$WORKER_URL/mcp" -X GET 2>&1) || { echo "FAIL - GET /mcp returned error (should be 200 JSON)"; FAILED=$((FAILED + 1)); }
+if [ -n "$RESULT" ]; then
+  check_json "GET /mcp server info" "$RESULT" "assert d.get('transport') == 'streamable-http', 'missing transport field'"
 fi
 
 # Test 5: tools/list
