@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-02-07
+
+### Fixed
+
+- **MCP tool discovery for OpenAI Agent Builder** — Resolved persistent 424 (Failed Dependency) error with three fixes:
+  - **Missing `serverInfo.version`** — `ODDKIT_VERSION` env var was undefined in production; `JSON.stringify` silently dropped it, violating the MCP Implementation schema (requires both `name` and `version`). Now imports version from `package.json` at build time via wrangler/esbuild — no env var dependency, no drift.
+  - **SSE responses for POST requests** — OpenAI sends `Accept: application/json, text/event-stream` and requires `text/event-stream` responses. Server was only returning `application/json`. Now returns SSE format (`event: message` + `data:` lines) when client accepts `text/event-stream`.
+  - **Batch JSON-RPC support** — MCP spec allows arrays of JSON-RPC messages in a single POST. Server only handled single messages, causing `method: undefined` errors on batches. Added `Array.isArray` detection with per-message processing.
+
+- **Version consistency across all endpoints** — `/health`, `/.well-known/mcp.json`, and MCP `initialize` all use `BUILD_VERSION` fallback from `package.json` when `ODDKIT_VERSION` env var is missing.
+
+### Changed
+
+- **Production tests** — Added 4 new test cases: `serverInfo.version` presence (4e), SSE Content-Type for POST (4f), SSE data format validation (4g), batch JSON-RPC support (4h).
+
 ## [0.12.0] - 2026-02-05
 
 ### Added
