@@ -41,6 +41,13 @@ Use when:
           description: "Optional: GitHub repo URL for canon override (e.g., https://github.com/org/repo). Canon docs override klappy.dev baseline.",
         },
       },
+      required: ["message"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   {
@@ -57,6 +64,12 @@ Use when:
       },
       required: ["query"],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   {
     name: "oddkit_validate",
@@ -67,6 +80,12 @@ Use when:
         message: { type: "string", description: "The completion claim with artifact references" },
       },
       required: ["message"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
   },
   {
@@ -80,6 +99,13 @@ Use when:
           description: "Optional: GitHub repo URL for canon override",
         },
       },
+      required: [] as string[],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   {
@@ -93,6 +119,13 @@ Use when:
           description: "Optional: GitHub repo URL to invalidate cache for",
         },
       },
+      required: [] as string[],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
   },
 ];
