@@ -326,12 +326,12 @@ async function fetchPromptContent(baselineUrl: string, path: string): Promise<st
 // Protocol version - using 2025-03-26 for Streamable HTTP transport
 const PROTOCOL_VERSION = "2025-03-26";
 
-// Server info
+// Server info — MCP Implementation schema: { name, version } only.
+// protocolVersion belongs at the top level of InitializeResult, not inside serverInfo.
 function getServerInfo(version: string) {
   return {
     name: "oddkit",
     version,
-protocolVersion: PROTOCOL_VERSION,
   };
 }
 
@@ -386,13 +386,14 @@ async function handleMcpRequest(
           jsonrpc: "2.0",
           id,
           result: {
-protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: PROTOCOL_VERSION,
             serverInfo: getServerInfo(env.ODDKIT_VERSION),
             capabilities: {
               tools: {},
               resources: {},
               prompts: {},
             },
+            instructions: "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use oddkit_orchestrate before implementing changes (preflight), when you have policy questions (librarian), and before claiming completion (validate).",
           },
           _sessionId: newSessionId,
         };
@@ -638,7 +639,7 @@ function corsHeaders(origin: string = "*"): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, Last-Event-ID",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, Mcp-Session-Id, Last-Event-ID",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
@@ -735,29 +736,16 @@ export default {
       // Handle GET requests for SSE streaming (server-initiated messages)
       if (request.method === "GET") {
         if (!wantsSSE) {
-          // Return MCP server metadata for plain GET requests (e.g. browser or client probing)
-          // This helps clients discover the endpoint and understand how to connect
-          return new Response(
-            JSON.stringify({
-              name: "oddkit",
-              version: env.ODDKIT_VERSION,
-              protocolVersion: PROTOCOL_VERSION,
-              description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
-              transport: "streamable-http",
-              capabilities: ["tools", "resources", "prompts"],
-              usage: {
-                initialize: "POST /mcp with JSON-RPC initialize request",
-                sse: "GET /mcp with Accept: text/event-stream header",
-                discovery: "GET /.well-known/mcp.json",
-              },
-            }, null, 2),
-            {
-              headers: {
-                "Content-Type": "application/json",
-                ...corsHeaders(origin),
-              },
-            }
-          );
+          // MCP spec: GET without Accept: text/event-stream MUST return 405.
+          // Returning JSON here confuses clients into thinking this is the
+          // legacy HTTP+SSE transport, breaking tool discovery.
+          return new Response("Method Not Allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream for SSE.\nDiscovery: GET /.well-known/mcp.json", {
+            status: 405,
+            headers: {
+              Allow: "POST",
+              ...corsHeaders(origin),
+            },
+          });
         }
 
         // For now, return an SSE stream that stays open but sends no events
@@ -809,10 +797,11 @@ export default {
         const responseSessionId = response._sessionId;
         delete response._sessionId;
 
-        // Don't return response for notifications
+        // MCP spec: notifications/responses get 202 Accepted with no body.
+        // (Not 204 — strict clients like ChatGPT require exactly 202.)
         if (!response.id && !response.error) {
           return new Response(null, {
-            status: 204,
+            status: 202,
             headers: corsHeaders(origin),
           });
         }

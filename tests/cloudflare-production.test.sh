@@ -180,12 +180,16 @@ else
   FAILED=$((FAILED + 1))
 fi
 
-# Test 4d: GET /mcp without SSE Accept returns JSON server info (not 400)
+# Test 4d: GET /mcp without SSE Accept returns 405 (MCP spec compliance)
 echo ""
-echo "Test 4d: GET /mcp without SSE Accept returns JSON server info"
-RESULT=$(curl -sf "$WORKER_URL/mcp" -X GET 2>&1) || { echo "FAIL - GET /mcp returned error (should be 200 JSON)"; FAILED=$((FAILED + 1)); }
-if [ -n "$RESULT" ]; then
-  check_json "GET /mcp server info" "$RESULT" "assert d.get('transport') == 'streamable-http', 'missing transport field'"
+echo "Test 4d: GET /mcp without SSE Accept returns 405 Method Not Allowed"
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$WORKER_URL/mcp" -X GET 2>&1)
+if [ "$HTTP_STATUS" = "405" ]; then
+  echo "PASS - GET /mcp returns 405 (spec-compliant)"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - GET /mcp returned $HTTP_STATUS (expected 405)"
+  FAILED=$((FAILED + 1))
 fi
 
 # Test 5: tools/list
