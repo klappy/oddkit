@@ -326,12 +326,18 @@ async function fetchPromptContent(baselineUrl: string, path: string): Promise<st
 // Protocol version - using 2025-03-26 for Streamable HTTP transport
 const PROTOCOL_VERSION = "2025-03-26";
 
+// Fallback version when ODDKIT_VERSION env var is not set.
+// MCP Implementation schema requires { name: string, version: string } — both mandatory.
+// If version is undefined, JSON.stringify drops it, causing strict schema validation failures
+// (e.g., OpenAI Agent Builder returns 424 Failed Dependency).
+const DEFAULT_VERSION = "0.12.0";
+
 // Server info — MCP Implementation schema: { name, version } only.
 // protocolVersion belongs at the top level of InitializeResult, not inside serverInfo.
-function getServerInfo(version: string) {
+function getServerInfo(version: string | undefined) {
   return {
     name: "oddkit",
-    version,
+    version: version || DEFAULT_VERSION,
   };
 }
 
@@ -342,12 +348,14 @@ function generateSessionId(): string {
   return `oddkit-${timestamp}-${random}`;
 }
 
-// Format a JSON-RPC response as an SSE event
+// Format a JSON-RPC response as an SSE event.
+// Uses "event: message" explicitly for maximum client compatibility.
 function formatSseEvent(data: unknown, eventId?: string): string {
   const lines: string[] = [];
   if (eventId) {
     lines.push(`id: ${eventId}`);
   }
+  lines.push("event: message");
   lines.push(`data: ${JSON.stringify(data)}`);
   lines.push(""); // Empty line to end the event
   return lines.join("\n") + "\n";
@@ -791,33 +799,76 @@ export default {
 
       try {
         const body = await request.json();
-        const response = await handleMcpRequest(body, env, sessionId);
 
-        // Extract session ID if set (for initialize response)
-        const responseSessionId = response._sessionId;
-        delete response._sessionId;
+        // MCP spec: body can be a single JSON-RPC message or a batch (array).
+        const isBatch = Array.isArray(body);
+        const messages = isBatch ? (body as unknown[]) : [body];
 
-        // MCP spec: notifications/responses get 202 Accepted with no body.
-        // (Not 204 — strict clients like ChatGPT require exactly 202.)
-        if (!response.id && !response.error) {
-          return new Response(null, {
-            status: 202,
-            headers: corsHeaders(origin),
-          });
+        // Process all messages, collecting responses for requests (not notifications).
+        const responses: McpResponse[] = [];
+        let initSessionId: string | undefined;
+
+        for (const msg of messages) {
+          const resp = await handleMcpRequest(msg, env, sessionId || initSessionId);
+
+          // Track session ID from initialize
+          if (resp._sessionId) {
+            initSessionId = resp._sessionId;
+          }
+          delete resp._sessionId;
+
+          // Only collect responses for requests (have id) or errors.
+          // Notifications (no id, no error) are acknowledged but produce no response.
+          if (resp.id !== undefined || resp.error) {
+            responses.push(resp);
+          }
         }
 
-        // Build response headers
+        // Build common response headers
         const responseHeaders: Record<string, string> = {
-          "Content-Type": "application/json",
           ...corsHeaders(origin),
         };
 
-        // Include session ID in header if this was an initialize response
-        if (responseSessionId) {
-          responseHeaders["Mcp-Session-Id"] = responseSessionId;
+        if (initSessionId) {
+          responseHeaders["Mcp-Session-Id"] = initSessionId;
         }
 
-        return new Response(JSON.stringify(response), {
+        // All notifications, no requests → 202 Accepted with no body.
+        // (Not 204 — strict clients like ChatGPT require exactly 202.)
+        if (responses.length === 0) {
+          return new Response(null, {
+            status: 202,
+            headers: responseHeaders,
+          });
+        }
+
+        // MCP Streamable HTTP: the server MUST return either text/event-stream (SSE)
+        // or application/json. OpenAI Agent Builder requires SSE responses for POST.
+        // Prefer SSE when the client accepts it for maximum compatibility.
+        if (wantsSSE) {
+          responseHeaders["Content-Type"] = "text/event-stream";
+          responseHeaders["Cache-Control"] = "no-cache";
+
+          let sseBody = "";
+          for (const resp of responses) {
+            sseBody += formatSseEvent(resp);
+          }
+
+          return new Response(sseBody, {
+            status: 200,
+            headers: responseHeaders,
+          });
+        }
+
+        // Fallback: application/json for clients that don't accept SSE.
+        responseHeaders["Content-Type"] = "application/json";
+
+        // Batch request → array response; single request → single object.
+        const jsonBody = (isBatch || responses.length > 1)
+          ? JSON.stringify(responses)
+          : JSON.stringify(responses[0]);
+
+        return new Response(jsonBody, {
           headers: responseHeaders,
         });
       } catch (err) {

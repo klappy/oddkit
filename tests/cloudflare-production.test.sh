@@ -192,6 +192,70 @@ else
   FAILED=$((FAILED + 1))
 fi
 
+# Test 4e: Initialize response has serverInfo.version (MCP spec: required field)
+echo ""
+echo "Test 4e: Initialize response has serverInfo.version"
+INIT_RESULT=$(mcp_call "initialize" '{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}')
+VERSION_FIELD=$(echo "$INIT_RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); v=d.get('result',{}).get('serverInfo',{}).get('version',''); assert v != '' and v is not None, f'version missing or empty: {v}'; print(v)" 2>&1)
+if [ $? -eq 0 ]; then
+  echo "PASS - serverInfo.version present: $VERSION_FIELD"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - serverInfo.version missing (causes 424 in strict clients): $VERSION_FIELD"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 4f: POST with Accept: text/event-stream returns SSE format
+echo ""
+echo "Test 4f: POST /mcp with SSE Accept returns text/event-stream"
+SSE_RESPONSE=$(curl -sf "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -D /tmp/oddkit_sse_headers \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1)
+SSE_CT=$(grep -i "content-type" /tmp/oddkit_sse_headers 2>/dev/null | head -1 || true)
+if echo "$SSE_CT" | grep -qi "text/event-stream"; then
+  echo "PASS - POST with SSE Accept returns text/event-stream"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - POST with SSE Accept returned: $SSE_CT (expected text/event-stream)"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 4g: SSE response contains valid JSON-RPC in data field
+echo ""
+echo "Test 4g: SSE response has event: message + valid JSON-RPC data"
+SSE_DATA=$(echo "$SSE_RESPONSE" | grep "^data: " | head -1 | sed 's/^data: //')
+if [ -n "$SSE_DATA" ]; then
+  if echo "$SSE_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); assert 'result' in d, 'no result in SSE data'" 2>/dev/null; then
+    echo "PASS - SSE data contains valid JSON-RPC response"
+    PASSED=$((PASSED + 1))
+  else
+    echo "FAIL - SSE data is not valid JSON-RPC: $SSE_DATA"
+    FAILED=$((FAILED + 1))
+  fi
+else
+  echo "FAIL - No data: field found in SSE response"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 4h: Batch JSON-RPC request support
+echo ""
+echo "Test 4h: Batch JSON-RPC request (initialize + tools/list)"
+BATCH_RESPONSE=$(curl -sf "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]' 2>&1)
+# Count SSE data lines (should have 2 for batch of 2 requests)
+DATA_COUNT=$(echo "$BATCH_RESPONSE" | grep -c "^data: " || true)
+if [ "$DATA_COUNT" -ge 2 ]; then
+  echo "PASS - Batch request returned $DATA_COUNT SSE events"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - Batch request returned $DATA_COUNT events (expected 2+)"
+  FAILED=$((FAILED + 1))
+fi
+
 # Test 5: tools/list
 echo ""
 echo "Test 5: MCP tools/list"
