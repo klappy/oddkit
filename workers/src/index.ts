@@ -10,6 +10,7 @@
 import { runOrchestrate, type OrchestrateResult, type Env } from "./orchestrate";
 import { renderChatPage } from "./chat-ui";
 import { handleChatRequest } from "./chat-api";
+import pkg from "../package.json";
 
 export type { Env };
 
@@ -326,18 +327,18 @@ async function fetchPromptContent(baselineUrl: string, path: string): Promise<st
 // Protocol version - using 2025-03-26 for Streamable HTTP transport
 const PROTOCOL_VERSION = "2025-03-26";
 
-// Fallback version when ODDKIT_VERSION env var is not set.
+// Build-time version from package.json — baked into the bundle by wrangler/esbuild.
 // MCP Implementation schema requires { name: string, version: string } — both mandatory.
-// If version is undefined, JSON.stringify drops it, causing strict schema validation failures
-// (e.g., OpenAI Agent Builder returns 424 Failed Dependency).
-const DEFAULT_VERSION = "0.12.0";
+// Previously relied on ODDKIT_VERSION env var which was undefined in production,
+// causing JSON.stringify to silently drop it → strict validation failure → 424.
+const BUILD_VERSION = pkg.version;
 
 // Server info — MCP Implementation schema: { name, version } only.
 // protocolVersion belongs at the top level of InitializeResult, not inside serverInfo.
-function getServerInfo(version: string | undefined) {
+function getServerInfo(envVersion: string | undefined) {
   return {
     name: "oddkit",
-    version: version || DEFAULT_VERSION,
+    version: envVersion || BUILD_VERSION,
   };
 }
 
@@ -691,7 +692,7 @@ export default {
           oddkit: {
             url: `${url.origin}/mcp`,
             name: "oddkit",
-            version: env.ODDKIT_VERSION,
+            version: env.ODDKIT_VERSION || BUILD_VERSION,
             description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
             protocolVersion: PROTOCOL_VERSION,
             capabilities: {
@@ -717,7 +718,7 @@ export default {
         JSON.stringify({
           ok: true,
           service: "oddkit",
-          version: env.ODDKIT_VERSION,
+          version: env.ODDKIT_VERSION || BUILD_VERSION,
           endpoints: {
             chat: "/",
             api: "/api/chat",
