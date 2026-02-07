@@ -662,6 +662,7 @@ export default {
         headers: {
           "Content-Type": "text/html;charset=utf-8",
           "Cache-Control": "no-cache",
+          "Link": `<${url.origin}/mcp>; rel="mcp-server-url", <${url.origin}/.well-known/mcp.json>; rel="mcp-server-card"`,
           ...corsHeaders(origin),
         },
       });
@@ -670,6 +671,35 @@ export default {
     // Chat API endpoint
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChatRequest(request, env);
+    }
+
+    // MCP discovery endpoint (.well-known/mcp.json)
+    // SEP-1649: MCP Server Cards - enables clients to discover MCP endpoint
+    // without establishing a connection or requiring manual configuration
+    if (url.pathname === "/.well-known/mcp.json" && request.method === "GET") {
+      const serverCard = {
+        mcpServers: {
+          oddkit: {
+            url: `${url.origin}/mcp`,
+            name: "oddkit",
+            version: env.ODDKIT_VERSION,
+            description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: {
+              tools: {},
+              resources: {},
+              prompts: {},
+            },
+          },
+        },
+      };
+      return new Response(JSON.stringify(serverCard, null, 2), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+          ...corsHeaders(origin),
+        },
+      });
     }
 
     // Health check
@@ -705,10 +735,29 @@ export default {
       // Handle GET requests for SSE streaming (server-initiated messages)
       if (request.method === "GET") {
         if (!wantsSSE) {
-          return new Response("GET requires Accept: text/event-stream", {
-            status: 400,
-            headers: corsHeaders(origin),
-          });
+          // Return MCP server metadata for plain GET requests (e.g. browser or client probing)
+          // This helps clients discover the endpoint and understand how to connect
+          return new Response(
+            JSON.stringify({
+              name: "oddkit",
+              version: env.ODDKIT_VERSION,
+              protocolVersion: PROTOCOL_VERSION,
+              description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
+              transport: "streamable-http",
+              capabilities: ["tools", "resources", "prompts"],
+              usage: {
+                initialize: "POST /mcp with JSON-RPC initialize request",
+                sse: "GET /mcp with Accept: text/event-stream header",
+                discovery: "GET /.well-known/mcp.json",
+              },
+            }, null, 2),
+            {
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders(origin),
+              },
+            }
+          );
         }
 
         // For now, return an SSE stream that stays open but sends no events
