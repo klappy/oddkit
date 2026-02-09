@@ -37,6 +37,10 @@ import { listPrompts, getPrompt } from "./prompts.js";
 import { getOddkitInstructions } from "./instructions.js";
 import { resolveCanonTarget } from "../policy/canonTarget.js";
 import { getDocByUri } from "../policy/docFetch.js";
+import { runOrient } from "../tasks/orient.js";
+import { runChallenge } from "../tasks/challenge.js";
+import { runGate } from "../tasks/gate.js";
+import { runEncode } from "../tasks/encode.js";
 
 // Read version from package.json to keep MCP server version in sync
 const __filename = fileURLToPath(import.meta.url);
@@ -92,7 +96,11 @@ MUST: Before claiming done/fixed/shipped/merged, call with completion claim + ar
 
 Use when:
 - Policy/canon questions ("what's the rule?", "is this allowed?")
-- Contradictions or low confidence
+- Pre-implementation guidance (action="preflight")
+- Epistemic orientation (action="orient")
+- Pressure-testing claims (action="challenge")
+- Transition gating (action="gate")
+- Decision encoding (action="encode")
 - Discoverability ("what's in ODD?", "list canon")
 - Instruction sync (action="instruction_sync" with baseline_root or registry_payload)`,
     inputSchema: {
@@ -103,6 +111,9 @@ Use when:
           type: "string",
           enum: [
             "orient",
+            "challenge",
+            "gate",
+            "encode",
             "catalog",
             "preflight",
             "librarian",
@@ -266,11 +277,162 @@ Use when:
       required: [],
     },
   },
+  {
+    name: "oddkit_orient",
+    description: `Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution).
+
+Determines which mode the user is in based on their input. Surfaces unresolved items, unstated assumptions, and questions that need answering before progressing.
+
+Use when:
+- Starting a new task or conversation and need to understand where you are
+- Uncertain whether to explore, plan, or execute
+- Want to surface hidden assumptions before committing to a direction
+
+Returns: current mode, confidence, unresolved items, assumptions detected, suggested next questions, relevant canon references.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "A goal, idea, or situation description to orient against.",
+        },
+        repo_root: {
+          type: "string",
+          description: "Path to target repo. Default: current working directory.",
+        },
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_challenge",
+    description: `Pressure-test a claim, assumption, or proposal against canon constraints.
+
+Queries canon for relevant constraints and surfaces tensions, missing evidence, unexamined risks, and contradictions. Applies challenge proportionally — stronger claims get harder scrutiny.
+
+Use when:
+- Evaluating a proposal before committing
+- Testing whether an assumption holds under scrutiny
+- Checking if a claim has sufficient evidence
+- Want to find what could go wrong before it does
+
+Returns: claim type, tensions with canon, missing prerequisites, proportional challenges, suggested reframings, relevant canon constraints.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "A claim, assumption, or proposal to challenge.",
+        },
+        mode: {
+          type: "string",
+          enum: ["exploration", "planning", "execution"],
+          description: "Optional epistemic mode context for proportional challenge.",
+        },
+        repo_root: {
+          type: "string",
+          description: "Path to target repo. Default: current working directory.",
+        },
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_gate",
+    description: `Check transition prerequisites before changing epistemic modes.
+
+Validates that a proposed transition (e.g., "ready to build", "moving to planning") has met its prerequisites. Surfaces unmet requirements, missing evidence, and what would need to be true to proceed. Blocks premature convergence.
+
+Use when:
+- About to shift from exploration to planning
+- About to shift from planning to execution
+- Claiming readiness to ship or deploy
+- Wanting to step back from execution to rethink
+
+Returns: gate status (PASS/NOT_READY), transition details, met/unmet/unknown prerequisites, missing evidence, relevant canon references.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "The proposed transition (e.g., 'ready to build', 'moving to planning').",
+        },
+        context: {
+          type: "string",
+          description: "Optional context about what's been decided so far.",
+        },
+        repo_root: {
+          type: "string",
+          description: "Path to target repo. Default: current working directory.",
+        },
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_encode",
+    description: `Structure a decision, insight, or boundary as a durable record.
+
+Validates that the input has sufficient justification and clarity to prevent future re-litigation. Structures it as a decision artifact with title, rationale, constraints, and status. Assesses quality and suggests improvements.
+
+Use when:
+- A decision has been made and needs to be recorded
+- An insight or lesson learned should be preserved
+- A boundary or constraint has been established
+- Want to prevent the same debate from recurring
+
+Returns: structured decision artifact, quality assessment (strong/adequate/weak/insufficient), gaps and improvement suggestions, relevant canon references.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "A decision, insight, or boundary to capture.",
+        },
+        context: {
+          type: "string",
+          description: "Optional supporting context.",
+        },
+        repo_root: {
+          type: "string",
+          description: "Path to target repo. Default: current working directory.",
+        },
+        baseline: {
+          type: "string",
+          description: "Optional baseline git URL or local path.",
+        },
+      },
+      required: ["input"],
+    },
+  },
+];
+
+/**
+ * Epistemic guide tools (orient, challenge, gate, encode)
+ * These are the new tools that turn any chat assistant into an epistemic guide.
+ */
+const EPISTEMIC_TOOL_NAMES = [
+  "oddkit_orient",
+  "oddkit_challenge",
+  "oddkit_gate",
+  "oddkit_encode",
 ];
 
 /**
  * Get tools to expose based on environment
- * Default: only oddkit_orchestrate
+ * Default: oddkit_orchestrate + epistemic guide tools
  * ODDKIT_DEV_TOOLS=1: all tools
  */
 function getTools() {
@@ -278,7 +440,10 @@ function getTools() {
   if (devTools) {
     return ALL_TOOLS;
   }
-  return [ALL_TOOLS[0]]; // Only oddkit_orchestrate
+  // Expose orchestrate + epistemic guide tools by default
+  return ALL_TOOLS.filter(
+    (t) => t.name === "oddkit_orchestrate" || EPISTEMIC_TOOL_NAMES.includes(t.name),
+  );
 }
 
 /**
@@ -394,6 +559,217 @@ Request:
 
 Valid actions: preflight, catalog, librarian, validate, explain, orient
 `.trim();
+}
+
+/**
+ * Build assistant_text for orient results
+ */
+function buildOrientResponse(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  lines.push(`Orientation: ${taskResult.current_mode} mode (${taskResult.mode_confidence} confidence)`);
+  lines.push("");
+
+  if (taskResult.unresolved.length > 0) {
+    lines.push("Unresolved:");
+    for (const item of taskResult.unresolved) {
+      lines.push(`  - ${item}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.assumptions.length > 0) {
+    lines.push("Assumptions detected:");
+    for (const assumption of taskResult.assumptions) {
+      lines.push(`  - ${assumption}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.suggested_questions.length > 0) {
+    lines.push("Questions to answer before progressing:");
+    for (const q of taskResult.suggested_questions) {
+      lines.push(`  - ${q}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_refs && taskResult.canon_refs.length > 0) {
+    lines.push("Relevant canon:");
+    for (const ref of taskResult.canon_refs) {
+      lines.push(`  > ${ref.quote}`);
+      lines.push(`  — ${ref.path}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for challenge results
+ */
+function buildChallengeResponse(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  lines.push(`Challenge (${taskResult.claim_type}):`);
+  lines.push("");
+
+  if (taskResult.tensions.length > 0) {
+    lines.push("Tensions found:");
+    for (const t of taskResult.tensions) {
+      lines.push(`  - [${t.type}] ${t.message}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.missing_prerequisites.length > 0) {
+    lines.push("Missing prerequisites:");
+    for (const m of taskResult.missing_prerequisites) {
+      lines.push(`  - ${m}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.challenges.length > 0) {
+    lines.push("Questions to address:");
+    for (const c of taskResult.challenges) {
+      lines.push(`  - ${c}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.suggested_reframings.length > 0) {
+    lines.push("Suggested reframings:");
+    for (const r of taskResult.suggested_reframings) {
+      lines.push(`  - ${r}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_constraints && taskResult.canon_constraints.length > 0) {
+    lines.push("Canon constraints:");
+    for (const c of taskResult.canon_constraints) {
+      lines.push(`  > ${c.quote}`);
+      lines.push(`  — ${c.citation}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for gate results
+ */
+function buildGateResponse(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  const icon = taskResult.status === "PASS" ? "PASS" : "NOT READY";
+  lines.push(`Gate: ${icon} (${taskResult.transition.from} → ${taskResult.transition.to})`);
+  lines.push("");
+
+  const prereqs = taskResult.prerequisites;
+  lines.push(`Prerequisites: ${prereqs.required_met}/${prereqs.required_total} required met`);
+  lines.push("");
+
+  if (prereqs.met.length > 0) {
+    lines.push("Met:");
+    for (const m of prereqs.met) {
+      lines.push(`  + ${m}`);
+    }
+    lines.push("");
+  }
+
+  if (prereqs.unmet.length > 0) {
+    lines.push("Unmet (required):");
+    for (const u of prereqs.unmet) {
+      lines.push(`  - ${u}`);
+    }
+    lines.push("");
+  }
+
+  if (prereqs.unknown.length > 0) {
+    lines.push("Not confirmed:");
+    for (const u of prereqs.unknown) {
+      lines.push(`  ? ${u}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_refs && taskResult.canon_refs.length > 0) {
+    lines.push("Relevant canon:");
+    for (const ref of taskResult.canon_refs) {
+      lines.push(`  > ${ref.quote}`);
+      lines.push(`  — ${ref.path}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for encode results
+ */
+function buildEncodeResponse(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  const art = taskResult.artifact;
+  lines.push(`Encoded ${art.type}: ${art.title}`);
+  lines.push(`Status: ${art.status} | Quality: ${taskResult.quality.level} (${taskResult.quality.score}/${taskResult.quality.max_score})`);
+  lines.push("");
+
+  lines.push(`Decision: ${art.decision}`);
+  lines.push(`Rationale: ${art.rationale}`);
+  lines.push("");
+
+  if (art.constraints.length > 0) {
+    lines.push("Constraints:");
+    for (const c of art.constraints) {
+      lines.push(`  - ${c}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.quality.gaps.length > 0) {
+    lines.push("Gaps:");
+    for (const g of taskResult.quality.gaps) {
+      lines.push(`  - ${g}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.quality.suggestions.length > 0) {
+    lines.push("Suggestions to strengthen:");
+    for (const s of taskResult.quality.suggestions) {
+      lines.push(`  - ${s}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_refs && taskResult.canon_refs.length > 0) {
+    lines.push("Relevant canon:");
+    for (const ref of taskResult.canon_refs) {
+      lines.push(`  > ${ref.quote}`);
+      lines.push(`  — ${ref.path}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
 }
 
 /**
@@ -667,6 +1043,181 @@ async function main() {
                       code: "DOC_FETCH_ERROR",
                       message: err.message || "Failed to fetch document",
                     },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_orient": {
+        const { input, baseline } = args;
+        try {
+          const taskResult = await runOrient({
+            input,
+            repo: repoRoot,
+            baseline,
+          });
+          const assistantText = buildOrientResponse(taskResult);
+          const result = {
+            action: "orient",
+            assistant_text: assistantText,
+            result: taskResult,
+            debug: taskResult.debug,
+          };
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "orient",
+                    result: null,
+                    debug: { error: err.message },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_challenge": {
+        const { input, mode, baseline } = args;
+        try {
+          const taskResult = await runChallenge({
+            input,
+            mode,
+            repo: repoRoot,
+            baseline,
+          });
+          const assistantText = buildChallengeResponse(taskResult);
+          const result = {
+            action: "challenge",
+            assistant_text: assistantText,
+            result: taskResult,
+            debug: taskResult.debug,
+          };
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "challenge",
+                    result: null,
+                    debug: { error: err.message },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_gate": {
+        const { input, context, baseline } = args;
+        try {
+          const taskResult = await runGate({
+            input,
+            context,
+            repo: repoRoot,
+            baseline,
+          });
+          const assistantText = buildGateResponse(taskResult);
+          const result = {
+            action: "gate",
+            assistant_text: assistantText,
+            result: taskResult,
+            debug: taskResult.debug,
+          };
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "gate",
+                    result: null,
+                    debug: { error: err.message },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      case "oddkit_encode": {
+        const { input, context, baseline } = args;
+        try {
+          const taskResult = await runEncode({
+            input,
+            context,
+            repo: repoRoot,
+            baseline,
+          });
+          const assistantText = buildEncodeResponse(taskResult);
+          const result = {
+            action: "encode",
+            assistant_text: assistantText,
+            result: taskResult,
+            debug: taskResult.debug,
+          };
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    action: "encode",
+                    result: null,
+                    debug: { error: err.message },
                   },
                   null,
                   2,

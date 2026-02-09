@@ -41,13 +41,19 @@ CALL oddkit_orchestrate WHEN:
 - Discoverability ("what's in ODD?", "list canon")
 - Orientation (pass action="orient" explicitly)
 
+EPISTEMIC GUIDE TOOLS (also available as standalone):
+- oddkit_orient: Assess a goal/situation, detect epistemic mode, surface assumptions
+- oddkit_challenge: Pressure-test a claim or proposal against canon constraints
+- oddkit_gate: Check transition prerequisites before changing modes
+- oddkit_encode: Structure a decision as a durable record
+
 RESPONSE HANDLING:
 - Use the "assistant_text" field directly - it's a complete answer with citations
 - Don't add extra narration - print assistant_text verbatim
 
 ACTION PARAMETER (optional):
 - Without action: oddkit detects intent from message
-- Explicit: action="preflight|catalog|librarian|validate|explain|orient"
+- Explicit: action="orient|challenge|gate|encode|preflight|catalog|librarian|validate|explain"
 
 FOR SPAWNED AGENTS:
 - You inherit oddkit access from parent context

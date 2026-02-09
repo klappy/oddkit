@@ -16,6 +16,10 @@ import { runValidate } from "../tasks/validate.js";
 import { runCatalog } from "../tasks/catalog.js";
 import { runPreflight } from "../tasks/preflight.js";
 import { runInstructionSync } from "../tasks/instructionSync.js";
+import { runOrient } from "../tasks/orient.js";
+import { runChallenge } from "../tasks/challenge.js";
+import { runGate } from "../tasks/gate.js";
+import { runEncode } from "../tasks/encode.js";
 import { explainLast } from "../explain/explain-last.js";
 import { readExcerpt } from "../tools/readExcerpt.js";
 import { countWords } from "../utils/slicing.js";
@@ -25,6 +29,9 @@ import { countWords } from "../utils/slicing.js";
  */
 export const ACTIONS = {
   ORIENT: "orient",
+  CHALLENGE: "challenge",
+  GATE: "gate",
+  ENCODE: "encode",
   PREFLIGHT: "preflight",
   CATALOG: "catalog",
   LIBRARIAN: "librarian",
@@ -353,13 +360,47 @@ export async function runOrchestrate(options) {
   try {
     switch (action) {
       case ACTIONS.ORIENT: {
-        // ORIENT reuses catalog but frames it as terrain/orientation
-        const taskResult = await runCatalog({
+        // ORIENT uses the orient task for epistemic mode detection
+        const taskResult = await runOrient({
+          input: message,
           repo: repoRoot || process.cwd(),
           baseline,
         });
         result.result = taskResult;
         result.assistant_text = buildOrientAssistantText(taskResult, epistemic);
+        break;
+      }
+
+      case ACTIONS.CHALLENGE: {
+        const taskResult = await runChallenge({
+          input: message,
+          repo: repoRoot || process.cwd(),
+          baseline,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildChallengeAssistantText(taskResult);
+        break;
+      }
+
+      case ACTIONS.GATE: {
+        const taskResult = await runGate({
+          input: message,
+          repo: repoRoot || process.cwd(),
+          baseline,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildGateAssistantText(taskResult);
+        break;
+      }
+
+      case ACTIONS.ENCODE: {
+        const taskResult = await runEncode({
+          input: message,
+          repo: repoRoot || process.cwd(),
+          baseline,
+        });
+        result.result = taskResult;
+        result.assistant_text = buildEncodeAssistantText(taskResult);
         break;
       }
 
@@ -535,16 +576,59 @@ function buildCatalogAssistantText(taskResult) {
 }
 
 /**
- * Build assistant_text for ORIENT results (terrain rendering)
+ * Build assistant_text for ORIENT results (epistemic mode detection)
  * Per CHARTER.md: oddkit is epistemic terrain rendering, not reactive search.
  */
 function buildOrientAssistantText(taskResult, epistemic) {
-  const lines = [];
+  // Handle new orient task format
+  if (taskResult.current_mode) {
+    const lines = [];
+    lines.push(
+      `Orientation: ${taskResult.current_mode} mode (${taskResult.mode_confidence} confidence)`,
+    );
+    lines.push("");
 
+    if (taskResult.unresolved && taskResult.unresolved.length > 0) {
+      lines.push("Unresolved:");
+      for (const item of taskResult.unresolved) {
+        lines.push(`  - ${item}`);
+      }
+      lines.push("");
+    }
+
+    if (taskResult.assumptions && taskResult.assumptions.length > 0) {
+      lines.push("Assumptions detected:");
+      for (const assumption of taskResult.assumptions) {
+        lines.push(`  - ${assumption}`);
+      }
+      lines.push("");
+    }
+
+    if (taskResult.suggested_questions && taskResult.suggested_questions.length > 0) {
+      lines.push("Questions to answer before progressing:");
+      for (const q of taskResult.suggested_questions) {
+        lines.push(`  - ${q}`);
+      }
+      lines.push("");
+    }
+
+    if (taskResult.canon_refs && taskResult.canon_refs.length > 0) {
+      lines.push("Relevant canon:");
+      for (const ref of taskResult.canon_refs) {
+        lines.push(`  > ${ref.quote}`);
+        lines.push(`  — ${ref.path}`);
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n").trim();
+  }
+
+  // Fallback: old catalog-based orient format
+  const lines = [];
   lines.push("Epistemic terrain");
   lines.push("");
 
-  // If epistemic context provided, acknowledge it
   if (epistemic?.mode_ref) {
     const mode = epistemic.mode_ref.split("#").pop() || "unknown";
     const conf = epistemic.confidence || "unspecified";
@@ -557,40 +641,157 @@ function buildOrientAssistantText(taskResult, epistemic) {
   lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
   lines.push("");
 
-  lines.push("Canon by tag:");
-  for (const { tag, docs: docList } of taskResult.canon_by_tag || []) {
-    if (docList.length > 0) {
-      lines.push(`  ${tag}: ${docList.map((d) => d.path).join(", ")}`);
-    }
+  lines.push("To go deeper:");
+  lines.push("  - Ask a specific policy question (librarian)");
+  lines.push("  - Run preflight before implementing");
+  lines.push("  - Validate completion claims with artifacts");
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for CHALLENGE results
+ */
+function buildChallengeAssistantText(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
   }
+
+  const lines = [];
+  lines.push(`Challenge (${taskResult.claim_type}):`);
   lines.push("");
 
-  lines.push("Operational playbooks:");
-  for (const p of taskResult.playbooks || []) {
-    lines.push(`  ${p.path}`);
+  if (taskResult.tensions.length > 0) {
+    lines.push("Tensions found:");
+    for (const t of taskResult.tensions) {
+      lines.push(`  - [${t.type}] ${t.message}`);
+    }
+    lines.push("");
   }
+
+  if (taskResult.missing_prerequisites.length > 0) {
+    lines.push("Missing prerequisites:");
+    for (const m of taskResult.missing_prerequisites) {
+      lines.push(`  - ${m}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.challenges.length > 0) {
+    lines.push("Questions to address:");
+    for (const c of taskResult.challenges) {
+      lines.push(`  - ${c}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.suggested_reframings.length > 0) {
+    lines.push("Suggested reframings:");
+    for (const r of taskResult.suggested_reframings) {
+      lines.push(`  - ${r}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_constraints && taskResult.canon_constraints.length > 0) {
+    lines.push("Canon constraints:");
+    for (const c of taskResult.canon_constraints) {
+      lines.push(`  > ${c.quote}`);
+      lines.push(`  — ${c.citation}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for GATE results
+ */
+function buildGateAssistantText(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  const label = taskResult.status === "PASS" ? "PASS" : "NOT READY";
+  lines.push(`Gate: ${label} (${taskResult.transition.from} → ${taskResult.transition.to})`);
   lines.push("");
 
-  // Contextual suggestions based on epistemic mode (if provided)
-  if (epistemic?.mode_ref) {
-    lines.push("Suggested next actions:");
-    if (epistemic.mode_ref.includes("exploration")) {
-      lines.push("  - Read the quickstart or start_here doc");
-      lines.push("  - Ask: What constraints apply to [topic]?");
-      lines.push("  - Ask: What's the definition of done for [task]?");
-    } else if (epistemic.mode_ref.includes("planning")) {
-      lines.push("  - Review constraints and governing docs");
-      lines.push("  - Ask: What prior decisions affect [topic]?");
-      lines.push("  - Run preflight before implementation");
-    } else if (epistemic.mode_ref.includes("execution")) {
-      lines.push("  - Use librarian for specific policy questions");
-      lines.push("  - When ready, validate your completion claim");
+  const prereqs = taskResult.prerequisites;
+  lines.push(`Prerequisites: ${prereqs.required_met}/${prereqs.required_total} required met`);
+  lines.push("");
+
+  if (prereqs.unmet.length > 0) {
+    lines.push("Unmet (required):");
+    for (const u of prereqs.unmet) {
+      lines.push(`  - ${u}`);
     }
-  } else {
-    lines.push("To go deeper:");
-    lines.push("  - Ask a specific policy question (librarian)");
-    lines.push("  - Run preflight before implementing");
-    lines.push("  - Validate completion claims with artifacts");
+    lines.push("");
+  }
+
+  if (prereqs.met.length > 0) {
+    lines.push("Met:");
+    for (const m of prereqs.met) {
+      lines.push(`  + ${m}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.canon_refs && taskResult.canon_refs.length > 0) {
+    lines.push("Relevant canon:");
+    for (const ref of taskResult.canon_refs) {
+      lines.push(`  > ${ref.quote}`);
+      lines.push(`  — ${ref.path}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+/**
+ * Build assistant_text for ENCODE results
+ */
+function buildEncodeAssistantText(taskResult) {
+  if (taskResult.status === "ERROR") {
+    return `Error: ${taskResult.error}`;
+  }
+
+  const lines = [];
+  const art = taskResult.artifact;
+  lines.push(`Encoded ${art.type}: ${art.title}`);
+  lines.push(
+    `Status: ${art.status} | Quality: ${taskResult.quality.level} (${taskResult.quality.score}/${taskResult.quality.max_score})`,
+  );
+  lines.push("");
+
+  lines.push(`Decision: ${art.decision}`);
+  lines.push(`Rationale: ${art.rationale}`);
+  lines.push("");
+
+  if (art.constraints.length > 0) {
+    lines.push("Constraints:");
+    for (const c of art.constraints) {
+      lines.push(`  - ${c}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.quality.gaps.length > 0) {
+    lines.push("Gaps:");
+    for (const g of taskResult.quality.gaps) {
+      lines.push(`  - ${g}`);
+    }
+    lines.push("");
+  }
+
+  if (taskResult.quality.suggestions.length > 0) {
+    lines.push("Suggestions to strengthen:");
+    for (const s of taskResult.quality.suggestions) {
+      lines.push(`  - ${s}`);
+    }
+    lines.push("");
   }
 
   return lines.join("\n").trim();
