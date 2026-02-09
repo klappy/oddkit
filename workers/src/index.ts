@@ -7,7 +7,7 @@
  * Uses streamable-http transport for MCP communication.
  */
 
-import { runOrchestrate, type OrchestrateResult, type Env } from "./orchestrate";
+import { runOrchestrate, runOrientAction, runChallengeAction, runGateAction, runEncodeAction, type OrchestrateResult, type Env } from "./orchestrate";
 import { renderChatPage } from "./chat-ui";
 import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
@@ -34,7 +34,7 @@ Use when:
         message: { type: "string", description: "The message to process" },
         action: {
           type: "string",
-          enum: ["orient", "catalog", "preflight", "librarian", "validate", "explain"],
+          enum: ["orient", "challenge", "gate", "encode", "catalog", "preflight", "librarian", "validate", "explain"],
           description: "Explicit action override (optional, auto-detected from message)",
         },
         canon_url: {
@@ -124,6 +124,154 @@ Use when:
     },
     annotations: {
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "oddkit_orient",
+    description: `Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution).
+
+Determines which mode the user is in based on their input. Surfaces unresolved items, unstated assumptions, and questions that need answering before progressing.
+
+Use when:
+- Starting a new task or conversation and need to understand where you are
+- Uncertain whether to explore, plan, or execute
+- Want to surface hidden assumptions before committing to a direction
+
+Returns: current mode, confidence, unresolved items, assumptions detected, suggested next questions, relevant canon references.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: {
+          type: "string",
+          description: "A goal, idea, or situation description to orient against.",
+        },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override.",
+        },
+      },
+      required: ["input"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: "oddkit_challenge",
+    description: `Pressure-test a claim, assumption, or proposal against canon constraints.
+
+Queries canon for relevant constraints and surfaces tensions, missing evidence, unexamined risks, and contradictions. Applies challenge proportionally — stronger claims get harder scrutiny.
+
+Use when:
+- Evaluating a proposal before committing
+- Testing whether an assumption holds under scrutiny
+- Checking if a claim has sufficient evidence
+- Want to find what could go wrong before it does
+
+Returns: claim type, tensions with canon, missing prerequisites, proportional challenges, suggested reframings, relevant canon constraints.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: {
+          type: "string",
+          description: "A claim, assumption, or proposal to challenge.",
+        },
+        mode: {
+          type: "string",
+          enum: ["exploration", "planning", "execution"],
+          description: "Optional epistemic mode context for proportional challenge.",
+        },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override.",
+        },
+      },
+      required: ["input"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: "oddkit_gate",
+    description: `Check transition prerequisites before changing epistemic modes.
+
+Validates that a proposed transition (e.g., "ready to build", "moving to planning") has met its prerequisites. Surfaces unmet requirements, missing evidence, and what would need to be true to proceed. Blocks premature convergence.
+
+Use when:
+- About to shift from exploration to planning
+- About to shift from planning to execution
+- Claiming readiness to ship or deploy
+- Wanting to step back from execution to rethink
+
+Returns: gate status (PASS/NOT_READY), transition details, met/unmet/unknown prerequisites, missing evidence, relevant canon references.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: {
+          type: "string",
+          description: "The proposed transition (e.g., 'ready to build', 'moving to planning').",
+        },
+        context: {
+          type: "string",
+          description: "Optional context about what's been decided so far.",
+        },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override.",
+        },
+      },
+      required: ["input"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: "oddkit_encode",
+    description: `Structure a decision, insight, or boundary as a durable record.
+
+Validates that the input has sufficient justification and clarity to prevent future re-litigation. Structures it as a decision artifact with title, rationale, constraints, and status. Assesses quality and suggests improvements.
+
+Use when:
+- A decision has been made and needs to be recorded
+- An insight or lesson learned should be preserved
+- A boundary or constraint has been established
+- Want to prevent the same debate from recurring
+
+Returns: structured decision artifact, quality assessment (strong/adequate/weak/insufficient), gaps and improvement suggestions, relevant canon references.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: {
+          type: "string",
+          description: "A decision, insight, or boundary to capture.",
+        },
+        context: {
+          type: "string",
+          description: "Optional supporting context.",
+        },
+        canon_url: {
+          type: "string",
+          description: "Optional: GitHub repo URL for canon override.",
+        },
+      },
+      required: ["input"],
+    },
+    annotations: {
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
@@ -591,6 +739,41 @@ async function handleMcpRequest(
             };
             break;
           }
+
+          case "oddkit_orient":
+            result = await runOrientAction({
+              input: (args?.input as string) || "",
+              env,
+              canonUrl,
+            });
+            break;
+
+          case "oddkit_challenge":
+            result = await runChallengeAction({
+              input: (args?.input as string) || "",
+              mode: args?.mode as string | undefined,
+              env,
+              canonUrl,
+            });
+            break;
+
+          case "oddkit_gate":
+            result = await runGateAction({
+              input: (args?.input as string) || "",
+              context: args?.context as string | undefined,
+              env,
+              canonUrl,
+            });
+            break;
+
+          case "oddkit_encode":
+            result = await runEncodeAction({
+              input: (args?.input as string) || "",
+              context: args?.context as string | undefined,
+              env,
+              canonUrl,
+            });
+            break;
 
           default:
             return {
