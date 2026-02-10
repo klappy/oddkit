@@ -510,6 +510,99 @@ function formatSseEvent(data: unknown, eventId?: string): string {
   return lines.join("\n") + "\n";
 }
 
+// Timeout for MCP tool execution. Must be under Cloudflare's 30s wall time limit.
+// Gives tools 25s to complete, leaving 5s headroom for response serialization.
+const MCP_TOOL_TIMEOUT_MS = 25_000;
+
+/**
+ * Execute a tool call by name, dispatching to the appropriate handler.
+ */
+async function executeToolCall(
+  name: string,
+  args: Record<string, unknown> | undefined,
+  env: Env,
+  canonUrl: string | undefined
+): Promise<OrchestrateResult> {
+  switch (name) {
+    case "oddkit_orchestrate":
+      return await runOrchestrate({
+        message: (args?.message as string) || "",
+        action: args?.action as string | undefined,
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_librarian":
+      return await runOrchestrate({
+        message: (args?.query as string) || "",
+        action: "librarian",
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_validate":
+      return await runOrchestrate({
+        message: (args?.message as string) || "",
+        action: "validate",
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_catalog":
+      return await runOrchestrate({
+        message: "what's in odd",
+        action: "catalog",
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_invalidate_cache": {
+      const { ZipBaselineFetcher } = await import("./zip-baseline-fetcher");
+      const fetcher = new ZipBaselineFetcher(env);
+      await fetcher.invalidateCache(canonUrl);
+      return {
+        action: "invalidate_cache",
+        result: { success: true, canon_url: canonUrl },
+        assistant_text: `Cache invalidated${canonUrl ? ` for ${canonUrl}` : ""}. Next request will fetch fresh data.`,
+      };
+    }
+
+    case "oddkit_orient":
+      return await runOrientAction({
+        input: (args?.input as string) || "",
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_challenge":
+      return await runChallengeAction({
+        input: (args?.input as string) || "",
+        mode: args?.mode as string | undefined,
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_gate":
+      return await runGateAction({
+        input: (args?.input as string) || "",
+        context: args?.context as string | undefined,
+        env,
+        canonUrl,
+      });
+
+    case "oddkit_encode":
+      return await runEncodeAction({
+        input: (args?.input as string) || "",
+        context: args?.context as string | undefined,
+        env,
+        canonUrl,
+      });
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
 // MCP request/response types with session tracking
 interface McpResponse {
   jsonrpc: string;
@@ -687,103 +780,28 @@ async function handleMcpRequest(
           arguments?: Record<string, unknown>;
         };
 
-        let result: OrchestrateResult;
         const canonUrl = args?.canon_url as string | undefined;
 
-        switch (name) {
-          case "oddkit_orchestrate":
-            result = await runOrchestrate({
-              message: (args?.message as string) || "",
-              action: args?.action as string | undefined,
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_librarian":
-            result = await runOrchestrate({
-              message: (args?.query as string) || "",
-              action: "librarian",
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_validate":
-            result = await runOrchestrate({
-              message: (args?.message as string) || "",
-              action: "validate",
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_catalog":
-            result = await runOrchestrate({
-              message: "what's in odd",
-              action: "catalog",
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_invalidate_cache": {
-            // Import the fetcher to invalidate cache
-            const { ZipBaselineFetcher } = await import("./zip-baseline-fetcher");
-            const fetcher = new ZipBaselineFetcher(env);
-            await fetcher.invalidateCache(canonUrl);
-            result = {
-              action: "invalidate_cache",
-              result: { success: true, canon_url: canonUrl },
-              assistant_text: `Cache invalidated${canonUrl ? ` for ${canonUrl}` : ""}. Next request will fetch fresh data.`,
-            };
-            break;
-          }
-
-          case "oddkit_orient":
-            result = await runOrientAction({
-              input: (args?.input as string) || "",
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_challenge":
-            result = await runChallengeAction({
-              input: (args?.input as string) || "",
-              mode: args?.mode as string | undefined,
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_gate":
-            result = await runGateAction({
-              input: (args?.input as string) || "",
-              context: args?.context as string | undefined,
-              env,
-              canonUrl,
-            });
-            break;
-
-          case "oddkit_encode":
-            result = await runEncodeAction({
-              input: (args?.input as string) || "",
-              context: args?.context as string | undefined,
-              env,
-              canonUrl,
-            });
-            break;
-
-          default:
-            return {
-              jsonrpc: "2.0",
-              id,
-              error: {
-                code: -32601,
-                message: `Unknown tool: ${name}`,
-              },
-            };
+        let result: OrchestrateResult;
+        try {
+          result = await Promise.race([
+            executeToolCall(name, args, env, canonUrl),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`Tool '${name}' timed out after ${MCP_TOOL_TIMEOUT_MS}ms`)),
+                MCP_TOOL_TIMEOUT_MS
+              )
+            ),
+          ]);
+        } catch (toolErr) {
+          const message = toolErr instanceof Error ? toolErr.message : "Tool execution failed";
+          // Unknown tool errors get -32601, timeouts/other errors get -32603
+          const code = message.startsWith("Unknown tool:") ? -32601 : -32603;
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: { code, message },
+          };
         }
 
         return {
