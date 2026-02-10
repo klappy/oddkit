@@ -324,6 +324,53 @@ RESULT=$(mcp_call "tools/call" '{"name":"oddkit_validate","arguments":{"message"
 check_json "oddkit_validate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # ============================================
+# SECTION 3b: Epistemic Tools (orient, challenge, gate, encode)
+# ============================================
+
+echo ""
+echo "--- Epistemic Tool Calls ---"
+echo ""
+
+# Test 14b: oddkit_orient
+echo "Test 14b: tools/call oddkit_orient"
+RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_orient","arguments":{"input":"I want to add authentication to my app"}}}')
+check_json "oddkit_orient" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+
+# Test 14c: oddkit_challenge
+echo ""
+echo "Test 14c: tools/call oddkit_challenge"
+RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_challenge","arguments":{"input":"We should use MongoDB for everything"}}}')
+check_json "oddkit_challenge" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+
+# Test 14d: oddkit_gate
+echo ""
+echo "Test 14d: tools/call oddkit_gate"
+RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_gate","arguments":{"input":"ready to build the auth module"}}}')
+check_json "oddkit_gate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+
+# Test 14e: oddkit_encode
+echo ""
+echo "Test 14e: tools/call oddkit_encode"
+RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_encode","arguments":{"input":"We decided to use JWT tokens because they are stateless and scalable"}}}')
+check_json "oddkit_encode" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+
+# Test 14f: oddkit_catalog
+echo ""
+echo "Test 14f: tools/call oddkit_catalog"
+RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_catalog","arguments":{}}}')
+check_json "oddkit_catalog" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+
+# ============================================
 # SECTION 4: Response Content Validation
 # ============================================
 

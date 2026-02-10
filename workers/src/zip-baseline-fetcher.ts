@@ -193,10 +193,28 @@ function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
 export class ZipBaselineFetcher {
   private env: Env;
   private zipCache: Map<string, Uint8Array> = new Map();
+  private unzippedCache: Map<string, Record<string, Uint8Array>> = new Map();
   private commitCache: Map<string, string> = new Map();
 
   constructor(env: Env) {
     this.env = env;
+  }
+
+  /**
+   * Get unzipped file map, caching the result to avoid repeated decompression.
+   * unzipSync is CPU-intensive; calling it once per ZIP per request
+   * keeps us within Cloudflare Worker CPU limits.
+   */
+  private getUnzipped(zipData: Uint8Array, cacheKey: string): Record<string, Uint8Array> {
+    const existing = this.unzippedCache.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
+    const unzipped = unzipSync(zipData, {
+      filter: (file) => file.name.endsWith(".md"),
+    });
+    this.unzippedCache.set(cacheKey, unzipped);
+    return unzipped;
   }
 
   /**
@@ -356,13 +374,13 @@ export class ZipBaselineFetcher {
    */
   private extractMarkdownFiles(
     zipData: Uint8Array,
-    source: "canon" | "baseline"
+    source: "canon" | "baseline",
+    zipCacheKey: string
   ): IndexEntry[] {
     const entries: IndexEntry[] = [];
 
     try {
-      // Lazy unzip - only decompress file listing first
-      const unzipped = unzipSync(zipData);
+      const unzipped = this.getUnzipped(zipData, zipCacheKey);
 
       for (const [fullPath, fileData] of Object.entries(unzipped)) {
         // Skip non-markdown files
@@ -428,7 +446,8 @@ export class ZipBaselineFetcher {
       return [];
     }
 
-    return this.extractMarkdownFiles(zipData, source);
+    const cacheKey = `zip/${getCacheKey(zipUrl)}`;
+    return this.extractMarkdownFiles(zipData, source, cacheKey);
   }
 
   /**
@@ -575,7 +594,8 @@ export class ZipBaselineFetcher {
       if (!zipData) continue;
 
       try {
-        const unzipped = unzipSync(zipData);
+        const unzipCacheKey = `zip/${getCacheKey(zipUrl)}`;
+        const unzipped = this.getUnzipped(zipData, unzipCacheKey);
 
         // Find the file (accounting for repo-branch prefix)
         for (const [fullPath, fileData] of Object.entries(unzipped)) {
@@ -634,6 +654,7 @@ export class ZipBaselineFetcher {
 
     // Clear memory cache
     this.zipCache.clear();
+    this.unzippedCache.clear();
     this.commitCache.clear();
   }
 }
