@@ -5,16 +5,15 @@
  *
  * Exposes oddkit as MCP tools for Cursor, Claude Code, and other MCP-compatible hosts.
  *
- * v2: Single `oddkit` tool with action routing. Old tool names kept as
- * deprecated aliases for one release cycle.
+ * v2: Two-layer tool surface — unified `oddkit` orchestrator with state
+ * threading + individual tools as direct, stateless access points.
+ * All tools use `canon_url` for canon override.
  *
  * Tools:
- *   - oddkit: Unified tool with action routing (search, preflight, validate, orient, etc.)
- *   - oddkit_orchestrate (deprecated): Routes to unified handler
- *   - oddkit_librarian (deprecated): → search
- *   - oddkit_validate (deprecated): → validate
- *   - oddkit_explain (deprecated): → explain
- *   - oddkit_orient/challenge/gate/encode (deprecated): → unified handler
+ *   Layer 1 (orchestrator): oddkit — unified tool with action routing and state threading
+ *   Layer 2 (individual):   oddkit_orient, oddkit_challenge, oddkit_gate, oddkit_encode,
+ *                           oddkit_search, oddkit_get, oddkit_catalog, oddkit_validate,
+ *                           oddkit_preflight, oddkit_version, oddkit_invalidate_cache
  *
  * Usage:
  *   node src/mcp/server.js
@@ -35,7 +34,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readFileSync } from "fs";
 import { runOrchestrate } from "./orchestrate.js";
-import { runOrchestrator } from "../orchestrator/index.js";
+// import { runOrchestrator } from "../orchestrator/index.js"; // Removed: absorbed into unified handler
 import { listPrompts, getPrompt } from "./prompts.js";
 import { getOddkitInstructions } from "./instructions.js";
 import { resolveCanonTarget } from "../policy/canonTarget.js";
@@ -196,191 +195,154 @@ Use when:
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Deprecated tool definitions
+// Layer 2: Individual tools — direct, stateless access to each action.
+// Same internal handlers as the orchestrator, but no state threading.
+// All use canon_url for canon override (not baseline/repo_root).
 // ──────────────────────────────────────────────────────────────────────────────
 
-const DEPRECATED_TOOLS = [
-  {
-    name: "oddkit_orchestrate",
-    description: `[DEPRECATED: Use \`oddkit\` tool instead] Routes a message to librarian/validate/explain and returns tool-grade JSON with ready-to-send assistant_text.
-
-MUST: Before editing files or implementing a spec, call with your implementation plan.
-MUST: Before claiming done/fixed/shipped/merged, call with completion claim + artifact paths.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        message: { type: "string" },
-        action: {
-          type: "string",
-          enum: [
-            "orient", "challenge", "gate", "encode", "catalog",
-            "preflight", "librarian", "validate", "explain", "instruction_sync",
-          ],
-          description: "Explicit action override.",
-        },
-        repo_root: { type: "string", description: "Path to target repo." },
-        baseline: { type: "string", description: "Optional baseline git URL or local path." },
-        baseline_root: { type: "string", description: "For instruction_sync filesystem mode." },
-        registry_payload: { type: "object", description: "For instruction_sync payload mode." },
-        state_payload: { type: "object", description: "For instruction_sync payload mode." },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "oddkit_librarian",
-    description: "[DEPRECATED: Use `oddkit` with action='search'] Retrieves governing/operational docs with quotes + citations.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string" },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "oddkit_validate",
-    description: "[DEPRECATED: Use `oddkit` with action='validate'] Validates completion claims against required artifacts.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        message: { type: "string" },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
-        artifacts: { type: "string" },
-      },
-      required: ["message"],
-    },
-  },
-  {
-    name: "oddkit_explain",
-    description: "[DEPRECATED: Use `oddkit` with action='explain'] Explains the last oddkit run.",
-    inputSchema: {
-      type: "object",
-      properties: { repo_root: { type: "string" } },
-    },
-  },
-  {
-    name: "oddkit_policy_version",
-    description: "[DEPRECATED: Use `oddkit` with action='version'] Returns oddkit version and canon target.",
-    inputSchema: {
-      type: "object",
-      properties: { baseline: { type: "string" } },
-    },
-  },
-  {
-    name: "oddkit_policy_get",
-    description: "[DEPRECATED: Use `oddkit` with action='get'] Fetches a canonical doc by klappy:// URI.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        uri: { type: "string", description: "Canonical URI (e.g., klappy://canon/agents/odd-epistemic-guide)" },
-        format: { type: "string", enum: ["markdown", "json"], description: "Output format (default: markdown)" },
-        baseline: { type: "string" },
-      },
-      required: ["uri"],
-    },
-  },
+const INDIVIDUAL_TOOLS = [
   {
     name: "oddkit_orient",
-    description: "[DEPRECATED: Use `oddkit` with action='orient'] Assess a goal against epistemic modes.",
+    description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions.",
     inputSchema: {
       type: "object",
       properties: {
-        input: { type: "string", description: "A goal, idea, or situation description." },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
+        input: { type: "string", description: "A goal, idea, or situation description to orient against." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
     },
   },
   {
     name: "oddkit_challenge",
-    description: "[DEPRECATED: Use `oddkit` with action='challenge'] Pressure-test a claim against canon.",
+    description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions.",
     inputSchema: {
       type: "object",
       properties: {
-        input: { type: "string", description: "A claim, assumption, or proposal." },
-        mode: { type: "string", enum: ["exploration", "planning", "execution"] },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
+        input: { type: "string", description: "A claim, assumption, or proposal to challenge." },
+        mode: { type: "string", enum: ["exploration", "planning", "execution"], description: "Optional epistemic mode for proportional challenge." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
     },
   },
   {
     name: "oddkit_gate",
-    description: "[DEPRECATED: Use `oddkit` with action='gate'] Check transition prerequisites.",
+    description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence.",
     inputSchema: {
       type: "object",
       properties: {
-        input: { type: "string", description: "The proposed transition." },
-        context: { type: "string" },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
+        input: { type: "string", description: "The proposed transition (e.g., 'ready to build', 'moving to planning')." },
+        context: { type: "string", description: "Optional context about what's been decided so far." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
     },
   },
   {
     name: "oddkit_encode",
-    description: "[DEPRECATED: Use `oddkit` with action='encode'] Structure a decision as a durable record.",
+    description: "Structure a decision, insight, or boundary as a durable record. Assesses quality and suggests improvements.",
     inputSchema: {
       type: "object",
       properties: {
-        input: { type: "string", description: "A decision, insight, or boundary." },
-        context: { type: "string" },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
+        input: { type: "string", description: "A decision, insight, or boundary to capture." },
+        context: { type: "string", description: "Optional supporting context." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
     },
   },
   {
-    name: "oddkit_orchestrator",
-    description: "[DEPRECATED: Use `oddkit` tool instead] Unified Guide + Scribe orchestrator with mode-aware posture.",
+    name: "oddkit_search",
+    description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts.",
     inputSchema: {
       type: "object",
       properties: {
-        message: { type: "string" },
-        action: { type: "string" },
-        mode: { type: "string", enum: ["discovery", "planning", "execution"] },
-        transition_to: { type: "string", enum: ["discovery", "planning", "execution"] },
-        capture_consent: { type: "boolean" },
-        capture_entry: { type: "object" },
-        reset_session: { type: "boolean" },
-        repo_root: { type: "string" },
-        baseline: { type: "string" },
+        input: { type: "string", description: "Natural language query or tags to search for." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_get",
+    description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_catalog",
+    description: "Lists available documentation with categories, counts, and start-here suggestions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "oddkit_validate",
+    description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "The completion claim with artifact references." },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_preflight",
+    description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Description of what you're about to implement." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+  },
+  {
+    name: "oddkit_version",
+    description: "Returns oddkit version and the authoritative canon target (commit/mode).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "oddkit_invalidate_cache",
+    description: "Force refresh of cached baseline/canon data. Next request will fetch fresh data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL to invalidate cache for." },
       },
       required: [],
     },
   },
 ];
 
-const ALL_TOOLS = [ODDKIT_TOOL, ...DEPRECATED_TOOLS];
+const ALL_TOOLS = [ODDKIT_TOOL, ...INDIVIDUAL_TOOLS];
 
 /**
  * Get tools to expose based on environment
- * Default: oddkit + oddkit_orchestrate + epistemic guide tools (deprecated)
- * ODDKIT_DEV_TOOLS=1: all tools
+ * Default: all tools (orchestrator + individual)
+ * ODDKIT_DEV_TOOLS=1: same (kept for backward compat)
  */
 function getTools() {
-  const devTools = process.env.ODDKIT_DEV_TOOLS === "1";
-  if (devTools) {
-    return ALL_TOOLS;
-  }
-  // Default: unified tool + orchestrate + epistemic tools as deprecated aliases
-  const defaultNames = new Set([
-    "oddkit",
-    "oddkit_orchestrate",
-    "oddkit_orient",
-    "oddkit_challenge",
-    "oddkit_gate",
-    "oddkit_encode",
-  ]);
-  return ALL_TOOLS.filter((t) => defaultNames.has(t.name));
+  return ALL_TOOLS;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -874,12 +836,11 @@ async function main() {
     throw new Error(`Unknown resource: ${uri}`);
   });
 
-  // Handle tool calls
+  // Handle tool calls — two-layer routing
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
-    const repoRoot = args.repo_root ?? args.repoRoot ?? process.cwd();
 
-    // ── Primary tool: unified `oddkit` ──
+    // Layer 1: Unified orchestrator — accepts state
     if (name === "oddkit") {
       const result = await handleUnifiedAction({
         action: args.action || "search",
@@ -888,7 +849,6 @@ async function main() {
         mode: args.mode,
         canon_url: args.canon_url,
         state: args.state,
-        repoRoot,
         baseline: args.canon_url,
       });
       return {
@@ -896,129 +856,38 @@ async function main() {
       };
     }
 
-    // ── Deprecated aliases ──
-    const deprecationNotice = `[DEPRECATED] Tool "${name}" is deprecated. Use the unified "oddkit" tool with the appropriate action parameter instead.`;
+    // Layer 2: Individual tools — stateless, route to same handlers
+    const actionFromName = {
+      oddkit_orient: "orient",
+      oddkit_challenge: "challenge",
+      oddkit_gate: "gate",
+      oddkit_encode: "encode",
+      oddkit_search: "search",
+      oddkit_get: "get",
+      oddkit_catalog: "catalog",
+      oddkit_validate: "validate",
+      oddkit_preflight: "preflight",
+      oddkit_version: "version",
+      oddkit_invalidate_cache: "invalidate_cache",
+    };
 
-    switch (name) {
-      case "oddkit_orchestrate": {
-        const { message, baseline, action, baseline_root, registry_payload, state_payload } = args;
-        try {
-          const result = await runOrchestrate({ message, repoRoot, baseline, action, baseline_root, registry_payload, state_payload });
-          result.assistant_text = result.assistant_text ? `${deprecationNotice}\n\n${result.assistant_text}` : deprecationNotice;
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-        } catch (err) {
-          return { content: [{ type: "text", text: JSON.stringify({ action: "error", result: null, debug: { error: err.message } }, null, 2) }] };
-        }
-      }
-
-      case "oddkit_librarian": {
-        // Redirect to search (BM25) instead of broken CLI librarian
-        const result = await handleUnifiedAction({
-          action: "search",
-          input: args.query || "",
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_validate": {
-        const result = await handleUnifiedAction({
-          action: "validate",
-          input: args.message || "",
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_explain": {
-        const result = runOddkit("tool explain");
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_policy_version": {
-        const result = await handleUnifiedAction({
-          action: "version",
-          input: "",
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_policy_get": {
-        const result = await handleUnifiedAction({
-          action: "get",
-          input: args.uri || "",
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_orient": {
-        const result = await handleUnifiedAction({
-          action: "orient",
-          input: args.input || "",
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_challenge": {
-        const result = await handleUnifiedAction({
-          action: "challenge",
-          input: args.input || "",
-          mode: args.mode,
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_gate": {
-        const result = await handleUnifiedAction({
-          action: "gate",
-          input: args.input || "",
-          context: args.context,
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_encode": {
-        const result = await handleUnifiedAction({
-          action: "encode",
-          input: args.input || "",
-          context: args.context,
-          repoRoot,
-          baseline: args.baseline,
-        });
-        result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case "oddkit_orchestrator": {
-        const { message, action, mode, transition_to, capture_consent, capture_entry, reset_session, baseline } = args;
-        try {
-          const result = await runOrchestrator({ message, repoRoot, baseline, action, mode, transition_to, capture_consent, capture_entry, reset_session });
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-        } catch (err) {
-          return { content: [{ type: "text", text: JSON.stringify({ action: "error", success: false, error: err.message }, null, 2) }] };
-        }
-      }
-
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+    const action = actionFromName[name];
+    if (action) {
+      const result = await handleUnifiedAction({
+        action,
+        input: args.input || "",
+        context: args.context,
+        mode: args.mode,
+        canon_url: args.canon_url,
+        baseline: args.canon_url,
+        // No state for individual tools
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
+
+    throw new Error(`Unknown tool: ${name}`);
   });
 
   const transport = new StdioServerTransport();

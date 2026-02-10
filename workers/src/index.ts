@@ -6,11 +6,12 @@
  *
  * Uses streamable-http transport for MCP communication.
  *
- * v2: Single `oddkit` tool with action routing. Old tool names kept as
- * deprecated aliases for one release cycle.
+ * v2: Two-layer tool surface — unified `oddkit` orchestrator with state
+ * threading + individual tools as direct, stateless access points.
+ * All tools use `canon_url` for canon override.
  */
 
-import { handleUnifiedAction, runOrchestrate, type OddkitEnvelope, type Env } from "./orchestrate";
+import { handleUnifiedAction, type OddkitEnvelope, type Env } from "./orchestrate";
 import { renderChatPage } from "./chat-ui";
 import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
@@ -18,7 +19,7 @@ import pkg from "../package.json";
 export type { Env };
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Tool definitions — ONE primary tool + deprecated aliases
+// Tool definitions — Layer 1: Unified orchestrator + Layer 2: Individual tools
 // ──────────────────────────────────────────────────────────────────────────────
 
 const ODDKIT_TOOL = {
@@ -78,81 +79,12 @@ Use when:
   },
 };
 
-// Deprecated tool aliases — route to unified handler with deprecation warning
-const DEPRECATED_TOOLS = [
-  {
-    name: "oddkit_orchestrate",
-    description: "[DEPRECATED: Use `oddkit` tool instead] Routes a message to librarian/validate/explain.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        message: { type: "string", description: "The message to process" },
-        action: {
-          type: "string",
-          enum: ["orient", "challenge", "gate", "encode", "catalog", "preflight", "librarian", "validate", "explain"],
-          description: "Explicit action override (optional, auto-detected from message)",
-        },
-        canon_url: {
-          type: "string",
-          description: "Optional: GitHub repo URL for canon override.",
-        },
-      },
-      required: ["message"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_librarian",
-    description: "[DEPRECATED: Use `oddkit` with action='search'] Retrieves governing/operational docs with quotes + citations.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        query: { type: "string", description: "The policy question to answer" },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override" },
-      },
-      required: ["query"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_validate",
-    description: "[DEPRECATED: Use `oddkit` with action='validate'] Validates completion claims against required artifacts.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        message: { type: "string", description: "The completion claim with artifact references" },
-      },
-      required: ["message"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "oddkit_catalog",
-    description: "[DEPRECATED: Use `oddkit` with action='catalog'] Lists available documentation with categories and counts.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override" },
-      },
-      required: [] as string[],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_invalidate_cache",
-    description: "[DEPRECATED: Use `oddkit` with action='invalidate_cache'] Force refresh of cached baseline/canon data.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL to invalidate cache for" },
-      },
-      required: [] as string[],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
+// Layer 2: Individual tools — direct, stateless access to each action.
+// Same internal handlers as the orchestrator, but no state threading.
+const INDIVIDUAL_TOOLS = [
   {
     name: "oddkit_orient",
-    description: "[DEPRECATED: Use `oddkit` with action='orient'] Assess a goal against epistemic modes.",
+    description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -165,12 +97,12 @@ const DEPRECATED_TOOLS = [
   },
   {
     name: "oddkit_challenge",
-    description: "[DEPRECATED: Use `oddkit` with action='challenge'] Pressure-test a claim against canon.",
+    description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         input: { type: "string", description: "A claim, assumption, or proposal to challenge." },
-        mode: { type: "string", enum: ["exploration", "planning", "execution"], description: "Optional epistemic mode." },
+        mode: { type: "string", enum: ["exploration", "planning", "execution"], description: "Optional epistemic mode for proportional challenge." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
@@ -179,12 +111,12 @@ const DEPRECATED_TOOLS = [
   },
   {
     name: "oddkit_gate",
-    description: "[DEPRECATED: Use `oddkit` with action='gate'] Check transition prerequisites.",
+    description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        input: { type: "string", description: "The proposed transition." },
-        context: { type: "string", description: "Optional context." },
+        input: { type: "string", description: "The proposed transition (e.g., 'ready to build', 'moving to planning')." },
+        context: { type: "string", description: "Optional context about what's been decided so far." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
@@ -193,7 +125,7 @@ const DEPRECATED_TOOLS = [
   },
   {
     name: "oddkit_encode",
-    description: "[DEPRECATED: Use `oddkit` with action='encode'] Structure a decision as a durable record.",
+    description: "Structure a decision, insight, or boundary as a durable record. Assesses quality and suggests improvements.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -205,9 +137,96 @@ const DEPRECATED_TOOLS = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: "oddkit_search",
+    description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: { type: "string", description: "Natural language query or tags to search for." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "oddkit_get",
+    description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "oddkit_catalog",
+    description: "Lists available documentation with categories, counts, and start-here suggestions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: [] as string[],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "oddkit_validate",
+    description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: { type: "string", description: "The completion claim with artifact references." },
+      },
+      required: ["input"],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "oddkit_preflight",
+    description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        input: { type: "string", description: "Description of what you're about to implement." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: ["input"],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "oddkit_version",
+    description: "Returns oddkit version and the authoritative canon target (commit/mode).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+      },
+      required: [] as string[],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "oddkit_invalidate_cache",
+    description: "Force refresh of cached baseline/canon data. Next request will fetch fresh data.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        canon_url: { type: "string", description: "Optional: GitHub repo URL to invalidate cache for." },
+      },
+      required: [] as string[],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ];
 
-const ALL_TOOLS = [ODDKIT_TOOL, ...DEPRECATED_TOOLS];
+const ALL_TOOLS = [ODDKIT_TOOL, ...INDIVIDUAL_TOOLS];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Resource definitions
@@ -412,8 +431,8 @@ const MCP_TOOL_TIMEOUT_MS = 25_000;
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Route deprecated tool names to the unified handler.
- * Maps old parameter shapes to the new unified params.
+ * Execute a tool call by routing to the unified handler.
+ * Layer 1 (oddkit) passes state; Layer 2 (individual tools) does not.
  */
 async function executeToolCall(
   name: string,
@@ -422,9 +441,9 @@ async function executeToolCall(
 ): Promise<OddkitEnvelope> {
   const canonUrl = args?.canon_url as string | undefined;
 
-  // Primary tool: unified `oddkit`
+  // Layer 1: Unified orchestrator — accepts state
   if (name === "oddkit") {
-    const result = await handleUnifiedAction({
+    return handleUnifiedAction({
       action: (args?.action as string) || "search",
       input: (args?.input as string) || "",
       context: args?.context as string | undefined,
@@ -433,105 +452,38 @@ async function executeToolCall(
       state: args?.state as any,
       env,
     });
-    return result;
   }
 
-  // Deprecated aliases — route to unified handler with deprecation notice
-  const deprecationNotice = `[DEPRECATED] Tool "${name}" is deprecated. Use the unified "oddkit" tool with the appropriate action parameter instead.`;
+  // Layer 2: Individual tools — stateless, route to same handlers
+  // Extract the action name from the tool name (oddkit_orient → orient)
+  const actionFromName: Record<string, string> = {
+    oddkit_orient: "orient",
+    oddkit_challenge: "challenge",
+    oddkit_gate: "gate",
+    oddkit_encode: "encode",
+    oddkit_search: "search",
+    oddkit_get: "get",
+    oddkit_catalog: "catalog",
+    oddkit_validate: "validate",
+    oddkit_preflight: "preflight",
+    oddkit_version: "version",
+    oddkit_invalidate_cache: "invalidate_cache",
+  };
 
-  let result: OddkitEnvelope;
-
-  switch (name) {
-    case "oddkit_orchestrate":
-      result = await runOrchestrate({
-        message: (args?.message as string) || "",
-        action: args?.action as string | undefined,
-        env,
-        canonUrl,
-      });
-      break;
-
-    case "oddkit_librarian":
-      result = await handleUnifiedAction({
-        action: "search",
-        input: (args?.query as string) || "",
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_validate":
-      result = await handleUnifiedAction({
-        action: "validate",
-        input: (args?.message as string) || "",
-        env,
-      });
-      break;
-
-    case "oddkit_catalog":
-      result = await handleUnifiedAction({
-        action: "catalog",
-        input: "",
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_invalidate_cache":
-      result = await handleUnifiedAction({
-        action: "invalidate_cache",
-        input: "",
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_orient":
-      result = await handleUnifiedAction({
-        action: "orient",
-        input: (args?.input as string) || "",
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_challenge":
-      result = await handleUnifiedAction({
-        action: "challenge",
-        input: (args?.input as string) || "",
-        mode: args?.mode as string | undefined,
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_gate":
-      result = await handleUnifiedAction({
-        action: "gate",
-        input: (args?.input as string) || "",
-        context: args?.context as string | undefined,
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    case "oddkit_encode":
-      result = await handleUnifiedAction({
-        action: "encode",
-        input: (args?.input as string) || "",
-        context: args?.context as string | undefined,
-        canon_url: canonUrl,
-        env,
-      });
-      break;
-
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  const action = actionFromName[name];
+  if (action) {
+    return handleUnifiedAction({
+      action,
+      input: (args?.input as string) || "",
+      context: args?.context as string | undefined,
+      mode: args?.mode as string | undefined,
+      canon_url: canonUrl,
+      // No state for individual tools
+      env,
+    });
   }
 
-  // Append deprecation notice to assistant_text
-  result.assistant_text = `${deprecationNotice}\n\n${result.assistant_text}`;
-  return result;
+  throw new Error(`Unknown tool: ${name}`);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -576,7 +528,7 @@ async function handleMcpRequest(
               prompts: {},
             },
             instructions:
-              "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use the `oddkit` tool with action parameter for all operations: search, preflight, validate, orient, challenge, gate, encode, catalog, get, version.",
+              "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use the unified `oddkit` tool with action parameter for multi-step workflows with state threading, or use individual tools (oddkit_search, oddkit_orient, oddkit_challenge, etc.) for direct, stateless calls.",
           },
           _sessionId: newSessionId,
         };
