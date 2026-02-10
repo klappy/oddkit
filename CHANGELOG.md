@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-02-10
+
+### Added
+
+- **Two-layer MCP tool surface** — Unified `oddkit` orchestrator + individual first-class tools:
+  - **Layer 1: `oddkit` orchestrator** — Single entry point with `action` routing and client-side `state` threading for multi-turn workflows. State tracks `phase`, `gates_passed`, `decisions_encoded`, `unresolved`, and `canon_refs`.
+  - **Layer 2: Individual tools** — Stateless thin wrappers (`oddkit_orient`, `oddkit_challenge`, `oddkit_gate`, `oddkit_encode`, `oddkit_search`, `oddkit_get`, `oddkit_catalog`, `oddkit_validate`, `oddkit_preflight`, `oddkit_version`, `oddkit_invalidate_cache`) for targeted use when a model knows exactly what action it needs.
+
+- **BM25 search** — Full-text search over canon/baseline documents replacing the broken librarian:
+  - Porter-style stemming, stop word removal, standard BM25 scoring (k1=1.2, b=0.75)
+  - Indexes frontmatter tags, titles, file path segments, and content excerpts
+  - Available as `oddkit_search` tool and `search` action on the orchestrator
+  - New files: `workers/src/bm25.ts` (Worker), `src/search/bm25.js` (Node)
+
+- **Consistent response envelope** — All actions return `OddkitEnvelope`: `{ action, result, state?, assistant_text, debug? }`
+
+- **New tools**: `oddkit_search` (replaces librarian), `oddkit_get` (fetch doc by URI), `oddkit_version` (canon target info), `oddkit_preflight` (pre-implementation check)
+
+### Changed
+
+- **Parameter standardization** — Both Node and Worker servers now use `canon_url` consistently (replaces `baseline`/`repo_root` from Node server)
+- **`workers/src/orchestrate.ts` rewritten** — Unified handler architecture with `handleUnifiedAction()` routing to all action handlers, lazy BM25 index caching, and state management
+- **Tool registration cleanup** — Both `src/mcp/server.js` and `workers/src/index.ts` use the same two-layer pattern with shared action-to-name mapping
+
+### Removed
+
+- **`oddkit_orchestrate`** — Replaced by the unified `oddkit` tool
+- **`oddkit_librarian`** — Replaced by `oddkit_search` with BM25 ranking
+- **`oddkit_policy_get`** — Replaced by `oddkit_get`
+- **`oddkit_policy_version`** — Replaced by `oddkit_version`
+
 ## [0.12.1] - 2026-02-07
 
 ### Fixed
