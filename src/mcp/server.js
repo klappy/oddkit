@@ -193,7 +193,8 @@ Use when:
     required: ["action", "input"],
   },
   annotations: {
-    readOnlyHint: true,
+    // No readOnlyHint: orchestrator routes to both read-only and write actions
+    // (invalidate_cache). Individual tools carry accurate hints instead.
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: true,

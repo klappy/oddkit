@@ -679,7 +679,7 @@ async function runOrientAction(
 
   return {
     action: "orient",
-    result: { status: "ORIENTED", creed: creed || undefined, current_mode: mode, mode_confidence: confidence, assumptions, suggested_questions: questions, canon_refs: canonRefs },
+    result: { status: "ORIENTED", creed: creed || null, current_mode: mode, mode_confidence: confidence, assumptions, suggested_questions: questions, canon_refs: canonRefs },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
     debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
