@@ -5,9 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC — catch canon drift
 
 jobs:
   version-check:
+    if: github.event_name != 'schedule'
     name: Version Sync
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +34,45 @@ jobs:
 
           echo "OK: versions match"
 
+  creed-freshness:
+    name: Creed Freshness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: Check creed matches canon
+        id: check
+        continue-on-error: true
+        run: node scripts/check-creed-freshness.js
+
+      - name: Open issue on drift (scheduled only, no duplicates)
+        if: steps.check.outcome == 'failure' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --label creed-drift --state open --json number --jq length)
+          if [ "$EXISTING" = "0" ]; then
+            gh issue create \
+              --title "Creed drift: AGENTS.md or chat-api.ts out of sync with canon" \
+              --label creed-drift \
+              --body "The weekly creed freshness check failed. The creed in canon/values/orientation.md has changed but AGENTS.md and/or workers/src/chat-api.ts have not been updated. Run \`node scripts/check-creed-freshness.js\` locally to see which lines are stale."
+          fi
+
+      - name: Fail if creed drifted
+        if: steps.check.outcome == 'failure'
+        run: exit 1
+
   test-preview:
+    if: github.event_name != 'schedule'
     name: Test CF Preview
     runs-on: ubuntu-latest
     steps:

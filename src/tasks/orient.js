@@ -8,12 +8,31 @@
  * Does NOT carry embedded knowledge — intelligence is in framing the query.
  */
 
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
 import { extractQuote, formatCitation, countWords } from "../utils/slicing.js";
+import { extractCreedLines } from "../utils/creed.js";
 import { writeLast } from "../state/last.js";
+
+/**
+ * Read the creed from baseline cache.
+ * Returns array of creed lines, or null if unavailable.
+ */
+function readCreedFromBaseline(baselineRoot) {
+  if (!baselineRoot) return null;
+  const orientPath = join(baselineRoot, "canon", "values", "orientation.md");
+  if (!existsSync(orientPath)) return null;
+  try {
+    const content = readFileSync(orientPath, "utf-8");
+    return extractCreedLines(content);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Mode detection signals — keywords and patterns that suggest each mode.
@@ -182,6 +201,9 @@ export async function runOrient(options) {
   const baseline = await ensureBaselineRepo(baselineOverride);
   const baselineAvailable = !!baseline.root;
 
+  // Read creed from baseline (always included in orient response)
+  const creed = readCreedFromBaseline(baseline.root);
+
   let index = loadIndex(repoRoot);
   if (!index) {
     index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
@@ -242,6 +264,7 @@ export async function runOrient(options) {
 
   const result = {
     status: "ORIENTED",
+    creed: creed || null,
     current_mode: modeDetection.mode,
     mode_confidence: modeDetection.confidence,
     mode_signals: modeDetection.signals,

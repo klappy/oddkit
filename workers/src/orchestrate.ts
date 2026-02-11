@@ -578,6 +578,28 @@ async function runPreflight(
   };
 }
 
+/**
+ * Extract the creed from orientation.md content.
+ * Returns array of creed lines, or null if not found.
+ *
+ * NOTE: Canonical implementation is src/utils/creed.js (Node.js).
+ * This is a Worker-runtime copy. If parsing rules change, update both.
+ */
+function extractCreedFromContent(content: string): string[] | null {
+  const lines = content.split("\n");
+  const startIdx = lines.findIndex((l) => /^##\s+The Creed/.test(l));
+  if (startIdx === -1) return null;
+  const creedLines: string[] = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) break;
+    const trimmed = lines[i].trim();
+    if (trimmed && !trimmed.startsWith(">") && !trimmed.startsWith("#") && !trimmed.startsWith("<!--") && !/^-{3,}$/.test(trimmed)) {
+      creedLines.push(trimmed);
+    }
+  }
+  return creedLines.length > 0 ? creedLines : null;
+}
+
 async function runOrientAction(
   input: string,
   fetcher: ZipBaselineFetcher,
@@ -588,6 +610,17 @@ async function runOrientAction(
   const { mode, confidence } = detectMode(input);
   const index = await fetcher.getIndex(canonUrl);
   const results = scoreEntries(index.entries, input).slice(0, 3);
+
+  // Read creed from baseline (always included in orient response)
+  let creed: string[] | null = null;
+  try {
+    const orientContent = await fetcher.getFile("canon/values/orientation.md", canonUrl);
+    if (orientContent) {
+      creed = extractCreedFromContent(orientContent);
+    }
+  } catch {
+    // Creed is best-effort; orient works without it
+  }
 
   const canonRefs: Array<{ path: string; quote: string }> = [];
   for (const entry of results) {
@@ -623,7 +656,13 @@ async function runOrientAction(
     addCanonRefs(updatedState, canonRefs.map((r) => r.path));
   }
 
-  const lines = [`Orientation: ${mode} mode (${confidence} confidence)`, ""];
+  const lines: string[] = [];
+  if (creed && creed.length > 0) {
+    lines.push("The Creed:");
+    for (const c of creed) lines.push(`  ${c}`);
+    lines.push("");
+  }
+  lines.push(`Orientation: ${mode} mode (${confidence} confidence)`, "");
   if (assumptions.length > 0) {
     lines.push("Assumptions detected:");
     for (const a of assumptions.slice(0, 3)) lines.push(`  - ${a}`);
@@ -643,7 +682,7 @@ async function runOrientAction(
 
   return {
     action: "orient",
-    result: { status: "ORIENTED", current_mode: mode, mode_confidence: confidence, assumptions, suggested_questions: questions, canon_refs: canonRefs },
+    result: { status: "ORIENTED", creed: creed || null, current_mode: mode, mode_confidence: confidence, assumptions, suggested_questions: questions, canon_refs: canonRefs },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
     debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
