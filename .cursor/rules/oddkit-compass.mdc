@@ -3,14 +3,31 @@ description:
 alwaysApply: true
 ---
 
-# ODDKIT COMPASS (fallback + invariants)
+# ODDKIT PROTOCOL (mandatory, every task)
 
-Use when **no agent is active**, or when an **agent response is missing proof**. This is the cross-cutting safety rule that applies even when a role doc isn’t installed, an agent goes off-script, or the interaction is quick and no one invoked a role.
+This repo uses oddkit for epistemic governance. oddkit is available as MCP tools — the tools are self-describing. Use them at these checkpoints.
 
-1. **Policy uncertainty** → Map Navigator first (small→medium→large), then oddkit. If you’re about to state what canon/constraints say, use the map, then pull minimum excerpts with citations via `oddkit_orchestrate`. Don’t answer from memory.
+## MANDATORY CHECKPOINTS
 
-2. **Completion claims** → Validate. Before asserting “done / fixed / shipped / merged / deployed”, run validate and attach artifacts (paths, commands, output). If it returns NEEDS_ARTIFACTS or artifacts are missing, ask for the cheapest artifact instead of claiming done.
+1. **ORIENT** — At task start, orient against the goal to assess epistemic mode.
+2. **PREFLIGHT** — Before implementing, preflight to get constraints, definition of done, and pitfalls. Read the suggested files before coding.
+3. **VALIDATE** — Before claiming done, validate with artifact references (test output, file paths, commands run). If NEEDS_ARTIFACTS: provide the missing evidence or flag it honestly. Do not assert done without validation.
 
-3. **Conflicts / drift / collisions** → Surface. If there’s contradiction or low confidence: keep the answer advisory and request minimal evidence.
+## ALSO REQUIRED (this repo — dogfooding)
 
-4. **No pre-injecting docs.** Never paste full canon/docs. Fetch the smallest necessary excerpt via oddkit.
+4. **Read the learnings ledger** (`odd/ledger/learnings.jsonl`) at session start. Past agents have broken the same things repeatedly because they skipped this.
+5. **Record new learnings** when you hit friction, discover a constraint, or find something that contradicts your assumptions.
+
+## REACTIVE (call when the situation demands)
+
+- Policy or rules questions — search oddkit docs, do not answer from memory.
+- Pressure-test a claim or assumption — challenge it via oddkit.
+- Check transition readiness — gate check before changing modes.
+- Record a decision or insight — encode it as a durable record.
+
+## INVARIANTS
+
+- Never answer policy questions from memory — retrieve via oddkit with citations.
+- Never pre-inject full documents — fetch the smallest necessary excerpt.
+- Conflicts or low confidence — keep the answer advisory, request minimal evidence.
+- Tool names and params are self-describing via MCP — do not hardcode them in rules or docs.

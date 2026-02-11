@@ -4,62 +4,33 @@ This file provides guidance for Claude Code when working with oddkit.
 
 ## oddkit Integration
 
-This project uses **oddkit** for epistemic governance — policy retrieval, completion validation, and decision capture.
+This project uses **oddkit** for epistemic governance — policy retrieval, completion validation, and decision capture. oddkit tools are available via MCP and are self-describing. Do not hardcode tool names or params in rules or docs — the MCP server advertises the current API.
 
-### When to Call oddkit
+### Mandatory Checkpoints (every task)
 
-**Before implementing changes:**
-```
-oddkit_orchestrate({ message: "preflight: <what you're about to implement>", repo_root: "." })
-```
+1. **ORIENT** — At task start, orient against the goal to assess epistemic mode.
+2. **PREFLIGHT** — Before implementing, preflight to get constraints, definition of done, and pitfalls. Read the suggested files before coding.
+3. **VALIDATE** — Before claiming done, validate with artifact references (test output, file paths, commands run). If NEEDS_ARTIFACTS: provide the missing evidence or flag it honestly. Do not assert done without validation.
 
-**When you have policy questions:**
-```
-oddkit_orchestrate({ message: "<your question about rules/constraints>", repo_root: "." })
-```
+### Reactive (call when the situation demands)
 
-**Before claiming completion:**
-```
-oddkit_orchestrate({ message: "done: <what you completed> [artifacts: ...]", repo_root: "." })
-```
+- Policy or rules questions — search oddkit docs, do not answer from memory.
+- Pressure-test a claim or assumption — challenge it via oddkit.
+- Check transition readiness — gate check before changing modes.
+- Record a decision or insight — encode it as a durable record.
 
 ### How to Use Results
 
-1. **Preflight** returns: Start here / Constraints / DoD / Pitfalls
-   - Read the suggested files before implementing
-   - Note the constraints and definition of done
+1. **Preflight** returns: Start here / Constraints / DoD / Pitfalls — read the suggested files before implementing.
+2. **Search** returns: Answer with citations and quotes — use the `assistant_text` field directly.
+3. **Validate** returns: VERIFIED or NEEDS_ARTIFACTS — if NEEDS_ARTIFACTS, provide the missing evidence before claiming done. Evidence includes: test output, build logs, file paths, screenshots.
 
-2. **Librarian** returns: Answer with citations and quotes
-   - Use the `assistant_text` field directly
-   - Follow the evidence-based guidance
+### Invariants
 
-3. **Validate** returns: VERIFIED or NEEDS_ARTIFACTS
-   - If NEEDS_ARTIFACTS, provide the missing evidence before claiming done
-   - Evidence might include: screenshots, test output, build logs
-
-### Quick Examples
-
-**Ask about rules:**
-```json
-{ "message": "What is the definition of done?", "repo_root": "." }
-```
-
-**Check before implementing:**
-```json
-{ "message": "preflight: add user authentication", "repo_root": "." }
-```
-
-**Validate completion:**
-```json
-{ "message": "done: implemented login page. Screenshot: login.png", "repo_root": "." }
-```
-
-### Important Principles
-
-1. **Never pre-inject large documents** — retrieve on-demand via oddkit
-2. **Always validate completion claims** — don't just assert done
-3. **Use preflight before major changes** — understand constraints first
-4. **Quote evidence** — when citing policy, include the source
+1. **Never pre-inject large documents** — retrieve on-demand via oddkit.
+2. **Never answer policy questions from memory** — retrieve with citations.
+3. **Always validate completion claims** — do not just assert done.
+4. **Quote evidence** — when citing policy, include the source.
 
 
 ## STOP. Mandatory Pre-Work Checklist.
@@ -81,19 +52,13 @@ If your change touches OpenAI, Cloudflare, or any third-party API:
 - **Verify every parameter** you're sending is supported by that specific model
 - Past failures: wrong model names, unsupported params (max_tokens, temperature), tools support — all because agents guessed instead of checking
 
-### Step 3: Preflight via oddkit before implementing
+### Step 3: Orient and preflight via oddkit before implementing
 
-```bash
-npx oddkit preflight --message "preflight: <what you're about to do>"
-```
+Use the oddkit MCP tools to orient on the task and preflight before writing code. The tools are self-describing — check their descriptions for usage.
 
 ### Step 4: Validate via oddkit before claiming done
 
-```bash
-npx oddkit validate --message "done: <what you completed>. Artifacts: <evidence>"
-```
-
-If oddkit says NEEDS_ARTIFACTS, you are NOT done. Provide the missing evidence or flag it honestly.
+Use the oddkit validate tool with artifact references. If it says NEEDS_ARTIFACTS, you are NOT done. Provide the missing evidence or flag it honestly.
 
 ### Step 5: Record what you learned
 
@@ -117,4 +82,12 @@ DON'T GUESS. READ. VERIFY. VALIDATE.
 - `workers/src/chat-api.ts` — OpenAI streaming proxy with LLM-driven oddkit tool calling
 - `workers/src/index.ts` — Routes: GET / (chat), POST /api/chat, GET /health, POST /mcp
 - `odd/ledger/` — Learnings and decisions (JSONL, append-only)
-- `tests/cloudflare-production.test.sh` — Production deployment tests
+- `tests/cloudflare-production.test.sh` — Deployment tests (URL-parameterized, works against any deploy target)
+- `scripts/promote.sh` — Fast-forward main to prod with mandatory staging test gate
+
+## Deployment
+
+- `main` branch → staging (CF preview deploy, auto-generated URL)
+- `prod` branch → production (`oddkit.klappy.dev`)
+- Promote: `ODDKIT_STAGING_URL=<preview-url> ./scripts/promote.sh`
+- Test any deploy: `bash tests/cloudflare-production.test.sh <url>`
