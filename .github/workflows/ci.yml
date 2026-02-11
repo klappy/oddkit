@@ -39,11 +39,15 @@ jobs:
 
       - name: Compute preview URL
         id: preview
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BRANCH="${{ github.head_ref }}"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BRANCH="$HEAD_REF"
           else
-            BRANCH="${{ github.ref_name }}"
+            BRANCH="$REF_NAME"
           fi
 
           SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
@@ -55,12 +59,13 @@ jobs:
           echo "Preview URL: $URL"
 
       - name: Wait for CF preview to be ready
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
         run: |
-          URL="${{ steps.preview.outputs.url }}"
-          echo "Waiting for $URL/health ..."
+          echo "Waiting for $PREVIEW_URL/health ..."
 
           for i in $(seq 1 18); do
-            if curl -sf --max-time 10 "$URL/health" > /dev/null 2>&1; then
+            if curl -sf --max-time 10 "$PREVIEW_URL/health" > /dev/null 2>&1; then
               echo "Preview is ready (attempt $i)"
               exit 0
             fi
@@ -69,8 +74,10 @@ jobs:
           done
 
           echo "FAILED: Preview not ready after 3 minutes"
-          curl -v "$URL/health" 2>&1 || true
+          curl -v "$PREVIEW_URL/health" 2>&1 || true
           exit 1
 
       - name: Run test suite against preview
-        run: bash tests/cloudflare-production.test.sh "${{ steps.preview.outputs.url }}"
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        run: bash tests/cloudflare-production.test.sh "$PREVIEW_URL"
