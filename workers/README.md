@@ -14,9 +14,40 @@ Remote MCP server for oddkit, deployable to Cloudflare Workers. Enables oddkit i
 
 ## Deployment
 
-The worker deploys automatically via Cloudflare's GitHub integration when changes are pushed to main. No manual deployment required.
+Deploys are handled by Cloudflare's GitHub integration (no GitHub Actions, no manual `wrangler deploy`).
 
-For local development only:
+| Branch | Environment       | URL                         |
+| ------ | ----------------- | --------------------------- |
+| `prod` | Production        | `https://oddkit.klappy.dev` |
+| `main` | Staging (preview) | Auto-generated preview URL  |
+
+### Workflow
+
+1. Merge PRs to `main` — Cloudflare creates a preview deploy automatically
+2. Verify the preview deploy works (check the preview URL `/health`)
+3. Promote to production:
+   ```bash
+   ./scripts/promote.sh          # fast-forward main → prod
+   ./scripts/promote.sh --dry-run  # see what would happen
+   ```
+
+The promote script gates on version: it checks staging `/health` matches `package.json` before allowing promotion. Set `ODDKIT_STAGING_URL` to the preview URL for full verification.
+
+### Branch protection
+
+- `prod` — no force push, no deletion (enforced by GitHub)
+- Promotion is always a fast-forward push from `main`
+
+### Version injection
+
+`ODDKIT_VERSION` is injected at deploy time via the build command:
+
+```
+wrangler deploy --var ODDKIT_VERSION:$(node -p "require('../package.json').version")
+```
+
+### Local development
+
 ```bash
 cd workers
 npm install
@@ -25,13 +56,13 @@ npm run dev
 
 ## Endpoints
 
-| Path | Method | Description |
-|------|--------|-------------|
-| `/` | GET | Health check |
-| `/health` | GET | Health check |
-| `/mcp` | POST | MCP JSON-RPC requests |
-| `/mcp` | GET | SSE streaming (server-initiated messages) |
-| `/mcp` | DELETE | Session termination |
+| Path      | Method | Description                               |
+| --------- | ------ | ----------------------------------------- |
+| `/`       | GET    | Chat UI                                   |
+| `/health` | GET    | Health check (JSON with version)          |
+| `/mcp`    | POST   | MCP JSON-RPC requests                     |
+| `/mcp`    | GET    | SSE streaming (server-initiated messages) |
+| `/mcp`    | DELETE | Session termination                       |
 
 ## Connecting to Claude.ai
 
@@ -42,16 +73,17 @@ npm run dev
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BASELINE_URL` | GitHub raw content URL for baseline | `https://raw.githubusercontent.com/klappy/klappy.dev/main` |
-| `ODDKIT_VERSION` | Version string | `0.10.1` |
+| Variable         | Description                              | Default                                                    |
+| ---------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| `BASELINE_URL`   | GitHub raw content URL for baseline      | `https://raw.githubusercontent.com/klappy/klappy.dev/main` |
+| `ODDKIT_VERSION` | Version string (injected at deploy time) | From `package.json`                                        |
 
 ## Optional: KV Caching
 
 To enable baseline index caching:
 
 1. Create a KV namespace:
+
    ```bash
    npx wrangler kv:namespace create BASELINE_CACHE
    ```
@@ -72,6 +104,7 @@ npm run dev
 ```
 
 Then test with:
+
 ```bash
 # Test tool list
 curl -X POST http://localhost:8787/mcp \

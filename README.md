@@ -10,13 +10,22 @@ Agent-first CLI for ODD-governed repos. Portable Librarian + Validation with bas
 
 oddkit runs in three ways:
 
-| Method | Use Case | Setup |
-|--------|----------|-------|
-| **CLI** | Terminal usage | `npx oddkit <command>` |
-| **MCP (local)** | Cursor, Claude Code | `npx oddkit init --claude` |
-| **MCP (remote)** | Claude.ai iOS/iPad/web | Deploy `workers/` to Cloudflare |
+| Method           | Use Case               | Setup                                       |
+| ---------------- | ---------------------- | ------------------------------------------- |
+| **CLI**          | Terminal usage         | `npx oddkit <command>`                      |
+| **MCP (local)**  | Cursor, Claude Code    | `npx oddkit init --claude`                  |
+| **MCP (remote)** | Claude.ai iOS/iPad/web | Auto-deploys via Cloudflare Git integration |
 
-See [workers/README.md](workers/README.md) for Cloudflare deployment.
+### Production Deployment
+
+The Cloudflare Worker deploys automatically via Git integration:
+
+- **`main`** branch → staging preview deploy (auto-generated URL)
+- **`prod`** branch → production (`oddkit.klappy.dev`)
+
+To promote staging to production: `./scripts/promote.sh`
+
+See [workers/README.md](workers/README.md) for full deployment details.
 
 ## Documentation
 
