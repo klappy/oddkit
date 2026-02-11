@@ -25,7 +25,9 @@
     "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",
-    "index": "node bin/oddkit index"
+    "index": "node bin/oddkit index",
+    "promote": "bash scripts/promote.sh",
+    "promote:dry": "bash scripts/promote.sh --dry-run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
