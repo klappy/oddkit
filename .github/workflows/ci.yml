@@ -10,6 +10,7 @@ on:
 
 jobs:
   version-check:
+    if: github.event_name != 'schedule'
     name: Version Sync
     runs-on: ubuntu-latest
     steps:
@@ -70,6 +71,7 @@ jobs:
         run: exit 1
 
   test-preview:
+    if: github.event_name != 'schedule'
     name: Test CF Preview
     runs-on: ubuntu-latest
     steps:
