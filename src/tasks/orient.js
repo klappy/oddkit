@@ -15,28 +15,8 @@ import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
 import { extractQuote, formatCitation, countWords } from "../utils/slicing.js";
+import { extractCreedLines } from "../utils/creed.js";
 import { writeLast } from "../state/last.js";
-
-/**
- * Extract the creed from canon/values/orientation.md content.
- * Parses the "## The Creed" section and returns the 5 creed lines.
- * Returns null if the section is not found.
- */
-function extractCreedFromContent(content) {
-  const lines = content.split("\n");
-  const startIdx = lines.findIndex((l) => /^##\s+The Creed/.test(l));
-  if (startIdx === -1) return null;
-  const creedLines = [];
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) break; // next heading
-    const trimmed = lines[i].trim();
-    // Collect non-empty, non-heading, non-blockquote lines as creed lines
-    if (trimmed && !trimmed.startsWith(">") && !trimmed.startsWith("#") && !trimmed.startsWith("<!--") && !/^-{3,}$/.test(trimmed)) {
-      creedLines.push(trimmed);
-    }
-  }
-  return creedLines.length > 0 ? creedLines : null;
-}
 
 /**
  * Read the creed from baseline cache.
@@ -48,7 +28,7 @@ function readCreedFromBaseline(baselineRoot) {
   if (!existsSync(orientPath)) return null;
   try {
     const content = readFileSync(orientPath, "utf-8");
-    return extractCreedFromContent(content);
+    return extractCreedLines(content);
   } catch {
     return null;
   }

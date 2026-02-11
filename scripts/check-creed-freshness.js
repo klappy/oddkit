@@ -10,23 +10,9 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { ensureBaselineRepo } from "../src/baseline/ensureBaselineRepo.js";
+import { extractCreedLines } from "../src/utils/creed.js";
 
 const REPO_ROOT = process.cwd();
-
-function extractCreed(content) {
-  const lines = content.split("\n");
-  const startIdx = lines.findIndex((l) => /^##\s+The Creed/.test(l));
-  if (startIdx === -1) return null;
-  const creedLines = [];
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) break;
-    const trimmed = lines[i].trim();
-    if (trimmed && !trimmed.startsWith(">") && !trimmed.startsWith("#") && !trimmed.startsWith("<!--") && !/^-{3,}$/.test(trimmed)) {
-      creedLines.push(trimmed);
-    }
-  }
-  return creedLines.length > 0 ? creedLines : null;
-}
 
 async function main() {
   console.log("Checking creed freshness against canon...\n");
@@ -45,7 +31,7 @@ async function main() {
     process.exit(1);
   }
   const orientContent = readFileSync(orientPath, "utf-8");
-  const creed = extractCreed(orientContent);
+  const creed = extractCreedLines(orientContent);
   if (!creed || creed.length === 0) {
     console.error("FAIL: Could not extract creed from orientation.md (missing ## The Creed section)");
     process.exit(1);

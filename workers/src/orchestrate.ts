@@ -581,6 +581,9 @@ async function runPreflight(
 /**
  * Extract the creed from orientation.md content.
  * Returns array of creed lines, or null if not found.
+ *
+ * NOTE: Canonical implementation is src/utils/creed.js (Node.js).
+ * This is a Worker-runtime copy. If parsing rules change, update both.
  */
 function extractCreedFromContent(content: string): string[] | null {
   const lines = content.split("\n");
