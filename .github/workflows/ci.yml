@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  version-check:
+    name: Version Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version sync
+        run: |
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          WORKER_VERSION=$(node -p "require('./workers/package.json').version")
+
+          echo "package.json:         $ROOT_VERSION"
+          echo "workers/package.json: $WORKER_VERSION"
+
+          if [ "$ROOT_VERSION" != "$WORKER_VERSION" ]; then
+            echo ""
+            echo "FAILED: version drift detected"
+            echo "  package.json:          $ROOT_VERSION"
+            echo "  workers/package.json:  $WORKER_VERSION"
+            exit 1
+          fi
+
+          echo "OK: versions match"
+
+  test-preview:
+    name: Test CF Preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute preview URL
+        id: preview
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BRANCH="${{ github.head_ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+          fi
+
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          URL="https://${SANITIZED}-oddkit.klappy.workers.dev"
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sanitized=$SANITIZED" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $URL"
+
+      - name: Wait for CF preview to be ready
+        run: |
+          URL="${{ steps.preview.outputs.url }}"
+          echo "Waiting for $URL/health ..."
+
+          for i in $(seq 1 18); do
+            if curl -sf --max-time 10 "$URL/health" > /dev/null 2>&1; then
+              echo "Preview is ready (attempt $i)"
+              exit 0
+            fi
+            echo "  Attempt $i/18 - not ready, waiting 10s..."
+            sleep 10
+          done
+
+          echo "FAILED: Preview not ready after 3 minutes"
+          curl -v "$URL/health" 2>&1 || true
+          exit 1
+
+      - name: Run test suite against preview
+        run: bash tests/cloudflare-production.test.sh "${{ steps.preview.outputs.url }}"
