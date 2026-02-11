@@ -31,6 +31,21 @@ jobs:
 
           echo "OK: versions match"
 
+  creed-freshness:
+    name: Creed Freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: Check creed matches canon
+        run: node scripts/check-creed-freshness.js
+
   test-preview:
     name: Test CF Preview
     runs-on: ubuntu-latest

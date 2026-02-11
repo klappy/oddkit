@@ -192,6 +192,12 @@ Use when:
     },
     required: ["action", "input"],
   },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -212,6 +218,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_challenge",
@@ -225,6 +232,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_gate",
@@ -238,6 +246,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_encode",
@@ -251,6 +260,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "oddkit_search",
@@ -263,6 +273,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_get",
@@ -275,6 +286,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_catalog",
@@ -286,6 +298,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: [],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_validate",
@@ -297,6 +310,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "oddkit_preflight",
@@ -309,6 +323,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: ["input"],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "oddkit_version",
@@ -320,6 +335,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: [],
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "oddkit_invalidate_cache",
@@ -331,6 +347,7 @@ const INDIVIDUAL_TOOLS = [
       },
       required: [],
     },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ];
 
@@ -351,7 +368,13 @@ function getTools() {
 
 function buildOrientResponse(taskResult) {
   if (taskResult.status === "ERROR") return `Error: ${taskResult.error}`;
-  const lines = [`Orientation: ${taskResult.current_mode} mode (${taskResult.mode_confidence} confidence)`, ""];
+  const lines = [];
+  if (taskResult.creed?.length > 0) {
+    lines.push("The Creed:");
+    for (const line of taskResult.creed) lines.push(`  ${line}`);
+    lines.push("");
+  }
+  lines.push(`Orientation: ${taskResult.current_mode} mode (${taskResult.mode_confidence} confidence)`, "");
   if (taskResult.unresolved?.length > 0) { lines.push("Unresolved:"); for (const item of taskResult.unresolved) lines.push(`  - ${item}`); lines.push(""); }
   if (taskResult.assumptions?.length > 0) { lines.push("Assumptions detected:"); for (const a of taskResult.assumptions) lines.push(`  - ${a}`); lines.push(""); }
   if (taskResult.suggested_questions?.length > 0) { lines.push("Questions to answer before progressing:"); for (const q of taskResult.suggested_questions) lines.push(`  - ${q}`); lines.push(""); }

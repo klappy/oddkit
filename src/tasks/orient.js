@@ -8,12 +8,51 @@
  * Does NOT carry embedded knowledge — intelligence is in framing the query.
  */
 
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
 import { extractQuote, formatCitation, countWords } from "../utils/slicing.js";
 import { writeLast } from "../state/last.js";
+
+/**
+ * Extract the creed from canon/values/orientation.md content.
+ * Parses the "## The Creed" section and returns the 5 creed lines.
+ * Returns null if the section is not found.
+ */
+function extractCreedFromContent(content) {
+  const lines = content.split("\n");
+  const startIdx = lines.findIndex((l) => /^##\s+The Creed/.test(l));
+  if (startIdx === -1) return null;
+  const creedLines = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) break; // next heading
+    const trimmed = lines[i].trim();
+    // Collect non-empty, non-heading, non-blockquote lines as creed lines
+    if (trimmed && !trimmed.startsWith(">") && !trimmed.startsWith("#") && !trimmed.startsWith("<!--") && !/^-{3,}$/.test(trimmed)) {
+      creedLines.push(trimmed);
+    }
+  }
+  return creedLines.length > 0 ? creedLines : null;
+}
+
+/**
+ * Read the creed from baseline cache.
+ * Returns array of creed lines, or null if unavailable.
+ */
+function readCreedFromBaseline(baselineRoot) {
+  if (!baselineRoot) return null;
+  const orientPath = join(baselineRoot, "canon", "values", "orientation.md");
+  if (!existsSync(orientPath)) return null;
+  try {
+    const content = readFileSync(orientPath, "utf-8");
+    return extractCreedFromContent(content);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Mode detection signals — keywords and patterns that suggest each mode.
@@ -182,6 +221,9 @@ export async function runOrient(options) {
   const baseline = await ensureBaselineRepo(baselineOverride);
   const baselineAvailable = !!baseline.root;
 
+  // Read creed from baseline (always included in orient response)
+  const creed = readCreedFromBaseline(baseline.root);
+
   let index = loadIndex(repoRoot);
   if (!index) {
     index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
@@ -242,6 +284,7 @@ export async function runOrient(options) {
 
   const result = {
     status: "ORIENTED",
+    creed: creed || null,
     current_mode: modeDetection.mode,
     mode_confidence: modeDetection.confidence,
     mode_signals: modeDetection.signals,
