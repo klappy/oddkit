@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# pre-commit hook: enforce version sync
+#
+# Blocks commits when workers/package.json version drifts from root package.json.
+# This is mechanical enforcement — not a ritual, not a dashboard, not memory.
+#
+# Install: git config core.hooksPath .githooks
+# (Also wired into npm prepare, so `npm install` sets it automatically.)
+
+set -euo pipefail
+
+ROOT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "MISSING")
+WORKER_VERSION=$(node -p "require('./workers/package.json').version" 2>/dev/null || echo "MISSING")
+
+if [ "$ROOT_VERSION" = "MISSING" ] || [ "$WORKER_VERSION" = "MISSING" ]; then
+  # If either file is missing, skip (might be a partial checkout)
+  exit 0
+fi
+
+if [ "$ROOT_VERSION" != "$WORKER_VERSION" ]; then
+  echo ""
+  echo "COMMIT BLOCKED: version drift detected"
+  echo ""
+  echo "  package.json:          $ROOT_VERSION"
+  echo "  workers/package.json:  $WORKER_VERSION"
+  echo ""
+  echo "These must match. Fix with:"
+  echo "  node -e \"const p=require('./workers/package.json'); p.version='$ROOT_VERSION'; require('fs').writeFileSync('./workers/package.json', JSON.stringify(p,null,2)+'\\n')\""
+  echo ""
+  exit 1
+fi

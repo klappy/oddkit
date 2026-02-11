@@ -13,6 +13,7 @@
     "url": "https://github.com/klappy/oddkit.git"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "test": "bash tests/smoke.sh",
     "test:smoke": "bash tests/smoke.sh",
     "test:mcp": "bash tests/mcp-smoke.sh",
