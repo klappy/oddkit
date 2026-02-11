@@ -1,19 +1,21 @@
 #!/bin/bash
 #
-# promote.sh — Fast-forward main → prod with version gate
+# promote.sh — Fast-forward main → prod with tested staging gate
 #
 # Usage:
-#   ./scripts/promote.sh              # promote main to prod
-#   ./scripts/promote.sh --dry-run    # show what would happen
+#   ODDKIT_STAGING_URL=https://abc123-oddkit.klappy.workers.dev ./scripts/promote.sh
+#   ODDKIT_STAGING_URL=... ./scripts/promote.sh --dry-run
+#   ./scripts/promote.sh --skip-tests    # emergency only
 #
 # Pre-conditions:
-#   1. You are on the main branch (or specify --force-branch to skip)
+#   1. You are on the main branch
 #   2. main is up to date with origin/main
-#   3. Staging health check passes (set ODDKIT_STAGING_URL to verify)
-#   4. prod is fast-forwardable to main
+#   3. ODDKIT_STAGING_URL is set (preview deploy URL from CF dashboard)
+#   4. Full test suite passes against staging
+#   5. prod is fast-forwardable to main
 #
 # Environment:
-#   ODDKIT_STAGING_URL    — Preview deploy URL for main branch (optional)
+#   ODDKIT_STAGING_URL    — Preview deploy URL for main branch (REQUIRED)
 #   ODDKIT_PRODUCTION_URL — Production URL (default: https://oddkit.klappy.dev)
 #
 # Design: See docs/decisions/D0001-prod-branch-is-production.md
@@ -24,20 +26,23 @@ set -euo pipefail
 PROD_URL="${ODDKIT_PRODUCTION_URL:-https://oddkit.klappy.dev}"
 STAGING_URL="${ODDKIT_STAGING_URL:-}"
 DRY_RUN=false
+SKIP_TESTS=false
 
 for arg in "$@"; do
   case $arg in
     --dry-run) DRY_RUN=true ;;
+    --skip-tests) SKIP_TESTS=true ;;
     --help|-h)
-      echo "Usage: ./scripts/promote.sh [--dry-run]"
+      echo "Usage: ODDKIT_STAGING_URL=<preview-url> ./scripts/promote.sh [--dry-run] [--skip-tests]"
       echo ""
-      echo "Fast-forward main -> prod with version gate."
+      echo "Fast-forward main -> prod with full test suite gate."
       echo ""
       echo "Options:"
-      echo "  --dry-run   Show what would happen without pushing"
+      echo "  --dry-run      Show what would happen without pushing"
+      echo "  --skip-tests   Skip staging tests (emergency only)"
       echo ""
       echo "Environment:"
-      echo "  ODDKIT_STAGING_URL     Preview deploy URL (optional, for pre-promotion check)"
+      echo "  ODDKIT_STAGING_URL     Preview deploy URL (REQUIRED, from CF dashboard > Deployments)"
       echo "  ODDKIT_PRODUCTION_URL  Production URL (default: https://oddkit.klappy.dev)"
       exit 0
       ;;
@@ -78,29 +83,39 @@ echo "  main is up to date with origin/main"
 EXPECTED_VERSION=$(node -p "require('./package.json').version")
 echo "  Expected version: $EXPECTED_VERSION"
 
-# ── 4. Staging version gate (optional) ───────────────────────────────────────
+# ── 4. Staging test gate (mandatory) ─────────────────────────────────────────
 
-if [ -n "$STAGING_URL" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ "$SKIP_TESTS" = true ]; then
   echo ""
-  echo "Checking staging health: $STAGING_URL/health"
-  STAGING_HEALTH=$(curl -sf --max-time 10 "$STAGING_URL/health" 2>/dev/null || echo '{}')
-  STAGING_VERSION=$(echo "$STAGING_HEALTH" | python3 -c "import sys, json; print(json.load(sys.stdin).get('version', 'UNAVAILABLE'))" 2>/dev/null || echo "UNAVAILABLE")
-
-  if [ "$STAGING_VERSION" = "UNAVAILABLE" ]; then
-    echo "ERROR: Could not reach staging at $STAGING_URL/health"
-    echo "  Ensure the preview deploy is live before promoting."
-    exit 1
-  fi
-
-  if [ "$STAGING_VERSION" != "$EXPECTED_VERSION" ]; then
-    echo "ERROR: Staging version mismatch"
-    echo "  Staging:  $STAGING_VERSION"
-    echo "  Expected: $EXPECTED_VERSION (from package.json)"
+  echo "  WARNING: --skip-tests flag used. Staging tests SKIPPED."
+  echo "  WARNING: You are promoting without verification. Proceed with caution."
+  echo ""
+elif [ -z "$STAGING_URL" ]; then
+  echo ""
+  echo "ERROR: ODDKIT_STAGING_URL is required."
+  echo ""
+  echo "  Get the preview URL from Cloudflare dashboard > Deployments."
+  echo "  Preview URLs look like: https://<hash>-oddkit.klappy.workers.dev"
+  echo ""
+  echo "  Example:"
+  echo "    ODDKIT_STAGING_URL=https://abc123-oddkit.klappy.workers.dev ./scripts/promote.sh"
+  echo ""
+  echo "  To skip tests in an emergency: ./scripts/promote.sh --skip-tests"
+  exit 1
+else
+  echo ""
+  echo "Running full test suite against staging: $STAGING_URL"
+  echo ""
+  if ! bash "$SCRIPT_DIR/tests/cloudflare-production.test.sh" "$STAGING_URL"; then
     echo ""
-    echo "  The preview deploy may still be building, or the version was not bumped."
+    echo "ERROR: Staging tests failed. Promotion blocked."
+    echo "  Fix the failing tests before promoting to production."
     exit 1
   fi
-  echo "  Staging version matches: $STAGING_VERSION"
+  echo ""
+  echo "  All staging tests passed."
 fi
 
 # ── 5. Ensure prod exists and can fast-forward ──────────────────────────────

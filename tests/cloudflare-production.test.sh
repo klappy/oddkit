@@ -12,7 +12,7 @@ set -e
 echo "oddkit production deployment test"
 echo "=================================="
 
-WORKER_URL="${ODDKIT_PRODUCTION_URL:-https://oddkit.klappy.dev}"
+WORKER_URL="${1:-${ODDKIT_PRODUCTION_URL:-https://oddkit.klappy.dev}}"
 
 echo ""
 echo "Testing: $WORKER_URL"
@@ -281,46 +281,46 @@ RESULT=$(mcp_call "prompts/list")
 check_json "prompts/list" "$RESULT" "assert 'prompts' in d.get('result',{}), 'no prompts key'"
 
 # ============================================
-# SECTION 3: Tool Calls (oddkit_orchestrate)
+# SECTION 3: Tool Calls (unified oddkit + individual tools)
 # ============================================
 
 echo ""
 echo "--- Tool Calls ---"
 echo ""
 
-# Test 9: oddkit_orchestrate with librarian action
-echo "Test 9: tools/call oddkit_orchestrate (librarian)"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_orchestrate","arguments":{"message":"What is ODD?","action":"librarian"}}')
-check_json "orchestrate librarian" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+# Test 9: oddkit unified tool — search action (was oddkit_orchestrate librarian)
+echo "Test 9: tools/call oddkit (action: search)"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit","arguments":{"action":"search","input":"What is ODD?"}}')
+check_json "oddkit search" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
-# Test 10: oddkit_orchestrate with validate action
+# Test 10: oddkit unified tool — validate action
 echo ""
-echo "Test 10: tools/call oddkit_orchestrate (validate)"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_orchestrate","arguments":{"message":"Done with the auth module","action":"validate"}}')
-check_json "orchestrate validate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+echo "Test 10: tools/call oddkit (action: validate)"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit","arguments":{"action":"validate","input":"Done with the auth module"}}')
+check_json "oddkit validate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
-# Test 11: oddkit_orchestrate with catalog action
+# Test 11: oddkit unified tool — catalog action
 echo ""
-echo "Test 11: tools/call oddkit_orchestrate (catalog)"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_orchestrate","arguments":{"message":"What is in ODD?","action":"catalog"}}')
-check_json "orchestrate catalog" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+echo "Test 11: tools/call oddkit (action: catalog)"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit","arguments":{"action":"catalog","input":"list"}}')
+check_json "oddkit catalog" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
-# Test 12: oddkit_orchestrate with preflight action
+# Test 12: oddkit unified tool — preflight action
 echo ""
-echo "Test 12: tools/call oddkit_orchestrate (preflight)"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_orchestrate","arguments":{"message":"preflight: add user authentication","action":"preflight"}}')
-check_json "orchestrate preflight" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+echo "Test 12: tools/call oddkit (action: preflight)"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit","arguments":{"action":"preflight","input":"preflight: add user authentication"}}')
+check_json "oddkit preflight" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
-# Test 13: oddkit_librarian direct tool
+# Test 13: oddkit_search direct tool (was oddkit_librarian)
 echo ""
-echo "Test 13: tools/call oddkit_librarian"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_librarian","arguments":{"query":"What is epistemic hygiene?"}}')
-check_json "oddkit_librarian" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+echo "Test 13: tools/call oddkit_search"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit_search","arguments":{"input":"What is epistemic hygiene?"}}')
+check_json "oddkit_search" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
-# Test 14: oddkit_validate direct tool
+# Test 14: oddkit_validate direct tool (param: input, not message)
 echo ""
 echo "Test 14: tools/call oddkit_validate"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_validate","arguments":{"message":"Done with feature X. Screenshot: x.png"}}')
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit_validate","arguments":{"input":"Done with feature X. Screenshot: x.png"}}')
 check_json "oddkit_validate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # ============================================
@@ -378,23 +378,23 @@ echo ""
 echo "--- Response Content Validation ---"
 echo ""
 
-# Test 15: Librarian returns assistant_text
-echo "Test 15: Librarian response has assistant_text"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_orchestrate","arguments":{"message":"What is definition of done?","action":"librarian"}}')
+# Test 15: Search returns assistant_text
+echo "Test 15: Search response has assistant_text"
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit","arguments":{"action":"search","input":"What is definition of done?"}}')
 # Extract the text content and parse the inner JSON
 INNER_JSON=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
 if echo "$INNER_JSON" | python3 -c "import sys, json; d=json.load(sys.stdin); assert 'assistant_text' in d, 'no assistant_text'" 2>/dev/null; then
-  echo "PASS - Librarian has assistant_text"
+  echo "PASS - Search has assistant_text"
   PASSED=$((PASSED + 1))
 else
-  echo "FAIL - Librarian missing assistant_text"
+  echo "FAIL - Search missing assistant_text"
   FAILED=$((FAILED + 1))
 fi
 
 # Test 16: Validate response has verdict
 echo ""
 echo "Test 16: Validate response has verdict"
-RESULT=$(mcp_call "tools/call" '{"name":"oddkit_validate","arguments":{"message":"Done with tests"}}')
+RESULT=$(mcp_call "tools/call" '{"name":"oddkit_validate","arguments":{"input":"Done with tests"}}')
 INNER_JSON=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
 # verdict is at result.verdict in the inner JSON
 if echo "$INNER_JSON" | python3 -c "import sys, json; d=json.load(sys.stdin); assert d.get('result',{}).get('verdict') is not None, 'no verdict'" 2>/dev/null; then
@@ -436,7 +436,7 @@ check_json "Unknown resource error" "$RESULT" "assert 'error' in d, 'no error fo
 
 echo ""
 echo "=================================="
-echo "Production Deployment Test Summary"
+echo "Deployment Test Summary ($WORKER_URL)"
 echo "=================================="
 echo "Passed: $PASSED"
 echo "Failed: $FAILED"
@@ -446,6 +446,6 @@ if [ $FAILED -gt 0 ]; then
   echo "SOME TESTS FAILED"
   exit 1
 else
-  echo "All production tests passed!"
+  echo "All tests passed!"
   exit 0
 fi

@@ -23,6 +23,7 @@
     "test:preflight": "bash tests/orchestrate-preflight.test.sh",
     "test:policy": "bash tests/policy-tools.test.sh",
     "test:production": "bash tests/cloudflare-production.test.sh",
+    "test:deploy": "bash tests/cloudflare-production.test.sh",
     "mcp": "node src/mcp/server.js",
     "librarian": "node bin/oddkit librarian --query",
     "validate": "node bin/oddkit validate --message",
