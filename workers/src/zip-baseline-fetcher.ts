@@ -625,6 +625,24 @@ export class ZipBaselineFetcher {
   }
 
   /**
+   * Delete all cached objects under a prefix, handling R2 pagination.
+   */
+  private async deleteObjectsByPrefix(prefix: string): Promise<void> {
+    if (!this.env.BASELINE) {
+      return;
+    }
+
+    let cursor: string | undefined;
+    do {
+      const listed = await this.env.BASELINE.list({ prefix, cursor });
+      for (const obj of listed.objects) {
+        await this.env.BASELINE.delete(obj.key);
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+
+  /**
    * Invalidate cache for a repo
    */
   async invalidateCache(repoUrl?: string): Promise<void> {
@@ -653,18 +671,12 @@ export class ZipBaselineFetcher {
 
       // Delete cached individual files for baseline
       const baselineFilePrefix = `file/${getCacheKey("baseline")}/`;
-      const baselineListed = await this.env.BASELINE.list({ prefix: baselineFilePrefix });
-      for (const obj of baselineListed.objects) {
-        await this.env.BASELINE.delete(obj.key);
-      }
+      await this.deleteObjectsByPrefix(baselineFilePrefix);
 
       // Delete cached individual files for canon (if specified)
       if (repoUrl) {
         const canonFilePrefix = `file/${getCacheKey(repoUrl)}/`;
-        const canonListed = await this.env.BASELINE.list({ prefix: canonFilePrefix });
-        for (const obj of canonListed.objects) {
-          await this.env.BASELINE.delete(obj.key);
-        }
+        await this.deleteObjectsByPrefix(canonFilePrefix);
       }
     }
 
