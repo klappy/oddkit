@@ -36,35 +36,35 @@ Use when:
           enum: actionNames,
           description: "Which epistemic action to perform.",
         },
-      input: {
-        type: "string",
-        description: "Primary input — query, claim, URI, goal, or completion claim depending on action.",
+        input: {
+          type: "string",
+          description: "Primary input — query, claim, URI, goal, or completion claim depending on action.",
+        },
+        context: {
+          type: "string",
+          description: "Optional supporting context.",
+        },
+        mode: {
+          type: "string",
+          enum: ["exploration", "planning", "execution"],
+          description: "Optional epistemic mode hint.",
+        },
+        canon_url: {
+          type: "string",
+          description: "Optional GitHub repo URL for canon override.",
+        },
+        state: {
+          type: "object",
+          description: "Optional client-side conversation state, passed back and forth.",
+        },
       },
-      context: {
-        type: "string",
-        description: "Optional supporting context.",
-      },
-      mode: {
-        type: "string",
-        enum: ["exploration", "planning", "execution"],
-        description: "Optional epistemic mode hint.",
-      },
-      canon_url: {
-        type: "string",
-        description: "Optional GitHub repo URL for canon override.",
-      },
-      state: {
-        type: "object",
-        description: "Optional client-side conversation state, passed back and forth.",
-      },
+      required: ["action", "input"],
     },
-    required: ["action", "input"],
-  },
-  annotations: {
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: true,
-  },
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   };
 }
 
