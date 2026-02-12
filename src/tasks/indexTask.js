@@ -20,7 +20,7 @@ export async function runIndex(options) {
   // Save baseline index if available
   let baselineIndexPath = null;
   if (baseline.root) {
-    baselineIndexPath = saveBaselineIndex(index, baselineRef);
+    baselineIndexPath = saveBaselineIndex(index, baselineRef, baseline.commitSha);
   }
 
   return {

@@ -14,17 +14,28 @@
 
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join, basename } from "path";
-import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 
+// ──────────────────────────────────────────────────────────────────────────────
+// SHA-keyed prompt caches
+//
+// Content-addressed: cached data is keyed to the baseline commit SHA.
+// When the SHA changes (new baseline commit), caches are automatically
+// invalidated by identity mismatch — no TTL, no manual flush.
+// ──────────────────────────────────────────────────────────────────────────────
 let cachedRegistry = null;
 let cachedBaselineRoot = null;
 let cachedCanonPrompts = null;
+let cachedPromptsSha = null;
 
 /**
- * Load registry from baseline (cached)
+ * Load registry from baseline (SHA-keyed cache)
  */
 async function loadRegistry() {
-  if (cachedRegistry && cachedBaselineRoot) {
+  const currentSha = getSessionSha();
+
+  // Content-addressed cache check: if SHA matches, data is truthful
+  if (cachedRegistry && cachedBaselineRoot && cachedPromptsSha === currentSha && currentSha) {
     return { registry: cachedRegistry, baselineRoot: cachedBaselineRoot };
   }
 
@@ -41,6 +52,7 @@ async function loadRegistry() {
   try {
     cachedRegistry = JSON.parse(readFileSync(registryPath, "utf-8"));
     cachedBaselineRoot = baseline.root;
+    cachedPromptsSha = baseline.commitSha || currentSha;
     return { registry: cachedRegistry, baselineRoot: baseline.root };
   } catch (err) {
     return { registry: null, baselineRoot: baseline.root, error: err.message };
@@ -55,7 +67,10 @@ async function loadRegistry() {
  * @returns {Promise<Array<{name: string, description: string, path: string}>>}
  */
 async function loadCanonPrompts() {
-  if (cachedCanonPrompts) {
+  const currentSha = getSessionSha();
+
+  // Content-addressed: return cached prompts only if SHA matches
+  if (cachedCanonPrompts && cachedPromptsSha === currentSha && currentSha) {
     return cachedCanonPrompts;
   }
 
@@ -201,10 +216,15 @@ export async function getPrompt(name) {
 }
 
 /**
- * Invalidate prompt caches (for testing or baseline updates)
+ * Clear prompt caches (storage hygiene only).
+ *
+ * NOT required for correctness — content-addressed caching ensures
+ * fresh content is served when the baseline SHA changes.
+ * Exported for testing purposes.
  */
-export function invalidatePromptCache() {
+export function clearPromptCache() {
   cachedRegistry = null;
   cachedBaselineRoot = null;
   cachedCanonPrompts = null;
+  cachedPromptsSha = null;
 }

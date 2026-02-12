@@ -16,7 +16,7 @@
 function buildOrchestratorTool(actionNames) {
   return {
     name: "oddkit",
-    description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or invalidate_cache actions.
+    description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or cleanup_storage actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
@@ -246,13 +246,13 @@ export const TOOLS = [
     cliFlags: {},
   },
   {
-    name: "invalidate_cache",
-    mcpName: "oddkit_invalidate_cache",
-    description: "Force refresh of cached baseline/canon data. Next request will fetch fresh data.",
+    name: "cleanup_storage",
+    mcpName: "oddkit_cleanup_storage",
+    description: "Storage hygiene: clears orphaned in-memory caches. NOT required for correctness — content-addressed caching ensures fresh content is served automatically when the baseline changes.",
     inputSchema: {
       type: "object",
       properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL to invalidate cache for." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: [],
     },

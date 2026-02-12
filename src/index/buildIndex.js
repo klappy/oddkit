@@ -247,15 +247,18 @@ export function saveIndex(index, repoRoot) {
 }
 
 /**
- * Save baseline index to cache
+ * Save baseline index to cache (SHA-keyed).
+ * When commitSha is provided, uses content-addressed storage.
  */
-export function saveBaselineIndex(index, ref) {
+export function saveBaselineIndex(index, ref, commitSha = null) {
   const cacheDir = join(homedir(), ".oddkit", "cache", "indexes");
   if (!existsSync(cacheDir)) {
     mkdirSync(cacheDir, { recursive: true });
   }
 
-  const indexPath = join(cacheDir, `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`);
+  // SHA-keyed: use commit SHA as the key for truthful storage
+  const key = commitSha || ref.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const indexPath = join(cacheDir, `klappy.dev-${key}.json`);
   writeFileSync(indexPath, JSON.stringify(index, null, 2));
 
   return indexPath;
@@ -280,15 +283,17 @@ export function loadIndex(repoRoot) {
 }
 
 /**
- * Load baseline index from cache
+ * Load baseline index from cache (SHA-keyed).
+ * When commitSha is provided, loads content-addressed index.
  */
-export function loadBaselineIndex(ref) {
+export function loadBaselineIndex(ref, commitSha = null) {
+  const key = commitSha || ref.replace(/[^a-zA-Z0-9_-]/g, "_");
   const indexPath = join(
     homedir(),
     ".oddkit",
     "cache",
     "indexes",
-    `klappy.dev-${ref.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`,
+    `klappy.dev-${key}.json`,
   );
 
   if (!existsSync(indexPath)) {

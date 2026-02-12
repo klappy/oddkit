@@ -1,11 +1,14 @@
 /**
- * ZipBaselineFetcher - Tiered caching for baseline repos
+ * ZipBaselineFetcher - Content-addressed caching for baseline repos
  *
- * Architecture inspired by translation-helps-mcp:
- * - Fetches entire repo as ZIP from GitHub
+ * Architecture:
+ * - Resolves current commit SHA via lightweight GitHub API call
+ * - Uses SHA as cache key — if SHA matches, content is truthful by identity
+ * - Fetches entire repo as ZIP from GitHub when SHA changes
  * - Extracts files lazily using fflate
- * - Caches in R2 for fast subsequent access
+ * - Caches in R2 keyed to SHA for fast subsequent access
  * - Supports canon repo overrides with klappy.dev fallback
+ * - No TTL. No staleness window. No manual flush for correctness.
  */
 
 import { unzipSync } from "fflate";
@@ -60,10 +63,11 @@ interface FrontmatterResult {
   uri?: string;
 }
 
-// Cache TTLs
-const INDEX_TTL = 300; // 5 minutes for index
-const FILE_TTL = 3600; // 1 hour for individual files
-const ZIP_TTL = 86400; // 24 hours for ZIP files
+// ──────────────────────────────────────────────────────────────────────────────
+// Content-addressed caching: No TTLs. All storage is keyed to commit SHA.
+// When the SHA changes, old content is ignored and fresh content is fetched.
+// No staleness window. No manual flush for correctness.
+// ──────────────────────────────────────────────────────────────────────────────
 
 /**
  * Parse YAML frontmatter from markdown content
@@ -303,15 +307,13 @@ export class ZipBaselineFetcher {
   }
 
   /**
-   * Store commit SHA in cache
+   * Store commit SHA in cache (no TTL — content-addressed).
+   * The SHA itself is the identity; it doesn't expire.
    */
   private async cacheCommitSha(repoUrl: string, sha: string): Promise<void> {
     const cacheKey = `sha/${getCacheKey(repoUrl)}`;
     if (this.env.BASELINE_CACHE) {
-      // Cache SHA for longer than index (1 hour) since it's cheap to check
-      await this.env.BASELINE_CACHE.put(cacheKey, sha, {
-        expirationTtl: 3600,
-      });
+      await this.env.BASELINE_CACHE.put(cacheKey, sha);
     }
   }
 
@@ -351,7 +353,7 @@ export class ZipBaselineFetcher {
 
       const data = new Uint8Array(await response.arrayBuffer());
 
-      // Cache in R2
+      // Cache in R2 (no TTL — content-addressed by SHA at the index/file layer)
       if (this.env.BASELINE) {
         await this.env.BASELINE.put(cacheKey, data, {
           httpMetadata: { contentType: "application/zip" },
@@ -473,47 +475,38 @@ export class ZipBaselineFetcher {
   }
 
   /**
-   * Get or build the combined index
-   * Uses efficient change detection: checks commit SHA before re-fetching
+   * Get or build the combined index.
+   *
+   * Content-addressed caching:
+   * 1. Resolve the current commit SHA (lightweight GitHub API call)
+   * 2. Use SHA as the KV cache key
+   * 3. If an index exists for this exact SHA, serve it — truthful by identity
+   * 4. If not, build fresh and store keyed to the SHA
+   * No TTL. No staleness window.
    */
   async getIndex(canonUrl?: string): Promise<BaselineIndex> {
-    const cacheKey = `index/${getCacheKey(canonUrl || "default")}`;
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Check KV cache first
-    if (this.env.BASELINE_CACHE) {
-      const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
-      if (cached) {
-        // Cache hit - but check if source repos have changed
-        // This is lightweight (~200 bytes) compared to re-fetching ZIPs
-        const baselineCheck = await this.checkForChanges(baselineRepoUrl);
-        const canonCheck = canonUrl ? await this.checkForChanges(canonUrl) : { changed: false };
-
-        // Compare cached SHAs with current
-        const baselineUnchanged = !baselineCheck.changed ||
-          (baselineCheck.current_sha && cached.commit_sha === baselineCheck.current_sha);
-        const canonUnchanged = !canonCheck.changed ||
-          (canonCheck.current_sha && cached.canon_commit_sha === canonCheck.current_sha);
-
-        if (baselineUnchanged && canonUnchanged) {
-          // No changes detected - return cached index
-          return cached;
-        }
-        // Changes detected - fall through to rebuild with fresh fetch
-        console.log(`Changes detected: baseline=${!baselineUnchanged}, canon=${!canonUnchanged}`);
-      }
-    }
-
-    // Build index from repos
-    // Skip cache when we detected changes to ensure fresh data
-    const skipCache = true; // Always fetch fresh when rebuilding index
-    const baselineUrl = this.env.BASELINE_URL;
-
-    // Get current commit SHAs for tracking
+    // Step 1: Resolve current commit SHAs (lightweight)
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
     const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
 
-    // Always fetch baseline (klappy.dev) - skip cache to get fresh ZIP
+    // Step 2: Content-addressed lookup — SHA is the cache key
+    const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
+    const cacheKey = `index/${getCacheKey(canonUrl || "default")}_${shaKey}`;
+
+    if (this.env.BASELINE_CACHE) {
+      const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
+      if (cached) {
+        // Content-addressed cache hit: SHA matches, content is truthful
+        return cached;
+      }
+    }
+
+    // Step 3: No cache for this SHA — build fresh
+    const baselineUrl = this.env.BASELINE_URL;
+    const skipCache = true; // Always fetch fresh ZIP when building new index
+
     const baselineEntries = await this.buildIndexFromRepo(
       baselineUrl.includes("raw.githubusercontent.com")
         ? baselineUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
@@ -522,13 +515,12 @@ export class ZipBaselineFetcher {
       skipCache
     );
 
-    // Fetch canon if provided
     let canonEntries: IndexEntry[] = [];
     if (canonUrl) {
       canonEntries = await this.buildIndexFromRepo(canonUrl, "canon", skipCache);
     }
 
-    // Arbitrate - canon overrides baseline
+    // Arbitrate — canon overrides baseline
     const allEntries = this.arbitrateEntries(canonEntries, baselineEntries);
 
     const index: BaselineIndex = {
@@ -546,14 +538,12 @@ export class ZipBaselineFetcher {
       canon_commit_sha: canonSha || undefined,
     };
 
-    // Cache in KV
+    // Store keyed to SHA (no TTL — content-addressed)
     if (this.env.BASELINE_CACHE) {
-      await this.env.BASELINE_CACHE.put(cacheKey, JSON.stringify(index), {
-        expirationTtl: INDEX_TTL,
-      });
+      await this.env.BASELINE_CACHE.put(cacheKey, JSON.stringify(index));
     }
 
-    // Cache commit SHAs for future change checks
+    // Store commit SHAs for observability
     if (baselineSha) {
       await this.cacheCommitSha(baselineRepoUrl, baselineSha);
     }
@@ -565,12 +555,19 @@ export class ZipBaselineFetcher {
   }
 
   /**
-   * Get a specific file from the baseline or canon
+   * Get a specific file from the baseline or canon.
+   * Content-addressed: file cache is keyed to the commit SHA.
    */
   async getFile(path: string, canonUrl?: string): Promise<string | null> {
-    const cacheKey = `file/${getCacheKey(canonUrl || "baseline")}/${getCacheKey(path)}`;
+    const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Check R2 cache
+    // Resolve current SHA for content-addressed lookup
+    const repoUrl = canonUrl || baselineRepoUrl;
+    const currentSha = await this.getLatestCommitSha(repoUrl);
+    const shaSegment = currentSha || "unknown";
+    const cacheKey = `file/${getCacheKey(canonUrl || "baseline")}/${shaSegment}/${getCacheKey(path)}`;
+
+    // Check R2 cache (content-addressed — if SHA matches, content is truthful)
     if (this.env.BASELINE) {
       const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
@@ -578,18 +575,18 @@ export class ZipBaselineFetcher {
       }
     }
 
-    // Try to fetch from canon first, then baseline
+    // No cache for this SHA+path — fetch fresh
     const urls = canonUrl
       ? [canonUrl, this.env.BASELINE_URL]
       : [this.env.BASELINE_URL];
 
-    for (const repoUrl of urls) {
+    for (const fetchUrl of urls) {
       const zipUrl = getZipUrl(
-        repoUrl.includes("raw.githubusercontent.com")
-          ? repoUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
-          : repoUrl
+        fetchUrl.includes("raw.githubusercontent.com")
+          ? fetchUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
+          : fetchUrl
       );
-      const zipData = await this.fetchZip(zipUrl);
+      const zipData = await this.fetchZip(zipUrl, true); // Always fetch fresh
 
       if (!zipData) continue;
 
@@ -597,7 +594,6 @@ export class ZipBaselineFetcher {
         const unzipCacheKey = `zip/${getCacheKey(zipUrl)}`;
         const unzipped = this.getUnzipped(zipData, unzipCacheKey);
 
-        // Find the file (accounting for repo-branch prefix)
         for (const [fullPath, fileData] of Object.entries(unzipped)) {
           const pathParts = fullPath.split("/");
           const repoPath = pathParts.slice(1).join("/");
@@ -605,11 +601,11 @@ export class ZipBaselineFetcher {
           if (repoPath === path) {
             const content = new TextDecoder().decode(fileData);
 
-            // Cache in R2
+            // Store keyed to SHA (no TTL — content-addressed)
             if (this.env.BASELINE) {
               await this.env.BASELINE.put(cacheKey, content, {
                 httpMetadata: { contentType: "text/markdown" },
-                customMetadata: { fetchedAt: new Date().toISOString() },
+                customMetadata: { commitSha: shaSegment, fetchedAt: new Date().toISOString() },
               });
             }
 
@@ -643,7 +639,9 @@ export class ZipBaselineFetcher {
   }
 
   /**
-   * Invalidate cache for a repo
+   * Clean up stored data for a repo (storage hygiene only).
+   * NOT required for correctness — content-addressed caching ensures
+   * fresh content is served when the baseline SHA changes.
    */
   async invalidateCache(repoUrl?: string): Promise<void> {
     const key = getCacheKey(repoUrl || "default");

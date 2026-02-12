@@ -125,7 +125,7 @@ To expose all tools for debugging, set `ODDKIT_DEV_TOOLS=1` in your MCP server e
 | `oddkit_librarian`         | Ask a policy/lookup question against ODD-governed documentation (dev only)                        |
 | `oddkit_validate`          | Validate a completion claim with verdict and gaps (dev only)                                      |
 | `oddkit_catalog`           | List available documentation with counts by source (canon vs baseline)                            |
-| `oddkit_invalidate_cache`  | Force refresh of cached baseline/canon data (remote MCP only)                                     |
+| `oddkit_cleanup_storage`   | Storage hygiene (not required for correctness — content-addressed caching auto-refreshes)          |
 | `oddkit_explain`           | Explain the last oddkit result (dev only)                                                         |
 
 ## Canon Override (Remote MCP)
@@ -151,7 +151,7 @@ When using the remote MCP worker (Claude.ai iOS/web), you can override the defau
 - `oddkit_orchestrate`
 - `oddkit_librarian`
 - `oddkit_catalog`
-- `oddkit_invalidate_cache`
+- `oddkit_cleanup_storage`
 
 ## Recommended: Use `oddkit_orchestrate`
 
