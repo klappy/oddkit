@@ -641,14 +641,30 @@ export class ZipBaselineFetcher {
       }
     }
 
-    // Clear R2 ZIP cache for baseline
+    // Clear R2 caches: ZIP + individual files
     if (this.env.BASELINE) {
+      // Delete ZIP caches
       const baselineZipKey = `zip/${getCacheKey(getZipUrl(baselineRepoUrl))}`;
       await this.env.BASELINE.delete(baselineZipKey);
-      // Also clear canon ZIP if specified
       if (repoUrl) {
         const canonZipKey = `zip/${getCacheKey(getZipUrl(repoUrl))}`;
         await this.env.BASELINE.delete(canonZipKey);
+      }
+
+      // Delete cached individual files for baseline
+      const baselineFilePrefix = `file/${getCacheKey("baseline")}/`;
+      const baselineListed = await this.env.BASELINE.list({ prefix: baselineFilePrefix });
+      for (const obj of baselineListed.objects) {
+        await this.env.BASELINE.delete(obj.key);
+      }
+
+      // Delete cached individual files for canon (if specified)
+      if (repoUrl) {
+        const canonFilePrefix = `file/${getCacheKey(repoUrl)}/`;
+        const canonListed = await this.env.BASELINE.list({ prefix: canonFilePrefix });
+        for (const obj of canonListed.objects) {
+          await this.env.BASELINE.delete(obj.key);
+        }
       }
     }
 
