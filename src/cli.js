@@ -210,8 +210,14 @@ export function run() {
         });
 
         outputActionResult(tool.name, result, format, quiet);
-        process.exit(EXIT_OK);
+
+        // handleAction returns error envelopes instead of throwing,
+        // so check the result to set the correct exit code.
+        const isError = result.action === "error" || result.result?.error;
+        process.exit(isError && format !== "tooljson" ? EXIT_RUNTIME_ERROR : EXIT_OK);
       } catch (err) {
+        // Defensive: handleAction should not throw, but guard against
+        // unexpected failures (e.g. import errors, OOM).
         outputError(tool.name, err, format, quiet);
         process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
       }
