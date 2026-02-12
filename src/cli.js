@@ -82,11 +82,21 @@ function wrapToolJsonError(tool, error) {
 }
 
 /**
+ * Check whether a handleAction result represents an error.
+ * handleAction catches internally and returns error envelopes, so callers
+ * must inspect the result rather than relying on exceptions.
+ */
+function isActionError(actionResult) {
+  return actionResult.action === "error" || !!actionResult.result?.error;
+}
+
+/**
  * Output handleAction result based on format
  */
 function outputActionResult(actionName, actionResult, format, quiet) {
   if (format === "tooljson") {
-    console.log(JSON.stringify(wrapToolJson(actionName, actionResult)));
+    const ok = !isActionError(actionResult);
+    console.log(JSON.stringify(wrapToolJson(actionName, actionResult, ok)));
   } else if (format === "json") {
     console.log(JSON.stringify(actionResult, null, 2));
   } else if (format === "md") {
@@ -213,8 +223,7 @@ export function run() {
 
         // handleAction returns error envelopes instead of throwing,
         // so check the result to set the correct exit code.
-        const isError = result.action === "error" || result.result?.error;
-        process.exit(isError && format !== "tooljson" ? EXIT_RUNTIME_ERROR : EXIT_OK);
+        process.exit(isActionError(result) && format !== "tooljson" ? EXIT_RUNTIME_ERROR : EXIT_OK);
       } catch (err) {
         // Defensive: handleAction should not throw, but guard against
         // unexpected failures (e.g. import errors, OOM).
@@ -535,9 +544,12 @@ export function run() {
           baseline: options.baseline,
           repoRoot: options.repo,
         });
-        console.log(JSON.stringify(wrapToolJson(tool.name, result)));
+        const ok = !isActionError(result);
+        console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));
         process.exit(EXIT_OK);
       } catch (err) {
+        // Defensive: handleAction should not throw, but guard against
+        // unexpected failures (e.g. import errors, OOM).
         console.log(JSON.stringify(wrapToolJsonError(tool.name, err)));
         process.exit(EXIT_OK);
       }
