@@ -13,6 +13,7 @@
 
 import { handleUnifiedAction, type OddkitEnvelope, type Env } from "./orchestrate";
 import { renderChatPage } from "./chat-ui";
+import { renderNotFoundPage } from "./not-found-ui";
 import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
 
@@ -850,6 +851,13 @@ export default {
       }
     }
 
-    return new Response("Not found", { status: 404, headers: corsHeaders(origin) });
+    return new Response(renderNotFoundPage(url.pathname, url.origin), {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html;charset=utf-8",
+        "Cache-Control": "no-cache",
+        ...corsHeaders(origin),
+      },
+    });
   },
 };
