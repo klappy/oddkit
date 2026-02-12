@@ -9,12 +9,14 @@
  */
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Unified orchestrator tool (MCP Layer 1 only — not a CLI command)
+// Orchestrator tool builder (MCP Layer 1 only — not a CLI command)
+// Defined as a function so it can derive its action enum from TOOLS below.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const ORCHESTRATOR_TOOL = {
-  name: "oddkit",
-  description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or invalidate_cache actions.
+function buildOrchestratorTool(actionNames) {
+  return {
+    name: "oddkit",
+    description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or invalidate_cache actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
@@ -26,17 +28,14 @@ Use when:
 - Pre-implementation: action="preflight"
 - Validating completion: action="validate"
 - Listing available docs: action="catalog"`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: {
-        type: "string",
-        enum: [
-          "orient", "challenge", "gate", "encode", "search", "get",
-          "catalog", "validate", "preflight", "version", "invalidate_cache",
-        ],
-        description: "Which epistemic action to perform.",
-      },
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: actionNames,
+          description: "Which epistemic action to perform.",
+        },
       input: {
         type: "string",
         description: "Primary input — query, claim, URI, goal, or completion claim depending on action.",
@@ -66,10 +65,12 @@ Use when:
     idempotentHint: true,
     openWorldHint: true,
   },
-};
+  };
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Individual tools (Layer 2 — both CLI commands and MCP tools)
+// This is the single source of truth for action names, schemas, and metadata.
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const TOOLS = [
@@ -261,8 +262,14 @@ export const TOOLS = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Lookup helpers
+// Derived constants — single source of truth is TOOLS above
 // ──────────────────────────────────────────────────────────────────────────────
+
+/** Canonical list of action names, derived from TOOLS. */
+export const ACTION_NAMES = TOOLS.map((t) => t.name);
+
+/** Orchestrator tool definition with action enum derived from TOOLS. */
+export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ACTION_NAMES);
 
 /** Map from MCP tool name → action name */
 export const MCP_NAME_TO_ACTION = Object.fromEntries(

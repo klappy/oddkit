@@ -18,19 +18,17 @@ import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { ACTION_NAMES } from "./tool-registry.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../../package.json");
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Valid actions
+// Valid actions — derived from the shared tool registry (single source of truth)
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const VALID_ACTIONS = [
-  "orient", "challenge", "gate", "encode", "search", "get",
-  "catalog", "validate", "preflight", "version", "invalidate_cache",
-];
+export const VALID_ACTIONS = ACTION_NAMES;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // State management
