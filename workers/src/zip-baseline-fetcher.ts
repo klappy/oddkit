@@ -643,28 +643,38 @@ export class ZipBaselineFetcher {
 
     // Clear R2 caches: ZIP + individual files
     if (this.env.BASELINE) {
+      const bucket = this.env.BASELINE;
+
       // Delete ZIP caches
       const baselineZipKey = `zip/${getCacheKey(getZipUrl(baselineRepoUrl))}`;
-      await this.env.BASELINE.delete(baselineZipKey);
+      await bucket.delete(baselineZipKey);
       if (repoUrl) {
         const canonZipKey = `zip/${getCacheKey(getZipUrl(repoUrl))}`;
-        await this.env.BASELINE.delete(canonZipKey);
+        await bucket.delete(canonZipKey);
       }
+
+      // R2 list() is paginated; keep following cursor until exhausted.
+      const deleteFileCacheByPrefix = async (prefix: string): Promise<void> => {
+        let cursor: string | undefined;
+        let truncated = false;
+        do {
+          const listed = await bucket.list({ prefix, cursor });
+          for (const obj of listed.objects) {
+            await bucket.delete(obj.key);
+          }
+          truncated = listed.truncated;
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } while (truncated);
+      };
 
       // Delete cached individual files for baseline
       const baselineFilePrefix = `file/${getCacheKey("baseline")}/`;
-      const baselineListed = await this.env.BASELINE.list({ prefix: baselineFilePrefix });
-      for (const obj of baselineListed.objects) {
-        await this.env.BASELINE.delete(obj.key);
-      }
+      await deleteFileCacheByPrefix(baselineFilePrefix);
 
       // Delete cached individual files for canon (if specified)
       if (repoUrl) {
         const canonFilePrefix = `file/${getCacheKey(repoUrl)}/`;
-        const canonListed = await this.env.BASELINE.list({ prefix: canonFilePrefix });
-        for (const obj of canonListed.objects) {
-          await this.env.BASELINE.delete(obj.key);
-        }
+        await deleteFileCacheByPrefix(canonFilePrefix);
       }
     }
 
