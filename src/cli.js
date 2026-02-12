@@ -1,11 +1,13 @@
 import { Command } from "commander";
 import { createInterface } from "readline";
 import { createRequire } from "module";
+import { TOOLS } from "./core/tool-registry.js";
+import { handleAction } from "./core/actions.js";
+import { runIndex } from "./tasks/indexTask.js";
 import { runLibrarian } from "./tasks/librarian.js";
 import { runValidate } from "./tasks/validate.js";
-import { runIndex } from "./tasks/indexTask.js";
 import { explainLast } from "./explain/explain-last.js";
-import { runInit, getOddkitMcpSnippet } from "./cli/init.js";
+import { runInit } from "./cli/init.js";
 import { runClaudeMd } from "./cli/claudemd.js";
 import { runHooks } from "./cli/hooks.js";
 import { registerSyncAgentsCommand } from "./cli/syncAgents.js";
@@ -80,11 +82,40 @@ function wrapToolJsonError(tool, error) {
 }
 
 /**
- * Output result based on format
+ * Check whether a handleAction result represents an error.
+ * handleAction catches internally and returns error envelopes, so callers
+ * must inspect the result rather than relying on exceptions.
+ */
+function isActionError(actionResult) {
+  return actionResult.action === "error" || !!actionResult.result?.error;
+}
+
+/**
+ * Output handleAction result based on format
+ */
+function outputActionResult(actionName, actionResult, format, quiet) {
+  if (format === "tooljson") {
+    const ok = !isActionError(actionResult);
+    console.log(JSON.stringify(wrapToolJson(actionName, actionResult, ok)));
+  } else if (format === "json") {
+    console.log(JSON.stringify(actionResult, null, 2));
+  } else if (format === "md") {
+    // For md format, prefer assistant_text if available
+    if (actionResult.assistant_text) {
+      console.log(actionResult.assistant_text);
+    } else {
+      console.log(JSON.stringify(actionResult, null, 2));
+    }
+  } else {
+    console.log(JSON.stringify(actionResult, null, 2));
+  }
+}
+
+/**
+ * Output legacy task result based on format (for backward-compat commands)
  */
 function outputResult(tool, result, format, quiet) {
   if (format === "tooljson") {
-    // tooljson: strict envelope, no pretty printing for machine consumption
     console.log(JSON.stringify(wrapToolJson(tool, result)));
   } else if (format === "json") {
     console.log(JSON.stringify(result, null, 2));
@@ -108,10 +139,8 @@ function outputResult(tool, result, format, quiet) {
  */
 function outputError(tool, error, format, quiet) {
   if (format === "tooljson") {
-    // tooljson: error goes to stdout as JSON envelope
     console.log(JSON.stringify(wrapToolJsonError(tool, error)));
   } else {
-    // Other formats: error goes to stderr
     if (!quiet) {
       console.error(`${tool} error:`, error.message);
     }
@@ -131,6 +160,123 @@ export function run() {
     // Global options
     .option("--quiet", "Suppress non-essential output (logs, banners)")
     .option("--no-color", "Disable colored output");
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Epistemic tools — all 11 actions from shared registry
+  // ────────────────────────────────────────────────────────────────────────────
+
+  for (const tool of TOOLS) {
+    const cmd = program
+      .command(tool.name)
+      .description(tool.description);
+
+    // Register flags from shared schema
+    for (const [key, def] of Object.entries(tool.cliFlags || {})) {
+      cmd.option(def.flag, def.description);
+    }
+
+    // Backward-compat aliases for legacy flag names
+    if (tool.name === "validate") {
+      cmd.option("-m, --message <text>", "The completion claim (alias for --input)");
+    }
+    if (tool.name === "search") {
+      cmd.option("-q, --query <text>", "The question to ask (alias for --input)");
+    }
+
+    // Global flags all epistemic commands share
+    cmd.option("-r, --repo <path>", "Repository root path", process.cwd());
+    cmd.option("-f, --format <type>", "Output format: json, md, or tooljson", "json");
+    cmd.option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)");
+
+    cmd.action(async (options, cmdObj) => {
+      const globalOpts = cmdObj.optsWithGlobals();
+      const format = options.format;
+      const quiet = globalOpts.quiet;
+
+      try {
+        // Resolve input (support @stdin and legacy flag aliases)
+        let input = options.input || options.message || options.query;
+        if (input) {
+          input = await resolveInput(input);
+        }
+
+        // Check required input
+        const inputRequired = tool.inputSchema.required?.includes("input");
+        if (inputRequired && !input) {
+          const err = new Error("Missing required option: --input");
+          err.code = "BAD_ARGS";
+          outputError(tool.name, err, format, quiet);
+          process.exit(format === "tooljson" ? EXIT_OK : EXIT_BAD_ARGS);
+          return;
+        }
+
+        const result = await handleAction({
+          action: tool.name,
+          input: input || "",
+          context: options.context,
+          mode: options.mode,
+          baseline: options.baseline,
+          repoRoot: options.repo,
+        });
+
+        outputActionResult(tool.name, result, format, quiet);
+
+        // handleAction returns error envelopes instead of throwing,
+        // so check the result to set the correct exit code.
+        process.exit(isActionError(result) && format !== "tooljson" ? EXIT_RUNTIME_ERROR : EXIT_OK);
+      } catch (err) {
+        // Defensive: handleAction should not throw, but guard against
+        // unexpected failures (e.g. import errors, OOM).
+        outputError(tool.name, err, format, quiet);
+        process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
+      }
+    });
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Legacy: librarian command (deprecated alias for search)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  program
+    .command("librarian")
+    .description("[deprecated — use 'search'] Ask a policy/lookup question")
+    .option("-q, --query <text>", "The question to ask (use @stdin to read from stdin)")
+    .option("-i, --input <text>", "The question (alias for --query)")
+    .option("-r, --repo <path>", "Repository root path", process.cwd())
+    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
+    .option("-f, --format <type>", "Output format: tooljson, json, or md", "json")
+    .action(async (options, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const format = options.format;
+      const quiet = globalOpts.quiet;
+
+      if (!quiet) {
+        console.error("Note: 'oddkit librarian' is deprecated. Use 'oddkit search' instead.");
+      }
+
+      try {
+        let query = options.query || options.input;
+        if (!query) {
+          const err = new Error("Missing required option: --query");
+          err.code = "BAD_ARGS";
+          outputError("librarian", err, format, quiet);
+          process.exit(format === "tooljson" ? EXIT_OK : EXIT_BAD_ARGS);
+          return;
+        }
+        query = await resolveInput(query);
+
+        const result = await runLibrarian({ ...options, query });
+        outputResult("librarian", result, format, quiet);
+        process.exit(EXIT_OK);
+      } catch (err) {
+        outputError("librarian", err, format, quiet);
+        process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
+      }
+    });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Setup / utility commands (CLI-only, no MCP equivalent)
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Index command
   program
@@ -155,76 +301,7 @@ export function run() {
       }
     });
 
-  // Librarian command
-  program
-    .command("librarian")
-    .description("Ask a policy/lookup question")
-    .option("-q, --query <text>", "The question to ask (use @stdin to read from stdin)")
-    .option("-r, --repo <path>", "Repository root path", process.cwd())
-    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
-    .option("-f, --format <type>", "Output format: tooljson, json, or md", "json")
-    .action(async (options, cmd) => {
-      const globalOpts = cmd.optsWithGlobals();
-      const format = options.format;
-      const quiet = globalOpts.quiet;
-
-      try {
-        // Resolve query (support @stdin)
-        let query = options.query;
-        if (!query) {
-          const err = new Error("Missing required option: --query");
-          err.code = "BAD_ARGS";
-          outputError("librarian", err, format, quiet);
-          process.exit(format === "tooljson" ? EXIT_OK : EXIT_BAD_ARGS);
-          return;
-        }
-        query = await resolveInput(query);
-
-        const result = await runLibrarian({ ...options, query });
-        outputResult("librarian", result, format, quiet);
-        process.exit(EXIT_OK);
-      } catch (err) {
-        outputError("librarian", err, format, quiet);
-        process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
-      }
-    });
-
-  // Validate command
-  program
-    .command("validate")
-    .description("Validate a completion claim")
-    .option("-m, --message <text>", "The completion claim message (use @stdin to read from stdin)")
-    .option("-r, --repo <path>", "Repository root path", process.cwd())
-    .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
-    .option("-a, --artifacts <path>", "Path to artifacts JSON file")
-    .option("-f, --format <type>", "Output format: tooljson, json, or md", "json")
-    .action(async (options, cmd) => {
-      const globalOpts = cmd.optsWithGlobals();
-      const format = options.format;
-      const quiet = globalOpts.quiet;
-
-      try {
-        // Resolve message (support @stdin)
-        let message = options.message;
-        if (!message) {
-          const err = new Error("Missing required option: --message");
-          err.code = "BAD_ARGS";
-          outputError("validate", err, format, quiet);
-          process.exit(format === "tooljson" ? EXIT_OK : EXIT_BAD_ARGS);
-          return;
-        }
-        message = await resolveInput(message);
-
-        const result = await runValidate({ ...options, message });
-        outputResult("validate", result, format, quiet);
-        process.exit(EXIT_OK);
-      } catch (err) {
-        outputError("validate", err, format, quiet);
-        process.exit(format === "tooljson" ? EXIT_OK : EXIT_RUNTIME_ERROR);
-      }
-    });
-
-  // Explain command
+  // Explain command (CLI-only convenience)
   program
     .command("explain")
     .description("Explain the last oddkit result in human-readable format")
@@ -236,7 +313,6 @@ export function run() {
       const quiet = globalOpts.quiet;
 
       try {
-        // For explain, get JSON result always, then format
         const result = explainLast({ format: "json" });
 
         if (format === "tooljson") {
@@ -244,7 +320,6 @@ export function run() {
         } else if (format === "json") {
           console.log(JSON.stringify(result, null, 2));
         } else {
-          // md format - render human-readable
           const mdResult = explainLast({ format: "md" });
           console.log(mdResult);
         }
@@ -274,13 +349,11 @@ export function run() {
         const result = await runInit(options);
 
         if (options.print) {
-          // Print mode: just output the JSON snippet
           console.log(JSON.stringify(result.snippet, null, 2));
           process.exit(EXIT_OK);
           return;
         }
 
-        // Handle --all mode with multiple results
         if (result.action === "all") {
           let hasErrors = false;
           for (const r of result.results) {
@@ -317,7 +390,6 @@ export function run() {
           return;
         }
 
-        // Success
         if (!quiet) {
           if (result.action === "wrote") {
             console.log(`Wrote ${result.targetName} config: ${result.targetPath}`);
@@ -419,14 +491,75 @@ export function run() {
       }
     });
 
-  // Tool subcommand group - always outputs tooljson envelope
+  // ────────────────────────────────────────────────────────────────────────────
+  // Tool subcommand group — tooljson envelope output via shared registry
+  // ────────────────────────────────────────────────────────────────────────────
+
   const toolCmd = program
     .command("tool")
     .description("Tool-mode commands (always output tooljson envelope)");
 
+  // Register all 11 epistemic tools under `oddkit tool <name>`
+  for (const tool of TOOLS) {
+    const sub = toolCmd
+      .command(tool.name)
+      .description(`${tool.description} (tooljson output)`);
+
+    for (const [key, def] of Object.entries(tool.cliFlags || {})) {
+      sub.option(def.flag, def.description);
+    }
+
+    // Backward-compat aliases for legacy flag names
+    if (tool.name === "validate") {
+      sub.option("-m, --message <text>", "The completion claim (alias for --input)");
+    }
+    if (tool.name === "search") {
+      sub.option("-q, --query <text>", "The question to ask (alias for --input)");
+    }
+
+    sub.option("-r, --repo <path>", "Repository root path", process.cwd());
+    sub.option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)");
+
+    sub.action(async (options) => {
+      try {
+        let input = options.input || options.message || options.query;
+        if (input) {
+          input = await resolveInput(input);
+        }
+
+        const inputRequired = tool.inputSchema.required?.includes("input");
+        if (inputRequired && !input) {
+          const err = new Error(`Missing required option: --input`);
+          err.code = "BAD_ARGS";
+          console.log(JSON.stringify(wrapToolJsonError(tool.name, err)));
+          process.exit(EXIT_OK);
+          return;
+        }
+
+        const result = await handleAction({
+          action: tool.name,
+          input: input || "",
+          context: options.context,
+          mode: options.mode,
+          baseline: options.baseline,
+          repoRoot: options.repo,
+        });
+        const ok = !isActionError(result);
+        console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));
+        process.exit(EXIT_OK);
+      } catch (err) {
+        // Defensive: handleAction should not throw, but guard against
+        // unexpected failures (e.g. import errors, OOM).
+        console.log(JSON.stringify(wrapToolJsonError(tool.name, err)));
+        process.exit(EXIT_OK);
+      }
+    });
+  }
+
+  // Legacy: tool librarian (deprecated alias for tool search)
   toolCmd
     .command("librarian")
-    .description("Ask a policy/lookup question (tooljson output)")
+    .description("[deprecated — use 'tool search'] Ask a policy/lookup question (tooljson output)")
     .option("-q, --query <text>", "The question to ask (use @stdin to read from stdin)")
     .option("-r, --repo <path>", "Repository root path", process.cwd())
     .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
@@ -451,9 +584,10 @@ export function run() {
       }
     });
 
+  // Legacy: tool validate (deprecated alias for tool validate via handleAction)
   toolCmd
-    .command("validate")
-    .description("Validate a completion claim (tooljson output)")
+    .command("validate-legacy")
+    .description("[deprecated — use 'tool validate'] Validate completion claim (tooljson output)")
     .option("-m, --message <text>", "The completion claim message (use @stdin to read from stdin)")
     .option("-r, --repo <path>", "Repository root path", process.cwd())
     .option("-b, --baseline <path-or-url>", "Override baseline repo (path or git URL)")
@@ -479,6 +613,7 @@ export function run() {
       }
     });
 
+  // tool explain (CLI-only convenience, kept as-is)
   toolCmd
     .command("explain")
     .description("Explain the last oddkit result (tooljson output)")
@@ -527,14 +662,12 @@ export function run() {
         if (options.format === "json") {
           console.log(JSON.stringify(result.json, null, 2));
         } else {
-          // Summary format
           console.log(`Verdict: ${result.verdict}`);
           console.log(`Tests: ${result.tests.passed}/${result.tests.total} passed`);
           console.log(`Probes: ${result.probes.passed}/${result.probes.total} passed`);
           console.log(`Baseline: ${result.baseline.commit}`);
           console.log(`Receipt: ${result.receipts.latest_md}`);
 
-          // CI-grepable warnings
           if (result.json.warnings && result.json.warnings.length > 0) {
             for (const w of result.json.warnings) {
               console.log(`WARNING_${w}=true`);
@@ -542,7 +675,6 @@ export function run() {
           }
         }
 
-        // Exit code based on verdict
         process.exit(result.compatible ? EXIT_OK : EXIT_RUNTIME_ERROR);
       } catch (err) {
         if (!quiet) {
