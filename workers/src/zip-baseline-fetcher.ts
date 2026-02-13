@@ -639,6 +639,25 @@ export class ZipBaselineFetcher {
   }
 
   /**
+   * Delete all KV keys matching a prefix, handling pagination.
+   * KV has no native prefix-delete, so we list-then-delete.
+   */
+  private async deleteKvByPrefix(prefix: string): Promise<void> {
+    if (!this.env.BASELINE_CACHE) {
+      return;
+    }
+
+    let cursor: string | undefined;
+    do {
+      const listed = await this.env.BASELINE_CACHE.list({ prefix, cursor });
+      for (const key of listed.keys) {
+        await this.env.BASELINE_CACHE.delete(key.name);
+      }
+      cursor = listed.list_complete ? undefined : listed.cursor;
+    } while (cursor);
+  }
+
+  /**
    * Clean up stored data for a repo (storage hygiene only).
    * NOT required for correctness — content-addressed caching ensures
    * fresh content is served when the baseline SHA changes.
@@ -647,17 +666,15 @@ export class ZipBaselineFetcher {
     const key = getCacheKey(repoUrl || "default");
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Clear KV index cache
+    // Clear KV caches: SHA-keyed index entries + SHA tracking
+    // Index keys are now SHA-suffixed (index/${base}_${shaKey}), so we
+    // must list-then-delete by prefix to find all SHA variants.
     if (this.env.BASELINE_CACHE) {
-      await this.env.BASELINE_CACHE.delete(`index/${key}`);
-      // Also clear SHA caches to force re-check
-      await this.env.BASELINE_CACHE.delete(`sha/${getCacheKey(baselineRepoUrl)}`);
-      if (repoUrl) {
-        await this.env.BASELINE_CACHE.delete(`sha/${getCacheKey(repoUrl)}`);
-      }
+      await this.deleteKvByPrefix(`index/${key}`);
+      await this.deleteKvByPrefix(`sha/`);
     }
 
-    // Clear R2 caches: ZIP + individual files
+    // Clear R2 caches: ZIP + individual files (including SHA-keyed paths)
     if (this.env.BASELINE) {
       // Delete ZIP caches
       const baselineZipKey = `zip/${getCacheKey(getZipUrl(baselineRepoUrl))}`;
@@ -667,11 +684,10 @@ export class ZipBaselineFetcher {
         await this.env.BASELINE.delete(canonZipKey);
       }
 
-      // Delete cached individual files for baseline
+      // Delete cached individual files (SHA-keyed subdirectories)
       const baselineFilePrefix = `file/${getCacheKey("baseline")}/`;
       await this.deleteObjectsByPrefix(baselineFilePrefix);
 
-      // Delete cached individual files for canon (if specified)
       if (repoUrl) {
         const canonFilePrefix = `file/${getCacheKey(repoUrl)}/`;
         await this.deleteObjectsByPrefix(canonFilePrefix);
