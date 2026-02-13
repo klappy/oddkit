@@ -140,15 +140,6 @@ export function getCacheDir(baselineUrl, ref, commitSha = null) {
 }
 
 /**
- * Get the cache root for a baseline (without ref/sha suffix).
- * Used for enumerating SHA-keyed cache directories.
- */
-export function getCacheRoot(baselineUrl) {
-  const cacheName = getCacheName(baselineUrl);
-  return join(homedir(), ".oddkit", "cache", cacheName);
-}
-
-/**
  * Find the most recent valid cache directory under a parent dir.
  * Scans for SHA-keyed subdirectories that contain a .git directory.
  * Returns { dir, sha } for the most recently modified one, or null.

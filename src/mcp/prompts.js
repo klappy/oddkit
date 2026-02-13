@@ -82,12 +82,14 @@ async function loadCanonPrompts() {
   const baseline = await ensureBaselineRepo();
   if (!baseline.root) {
     cachedCanonPrompts = [];
+    cachedCanonPromptsSha = currentSha;
     return cachedCanonPrompts;
   }
 
   const promptsDir = join(baseline.root, "canon/prompts");
   if (!existsSync(promptsDir)) {
     cachedCanonPrompts = [];
+    cachedCanonPromptsSha = baseline.commitSha || currentSha;
     return cachedCanonPrompts;
   }
 
@@ -116,6 +118,7 @@ async function loadCanonPrompts() {
   } catch (err) {
     console.error(`oddkit: failed to scan canon prompts: ${err.message}`);
     cachedCanonPrompts = [];
+    cachedCanonPromptsSha = baseline.commitSha || currentSha;
     return cachedCanonPrompts;
   }
 }
