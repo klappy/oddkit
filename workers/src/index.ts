@@ -13,6 +13,7 @@
 
 import { handleUnifiedAction, type OddkitEnvelope, type Env } from "./orchestrate";
 import { renderChatPage } from "./chat-ui";
+import { renderNotFoundPage } from "./not-found-ui";
 import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
 
@@ -24,7 +25,7 @@ export type { Env };
 
 const ODDKIT_TOOL = {
   name: "oddkit",
-  description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or invalidate_cache actions.
+  description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or cleanup_storage actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
@@ -43,7 +44,7 @@ Use when:
         type: "string",
         enum: [
           "orient", "challenge", "gate", "encode", "search", "get",
-          "catalog", "validate", "preflight", "version", "invalidate_cache",
+          "catalog", "validate", "preflight", "version", "cleanup_storage",
         ],
         description: "Which epistemic action to perform.",
       },
@@ -213,12 +214,12 @@ const INDIVIDUAL_TOOLS = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: "oddkit_invalidate_cache",
-    description: "Force refresh of cached baseline/canon data. Next request will fetch fresh data.",
+    name: "oddkit_cleanup_storage",
+    description: "Storage hygiene: clears orphaned cached data. NOT required for correctness — content-addressed caching ensures fresh content is served automatically when the baseline changes.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL to invalidate cache for." },
+        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: [] as string[],
     },
@@ -467,7 +468,7 @@ async function executeToolCall(
     oddkit_validate: "validate",
     oddkit_preflight: "preflight",
     oddkit_version: "version",
-    oddkit_invalidate_cache: "invalidate_cache",
+    oddkit_cleanup_storage: "cleanup_storage",
   };
 
   const action = actionFromName[name];
@@ -850,6 +851,13 @@ export default {
       }
     }
 
-    return new Response("Not found", { status: 404, headers: corsHeaders(origin) });
+    return new Response(renderNotFoundPage(url.pathname, url.origin), {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html;charset=utf-8",
+        "Cache-Control": "no-cache",
+        ...corsHeaders(origin),
+      },
+    });
   },
 };

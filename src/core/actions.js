@@ -17,7 +17,7 @@ import { runGate } from "../tasks/gate.js";
 import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
-import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
 import { createRequire } from "module";
 
@@ -55,14 +55,18 @@ function addCanonRefs(state, paths) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// BM25 search index (lazy, cached)
+// BM25 search index (lazy, SHA-keyed)
+//
+// Content-addressed: the BM25 index is keyed to the baseline commit SHA.
+// When the SHA changes, the index is rebuilt from fresh content.
+// No TTL. No manual invalidation for correctness.
 // ──────────────────────────────────────────────────────────────────────────────
 
 let cachedBM25 = null;
-let cachedIndexDocs = null;
+let cachedBM25Sha = null;
 
-function getBM25Index(docs) {
-  if (cachedBM25 && cachedIndexDocs === docs) {
+function getBM25Index(docs, baselineSha) {
+  if (cachedBM25 && cachedBM25Sha === baselineSha && baselineSha) {
     return cachedBM25;
   }
 
@@ -77,7 +81,7 @@ function getBM25Index(docs) {
   }));
 
   cachedBM25 = buildBM25Index(documents);
-  cachedIndexDocs = docs;
+  cachedBM25Sha = baselineSha;
   return cachedBM25;
 }
 
@@ -161,6 +165,16 @@ export async function handleAction(params) {
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
 
+  // Helper: enrich debug output with baseline SHA for observability
+  function makeDebug(extra = {}) {
+    return {
+      baseline_sha: getSessionSha(),
+      ...extra,
+      duration_ms: Date.now() - startMs,
+      generated_at: new Date().toISOString(),
+    };
+  }
+
   if (!VALID_ACTIONS.includes(action)) {
     return {
       action: "error",
@@ -186,7 +200,7 @@ export async function handleAction(params) {
           result: taskResult,
           state: updatedState,
           assistant_text: assistantText,
-          debug: { ...taskResult.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(taskResult.debug),
         };
       }
 
@@ -202,7 +216,7 @@ export async function handleAction(params) {
           result: taskResult,
           state: updatedState,
           assistant_text: assistantText,
-          debug: { ...taskResult.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(taskResult.debug),
         };
       }
 
@@ -221,7 +235,7 @@ export async function handleAction(params) {
           result: taskResult,
           state: updatedState,
           assistant_text: assistantText,
-          debug: { ...taskResult.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(taskResult.debug),
         };
       }
 
@@ -237,26 +251,31 @@ export async function handleAction(params) {
           result: taskResult,
           state: updatedState,
           assistant_text: assistantText,
-          debug: { ...taskResult.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(taskResult.debug),
         };
       }
 
       case "search": {
         const baselineResult = await ensureBaselineRepo(baseline);
         const baselineAvailable = !!baselineResult.root;
+        const baselineSha = baselineResult.commitSha || null;
 
+        // Content-addressed index: rebuild if SHA changed or baseline availability changed
         let index = loadIndex(repoRoot);
         if (index) {
           const hasBaselineDocs = index.documents.some((d) => d.origin === "baseline");
+          const indexSha = index.baselineCommitSha || null;
           if (!baselineAvailable && hasBaselineDocs) index = null;
           else if (baselineAvailable && !hasBaselineDocs) index = null;
+          else if (baselineSha && indexSha && baselineSha !== indexSha) index = null;
         }
         if (!index) {
           index = await buildIndex(repoRoot, baselineAvailable ? baselineResult.root : null);
+          index.baselineCommitSha = baselineSha;
           saveIndex(index, repoRoot);
         }
 
-        const bm25 = getBM25Index(index.documents);
+        const bm25 = getBM25Index(index.documents, baselineSha);
         const results = searchBM25(bm25, input, 5);
 
         const docMap = new Map(index.documents.map((d) => [d.path, d]));
@@ -276,7 +295,7 @@ export async function handleAction(params) {
             result: { status: "NO_MATCH", docs_considered: index.documents.length, hits: [] },
             state: updatedState,
             assistant_text: `Searched ${index.documents.length} documents but found no matches for "${input}". Try rephrasing or use action "catalog".`,
-            debug: { search_index_size: bm25.N, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+            debug: makeDebug({ search_index_size: bm25.N }),
           };
         }
 
@@ -311,7 +330,7 @@ export async function handleAction(params) {
           },
           state: updatedState,
           assistant_text: assistantLines.join("\n").trim(),
-          debug: { search_index_size: bm25.N, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug({ search_index_size: bm25.N }),
         };
       }
 
@@ -326,7 +345,7 @@ export async function handleAction(params) {
             result,
             state: updatedState,
             assistant_text: result.content || JSON.stringify(result, null, 2),
-            debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+            debug: makeDebug(),
           };
         } catch (err) {
           return {
@@ -334,7 +353,7 @@ export async function handleAction(params) {
             result: { error: err.message, uri },
             state: state ? initState(state) : undefined,
             assistant_text: `Document not found: \`${uri}\`. Use action "search" or "catalog" to find available documents.`,
-            debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+            debug: makeDebug(),
           };
         }
       }
@@ -351,7 +370,7 @@ export async function handleAction(params) {
           result: result.result || result,
           state: state ? initState(state) : undefined,
           assistant_text: result.assistant_text || JSON.stringify(result, null, 2),
-          debug: { ...result.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(result.debug),
         };
       }
 
@@ -367,7 +386,7 @@ export async function handleAction(params) {
           result: result.result || result,
           state: state ? initState(state) : undefined,
           assistant_text: result.assistant_text || JSON.stringify(result, null, 2),
-          debug: { ...result.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(result.debug),
         };
       }
 
@@ -383,7 +402,7 @@ export async function handleAction(params) {
           result: result.result || result,
           state: state ? initState(state) : undefined,
           assistant_text: result.assistant_text || JSON.stringify(result, null, 2),
-          debug: { ...result.debug, duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          debug: makeDebug(result.debug),
         };
       }
 
@@ -406,26 +425,31 @@ export async function handleAction(params) {
               },
             },
             assistant_text: `oddkit v${VERSION} | canon: ${canonTarget.commit || "unknown"}`,
-            debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+            debug: makeDebug(),
           };
         } catch (err) {
           return {
             action: "version",
             result: { oddkit_version: VERSION, error: err.message },
             assistant_text: `oddkit v${VERSION} | canon target resolution failed: ${err.message}`,
-            debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+            debug: makeDebug(),
           };
         }
       }
 
-      case "invalidate_cache": {
+      case "cleanup_storage": {
+        // Hygiene-only: clears in-memory caches.
+        // NOT required for correctness — content-addressed storage ensures
+        // fresh content is served automatically when the baseline SHA changes.
         cachedBM25 = null;
-        cachedIndexDocs = null;
+        cachedBM25Sha = null;
         return {
-          action: "invalidate_cache",
+          action: "cleanup_storage",
           result: { success: true },
-          assistant_text: "Cache invalidated. Next request will rebuild the index.",
-          debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+          assistant_text: "In-memory caches cleared. Note: this is storage hygiene only. " +
+            "Content-addressed caching ensures correct content is served automatically " +
+            "when the baseline changes — no manual cleanup is required for correctness.",
+          debug: makeDebug(),
         };
       }
 
@@ -434,7 +458,7 @@ export async function handleAction(params) {
           action: "error",
           result: { error: `Unhandled action: ${action}` },
           assistant_text: `Unhandled action: ${action}`,
-          debug: { generated_at: new Date().toISOString() },
+          debug: makeDebug(),
         };
     }
   } catch (err) {
@@ -443,7 +467,7 @@ export async function handleAction(params) {
       result: { error: err.message || "Unknown error" },
       state: state ? initState(state) : undefined,
       assistant_text: `Error in ${action}: ${err.message || "Unknown error"}`,
-      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+      debug: makeDebug(),
     };
   }
 }

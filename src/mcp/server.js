@@ -12,7 +12,7 @@
  *   Layer 1 (orchestrator): oddkit — unified tool with action routing and state threading
  *   Layer 2 (individual):   oddkit_orient, oddkit_challenge, oddkit_gate, oddkit_encode,
  *                           oddkit_search, oddkit_get, oddkit_catalog, oddkit_validate,
- *                           oddkit_preflight, oddkit_version, oddkit_invalidate_cache
+ *                           oddkit_preflight, oddkit_version, oddkit_cleanup_storage
  *
  * Usage:
  *   node src/mcp/server.js
