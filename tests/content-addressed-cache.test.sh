@@ -143,6 +143,12 @@ else
   fail "ensureBaselineRepo.js missing getSessionSha export"
 fi
 
+if grep -q "findLatestCacheDir" "$PROJECT_ROOT/src/baseline/ensureBaselineRepo.js" 2>/dev/null; then
+  pass "ensureBaselineRepo.js has offline fallback (findLatestCacheDir)"
+else
+  fail "ensureBaselineRepo.js missing offline fallback"
+fi
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Test 7: Workers use content-addressed caching
 # ──────────────────────────────────────────────────────────────────────────────

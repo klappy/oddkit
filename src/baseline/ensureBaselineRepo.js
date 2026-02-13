@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
 import { join, resolve, isAbsolute } from "path";
 import { homedir } from "os";
 
@@ -146,6 +146,54 @@ export function getCacheDir(baselineUrl, ref, commitSha = null) {
 export function getCacheRoot(baselineUrl) {
   const cacheName = getCacheName(baselineUrl);
   return join(homedir(), ".oddkit", "cache", cacheName);
+}
+
+/**
+ * Find the most recent valid cache directory under a parent dir.
+ * Scans for SHA-keyed subdirectories that contain a .git directory.
+ * Returns { dir, sha } for the most recently modified one, or null.
+ *
+ * This provides offline resilience: when the network is unavailable,
+ * the last-known-good cached content can still be served.
+ */
+function findLatestCacheDir(parentDir) {
+  if (!existsSync(parentDir)) return null;
+
+  try {
+    const entries = readdirSync(parentDir);
+    let latest = null;
+    let latestMtime = 0;
+
+    for (const entry of entries) {
+      const candidateDir = join(parentDir, entry);
+      const gitDir = join(candidateDir, ".git");
+      if (existsSync(gitDir)) {
+        // Use .git directory mtime as a proxy for recency
+        try {
+          const { mtimeMs } = statSync(gitDir);
+          if (mtimeMs > latestMtime) {
+            latestMtime = mtimeMs;
+            // Resolve the actual commit SHA from the cached repo
+            let sha = entry; // directory name is the SHA for SHA-keyed dirs
+            try {
+              sha = execSync("git rev-parse HEAD", { cwd: candidateDir, stdio: "pipe" })
+                .toString()
+                .trim();
+            } catch {
+              // Use directory name as fallback
+            }
+            latest = { dir: candidateDir, sha };
+          }
+        } catch {
+          // Can't stat — skip this entry
+        }
+      }
+    }
+
+    return latest;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -321,8 +369,34 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  // Step 3: No exact-SHA cache exists (or couldn't resolve SHA).
-  // Clone fresh content keyed to the resolved SHA.
+  // Step 3: Offline resilience — when network is unavailable (remoteSha is
+  // null), fall back to the most recent existing SHA-keyed cache directory.
+  // A transient network blip should serve last-known-good content, not
+  // hard-fail when perfectly good cached content exists.
+  // ────────────────────────────────────────────────────────────────────────
+
+  if (!remoteSha) {
+    const fallback = findLatestCacheDir(parentDir);
+    if (fallback) {
+      sessionResolvedSha = fallback.sha;
+      sessionResolvedKey = sessionKey;
+
+      return {
+        root: fallback.dir,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: fallback.sha,
+        error: null,
+      };
+    }
+    // No existing cache either — fall through to clone attempt (will likely fail too)
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Step 4: No exact-SHA cache exists. Clone fresh content keyed to the
+  // resolved SHA. If clone fails, fall back to existing cache as well.
   // ────────────────────────────────────────────────────────────────────────
 
   try {
@@ -363,6 +437,23 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
       error: null,
     };
   } catch (err) {
+    // Clone failed — fall back to existing cache if available
+    const fallback = findLatestCacheDir(parentDir);
+    if (fallback) {
+      sessionResolvedSha = fallback.sha;
+      sessionResolvedKey = sessionKey;
+
+      return {
+        root: fallback.dir,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: fallback.sha,
+        error: null,
+      };
+    }
+
     return {
       root: null,
       ref,
