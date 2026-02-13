@@ -1,10 +1,36 @@
 import { execSync } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "fs";
 import { join, resolve, isAbsolute } from "path";
 import { homedir } from "os";
 
 const DEFAULT_BASELINE_URL = "https://github.com/klappy/klappy.dev.git";
 const DEFAULT_REF = "main";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Per-session SHA resolution cache
+//
+// Within a single process lifetime, the resolved remote SHA is cached so that
+// multiple calls to ensureBaselineRepo (search, get, catalog, etc.) within one
+// request do not each hit the network. This is NOT a TTL cache — it is scoped
+// to the current process invocation. A new process always re-resolves.
+// ──────────────────────────────────────────────────────────────────────────────
+let sessionResolvedSha = null;
+let sessionResolvedKey = null; // "url|ref" to detect parameter changes
+
+/**
+ * Reset the per-session SHA cache. Exported for testing.
+ */
+export function resetSessionShaCache() {
+  sessionResolvedSha = null;
+  sessionResolvedKey = null;
+}
+
+/**
+ * Get the current session-resolved SHA (if any). Exported for observability.
+ */
+export function getSessionSha() {
+  return sessionResolvedSha;
+}
 
 /**
  * Check for changes in remote repo without fetching content.
@@ -100,16 +126,85 @@ function getCacheName(url) {
 }
 
 /**
- * Get the cache directory for a specific baseline and ref
+ * Get the cache directory for a specific baseline and ref.
+ * When commitSha is provided, uses SHA-keyed storage (content-addressed).
+ * Falls back to ref-keyed storage only when SHA is unavailable.
  */
-export function getCacheDir(baselineUrl, ref) {
+export function getCacheDir(baselineUrl, ref, commitSha = null) {
   const cacheName = getCacheName(baselineUrl);
   const cacheRoot = join(homedir(), ".oddkit", "cache", cacheName);
+  if (commitSha) {
+    return join(cacheRoot, commitSha);
+  }
   return join(cacheRoot, ref.replace(/[^a-zA-Z0-9_-]/g, "_"));
 }
 
 /**
- * Ensure the baseline repo is available
+ * Get the cache root for a baseline (without ref/sha suffix).
+ * Used for enumerating SHA-keyed cache directories.
+ */
+export function getCacheRoot(baselineUrl) {
+  const cacheName = getCacheName(baselineUrl);
+  return join(homedir(), ".oddkit", "cache", cacheName);
+}
+
+/**
+ * Find the most recent valid cache directory under a parent dir.
+ * Scans for SHA-keyed subdirectories that contain a .git directory.
+ * Returns { dir, sha } for the most recently modified one, or null.
+ *
+ * This provides offline resilience: when the network is unavailable,
+ * the last-known-good cached content can still be served.
+ */
+function findLatestCacheDir(parentDir) {
+  if (!existsSync(parentDir)) return null;
+
+  try {
+    const entries = readdirSync(parentDir);
+    let latest = null;
+    let latestMtime = 0;
+
+    for (const entry of entries) {
+      const candidateDir = join(parentDir, entry);
+      const gitDir = join(candidateDir, ".git");
+      if (existsSync(gitDir)) {
+        // Use .git directory mtime as a proxy for recency
+        try {
+          const { mtimeMs } = statSync(gitDir);
+          if (mtimeMs > latestMtime) {
+            latestMtime = mtimeMs;
+            // Resolve the actual commit SHA from the cached repo
+            let sha = entry; // directory name is the SHA for SHA-keyed dirs
+            try {
+              sha = execSync("git rev-parse HEAD", { cwd: candidateDir, stdio: "pipe" })
+                .toString()
+                .trim();
+            } catch {
+              // Use directory name as fallback
+            }
+            latest = { dir: candidateDir, sha };
+          }
+        } catch {
+          // Can't stat — skip this entry
+        }
+      }
+    }
+
+    return latest;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ensure the baseline repo is available.
+ *
+ * Content-addressed caching strategy:
+ *   1. Resolve the current commit SHA for the baseline branch (lightweight git ls-remote)
+ *   2. Use that SHA as the storage namespace key
+ *   3. If content for this exact SHA exists locally, serve it — this is truthful
+ *   4. If the SHA has changed or no content exists, fetch fresh and store keyed to the new SHA
+ *   No TTL. No staleness window. No manual flush for correctness.
  *
  * Resolution order:
  *   1. cliOverride parameter (from --baseline flag)
@@ -118,12 +213,11 @@ export function getCacheDir(baselineUrl, ref) {
  *
  * Options:
  *   - checkOnly: If true, only check for changes without fetching (returns changed: boolean)
- *   - skipFetchIfUnchanged: If true, skip fetch if remote hasn't changed
  *
- * Returns { root, ref, source, baselineUrl, commitSha, changed, skippedFetch } or { root: null, error }
+ * Returns { root, ref, source, baselineUrl, commitSha } or { root: null, error }
  */
 export async function ensureBaselineRepo(cliOverride = null, options = {}) {
-  const { checkOnly = false, skipFetchIfUnchanged = false } = options;
+  const { checkOnly = false } = options;
   const { url: baselineUrl, source: baselineSource } = resolveBaselineSource(cliOverride);
   const ref = getBaselineRef();
   const refSource = process.env.ODDKIT_BASELINE_REF ? "environment" : "defaulted";
@@ -155,6 +249,9 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
       // Not a git repo or can't get SHA
     }
 
+    sessionResolvedSha = commitSha;
+    sessionResolvedKey = `${baselineUrl}|local`;
+
     return {
       root: localPath,
       ref: "local",
@@ -178,8 +275,6 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
     };
   }
 
-  const cacheDir = getCacheDir(baselineUrl, ref);
-
   try {
     // Check if git is available
     execSync("git --version", { stdio: "pipe" });
@@ -194,73 +289,126 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
     };
   }
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Step 1: Resolve the current commit SHA for this branch.
+  // This is one lightweight network call (~100 bytes via git ls-remote).
+  // Within a single process, we cache this to avoid redundant network hits
+  // across multiple actions in the same session.
+  // ────────────────────────────────────────────────────────────────────────
+
+  const sessionKey = `${baselineUrl}|${ref}`;
+  let remoteSha = null;
+
+  if (sessionResolvedSha && sessionResolvedKey === sessionKey) {
+    // Reuse within the same process session (not across processes)
+    remoteSha = sessionResolvedSha;
+  } else {
+    const changeCheck = checkRemoteForChanges(baselineUrl, ref);
+    remoteSha = changeCheck.currentSha;
+
+    if (remoteSha) {
+      sessionResolvedSha = remoteSha;
+      sessionResolvedKey = sessionKey;
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Step 2: Check if we have content for this exact SHA already cached.
+  // Content-addressed: if the SHA matches, the content is correct by identity.
+  // ────────────────────────────────────────────────────────────────────────
+
+  const parentDir = join(homedir(), ".oddkit", "cache", getCacheName(baselineUrl));
+  if (!existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
+  }
+
+  // If we have the remote SHA, check for an exact-SHA cache hit
+  if (remoteSha) {
+    const shaCacheDir = getCacheDir(baselineUrl, ref, remoteSha);
+
+    if (existsSync(join(shaCacheDir, ".git"))) {
+      // Content-addressed cache hit: SHA matches, content is truthful
+      if (checkOnly) {
+        return {
+          root: shaCacheDir,
+          ref,
+          refSource,
+          baselineUrl,
+          baselineSource,
+          commitSha: remoteSha,
+          changed: false,
+          remoteSha,
+          error: null,
+        };
+      }
+
+      return {
+        root: shaCacheDir,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: remoteSha,
+        error: null,
+      };
+    }
+
+    if (checkOnly) {
+      return {
+        root: null,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: null,
+        changed: true,
+        remoteSha,
+        error: null,
+      };
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Step 3: Offline resilience — when network is unavailable (remoteSha is
+  // null), fall back to the most recent existing SHA-keyed cache directory.
+  // A transient network blip should serve last-known-good content, not
+  // hard-fail when perfectly good cached content exists.
+  // ────────────────────────────────────────────────────────────────────────
+
+  if (!remoteSha) {
+    const fallback = findLatestCacheDir(parentDir);
+    if (fallback) {
+      sessionResolvedSha = fallback.sha;
+      sessionResolvedKey = sessionKey;
+
+      return {
+        root: fallback.dir,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: fallback.sha,
+        error: null,
+      };
+    }
+    // No existing cache either — fall through to clone attempt (will likely fail too)
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Step 4: No exact-SHA cache exists. Clone fresh content keyed to the
+  // resolved SHA. If clone fails, fall back to existing cache as well.
+  // ────────────────────────────────────────────────────────────────────────
+
   try {
-    // Ensure cache directory parent exists
-    const parentDir = join(homedir(), ".oddkit", "cache", getCacheName(baselineUrl));
-    if (!existsSync(parentDir)) {
-      mkdirSync(parentDir, { recursive: true });
-    }
+    // Determine cache directory: SHA-keyed if we know the SHA, ref-keyed as fallback
+    const cacheDir = remoteSha
+      ? getCacheDir(baselineUrl, ref, remoteSha)
+      : getCacheDir(baselineUrl, ref);
 
-    let skippedFetch = false;
-    let changed = null;
-
-    if (existsSync(join(cacheDir, ".git"))) {
-      // Repo exists - check if we should skip fetch
-      let cachedSha = null;
-      try {
-        cachedSha = execSync("git rev-parse HEAD", { cwd: cacheDir, stdio: "pipe" })
-          .toString()
-          .trim();
-      } catch {
-        // Couldn't get cached SHA
-      }
-
-      // Efficient change check using git ls-remote (only fetches refs, ~100 bytes)
-      if (checkOnly || skipFetchIfUnchanged) {
-        const changeCheck = checkRemoteForChanges(baselineUrl, ref, cachedSha);
-        changed = changeCheck.changed;
-
-        if (checkOnly) {
-          // Just return change status, don't fetch
-          return {
-            root: cacheDir,
-            ref,
-            refSource,
-            baselineUrl,
-            baselineSource,
-            commitSha: cachedSha,
-            changed,
-            remoteSha: changeCheck.currentSha,
-            error: changeCheck.error,
-          };
-        }
-
-        if (!changed && skipFetchIfUnchanged) {
-          // No changes detected, skip expensive fetch
-          skippedFetch = true;
-        }
-      }
-
-      if (!skippedFetch) {
-        // Fetch and checkout
-        try {
-          execSync(`git fetch origin`, { cwd: cacheDir, stdio: "pipe" });
-          execSync(`git checkout ${ref}`, { cwd: cacheDir, stdio: "pipe" });
-          // If ref is a branch, pull latest
-          if (ref === "main" || ref === "master") {
-            execSync(`git pull origin ${ref}`, { cwd: cacheDir, stdio: "pipe" });
-          }
-        } catch {
-          // Fetch failed, but we have a cached version - use it
-        }
-      }
-    } else {
-      // Clone fresh
-      changed = true; // First clone is always a change
-      execSync(`git clone --branch ${ref} --single-branch ${baselineUrl} ${cacheDir}`, {
-        stdio: "pipe",
-      });
-    }
+    // Clone fresh into SHA-keyed directory
+    execSync(`git clone --branch ${ref} --single-branch --depth 1 ${baselineUrl} ${cacheDir}`, {
+      stdio: "pipe",
+    });
 
     // Get the resolved commit SHA for reproducibility
     let commitSha = null;
@@ -272,6 +420,13 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
       // Couldn't get SHA, continue without it
     }
 
+    // If we didn't know the SHA before clone, and the clone landed at a different
+    // SHA than expected, update the session cache
+    if (commitSha) {
+      sessionResolvedSha = commitSha;
+      sessionResolvedKey = sessionKey;
+    }
+
     return {
       root: cacheDir,
       ref,
@@ -279,11 +434,26 @@ export async function ensureBaselineRepo(cliOverride = null, options = {}) {
       baselineUrl,
       baselineSource,
       commitSha,
-      changed,
-      skippedFetch,
       error: null,
     };
   } catch (err) {
+    // Clone failed — fall back to existing cache if available
+    const fallback = findLatestCacheDir(parentDir);
+    if (fallback) {
+      sessionResolvedSha = fallback.sha;
+      sessionResolvedKey = sessionKey;
+
+      return {
+        root: fallback.dir,
+        ref,
+        refSource,
+        baselineUrl,
+        baselineSource,
+        commitSha: fallback.sha,
+        error: null,
+      };
+    }
+
     return {
       root: null,
       ref,

@@ -1,5 +1,5 @@
 // src/audit/auditEpoch.js
-import { rmSync, existsSync, mkdtempSync } from "fs";
+import { rmSync, existsSync, mkdtempSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
 import { runAuditTests, getTestList } from "./runTests.js";
@@ -188,21 +188,31 @@ export async function runAuditEpoch(options = {}) {
 }
 
 /**
- * Purge the baseline cache for a specific ref.
+ * Purge all baseline cache entries for a repo (all SHA-keyed directories).
+ * This is storage hygiene for audit mode, not a correctness mechanism.
  */
 function purgeBaselineCache(baselineUrl, ref) {
-  // Extract repo name from URL
   const repoName = baselineUrl.split("/").pop()?.replace(".git", "") || "baseline";
-  const cacheDir = join(homedir(), ".oddkit", "cache", repoName, ref);
+  const cacheRoot = join(homedir(), ".oddkit", "cache", repoName);
 
-  if (existsSync(cacheDir)) {
-    rmSync(cacheDir, { recursive: true, force: true });
+  // Remove all SHA-keyed cache directories under the repo name
+  if (existsSync(cacheRoot)) {
+    rmSync(cacheRoot, { recursive: true, force: true });
   }
 
-  // Also purge the index cache
-  const indexCache = join(homedir(), ".oddkit", "cache", "indexes", `${repoName}-${ref}.json`);
-  if (existsSync(indexCache)) {
-    rmSync(indexCache, { force: true });
+  // Also purge index caches (may be SHA-keyed or ref-keyed)
+  const indexDir = join(homedir(), ".oddkit", "cache", "indexes");
+  if (existsSync(indexDir)) {
+    try {
+      const files = readdirSync(indexDir);
+      for (const file of files) {
+        if (file.startsWith(`${repoName}-`)) {
+          rmSync(join(indexDir, file), { force: true });
+        }
+      }
+    } catch {
+      // Best-effort cleanup
+    }
   }
 }
 

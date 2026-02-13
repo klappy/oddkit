@@ -404,19 +404,21 @@ function runVersion(env: Env): OddkitEnvelope {
   };
 }
 
-async function runInvalidateCache(
+async function runCleanupStorage(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
 ): Promise<OddkitEnvelope> {
   await fetcher.invalidateCache(canonUrl);
-  // Also invalidate the in-memory BM25 index
+  // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
 
   return {
-    action: "invalidate_cache",
+    action: "cleanup_storage",
     result: { success: true, canon_url: canonUrl },
-    assistant_text: `Cache invalidated${canonUrl ? ` for ${canonUrl}` : ""}. Next request will fetch fresh data.`,
+    assistant_text: "Storage cleaned up. Note: this is storage hygiene only. " +
+      "Content-addressed caching ensures correct content is served automatically " +
+      "when the baseline changes — no manual cleanup is required for correctness.",
     debug: { generated_at: new Date().toISOString() },
   };
 }
@@ -919,7 +921,7 @@ async function runEncodeAction(
 
 const VALID_ACTIONS = [
   "orient", "challenge", "gate", "encode", "search", "get",
-  "catalog", "validate", "preflight", "version", "invalidate_cache",
+  "catalog", "validate", "preflight", "version", "cleanup_storage",
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
@@ -958,8 +960,8 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         return await runPreflight(input, fetcher, canon_url, state);
       case "version":
         return runVersion(env);
-      case "invalidate_cache":
-        return await runInvalidateCache(fetcher, canon_url);
+      case "cleanup_storage":
+        return await runCleanupStorage(fetcher, canon_url);
       default:
         // Shouldn't reach here due to VALID_ACTIONS check above
         return await runSearch(input, fetcher, canon_url, state);

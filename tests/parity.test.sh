@@ -106,9 +106,9 @@ CLI_RESULT=$(node "$PROJECT_ROOT/bin/oddkit" version -r "$TEMP_DIR" 2>/dev/null)
 check_envelope "version envelope" "$CLI_RESULT" "action result assistant_text debug"
 
 echo ""
-echo "Test 10: Invalidate_cache produces standard envelope"
-CLI_RESULT=$(node "$PROJECT_ROOT/bin/oddkit" invalidate_cache -r "$TEMP_DIR" 2>/dev/null)
-check_envelope "invalidate_cache envelope" "$CLI_RESULT" "action result assistant_text debug"
+echo "Test 10: cleanup_storage produces standard envelope"
+CLI_RESULT=$(node "$PROJECT_ROOT/bin/oddkit" cleanup_storage -r "$TEMP_DIR" 2>/dev/null)
+check_envelope "cleanup_storage envelope" "$CLI_RESULT" "action result assistant_text debug"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Test 11: CLI search and legacy librarian both return results
