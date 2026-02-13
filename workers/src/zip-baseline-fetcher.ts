@@ -556,37 +556,52 @@ export class ZipBaselineFetcher {
 
   /**
    * Get a specific file from the baseline or canon.
-   * Content-addressed: file cache is keyed to the commit SHA.
+   * Content-addressed: file cache is keyed to each repo's own commit SHA.
+   * When canonUrl is provided, canon is tried first with the canon SHA,
+   * then baseline is tried with the baseline SHA. Each repo's cache is
+   * independent — a baseline file is never cached under a canon SHA.
    */
   async getFile(path: string, canonUrl?: string): Promise<string | null> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Resolve current SHA for content-addressed lookup
-    const repoUrl = canonUrl || baselineRepoUrl;
-    const currentSha = await this.getLatestCommitSha(repoUrl);
-    const shaSegment = currentSha || "unknown";
-    const cacheKey = `file/${getCacheKey(canonUrl || "baseline")}/${shaSegment}/${getCacheKey(path)}`;
+    // Resolve SHA for each repo independently
+    const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
 
-    // Check R2 cache (content-addressed — if SHA matches, content is truthful)
-    if (this.env.BASELINE) {
-      const r2Object = await this.env.BASELINE.get(cacheKey);
-      if (r2Object) {
-        return await r2Object.text();
-      }
+    // Build the list of repos to search, each with its own SHA
+    const sources: Array<{ url: string; repoKey: string; sha: string }> = [];
+
+    if (canonUrl) {
+      const canonSha = await this.getLatestCommitSha(canonUrl);
+      sources.push({
+        url: canonUrl,
+        repoKey: getCacheKey(canonUrl),
+        sha: canonSha || "unknown",
+      });
     }
 
-    // No cache for this SHA+path — fetch fresh
-    const urls = canonUrl
-      ? [canonUrl, this.env.BASELINE_URL]
-      : [this.env.BASELINE_URL];
+    sources.push({
+      url: this.env.BASELINE_URL.includes("raw.githubusercontent.com")
+        ? this.env.BASELINE_URL.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
+        : baselineRepoUrl,
+      repoKey: getCacheKey("baseline"),
+      sha: baselineSha || "unknown",
+    });
 
-    for (const fetchUrl of urls) {
-      const zipUrl = getZipUrl(
-        fetchUrl.includes("raw.githubusercontent.com")
-          ? fetchUrl.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
-          : fetchUrl
-      );
-      const zipData = await this.fetchZip(zipUrl, true); // Always fetch fresh
+    for (const source of sources) {
+      // Content-addressed cache key: repo identity + repo SHA + file path
+      const cacheKey = `file/${source.repoKey}/${source.sha}/${getCacheKey(path)}`;
+
+      // Check R2 cache (content-addressed — if SHA matches, content is truthful)
+      if (this.env.BASELINE) {
+        const r2Object = await this.env.BASELINE.get(cacheKey);
+        if (r2Object) {
+          return await r2Object.text();
+        }
+      }
+
+      // No cache for this repo+SHA+path — fetch fresh
+      const zipUrl = getZipUrl(source.url);
+      const zipData = await this.fetchZip(zipUrl, true);
 
       if (!zipData) continue;
 
@@ -601,11 +616,11 @@ export class ZipBaselineFetcher {
           if (repoPath === path) {
             const content = new TextDecoder().decode(fileData);
 
-            // Store keyed to SHA (no TTL — content-addressed)
+            // Store keyed to this repo's SHA (no TTL — content-addressed)
             if (this.env.BASELINE) {
               await this.env.BASELINE.put(cacheKey, content, {
                 httpMetadata: { contentType: "text/markdown" },
-                customMetadata: { commitSha: shaSegment, fetchedAt: new Date().toISOString() },
+                customMetadata: { commitSha: source.sha, fetchedAt: new Date().toISOString() },
               });
             }
 
