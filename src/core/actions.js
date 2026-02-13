@@ -16,10 +16,12 @@ import { runChallenge } from "../tasks/challenge.js";
 import { runGate } from "../tasks/gate.js";
 import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
-import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
+import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
+import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
+import matter from "gray-matter";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../../package.json");
@@ -160,7 +162,7 @@ export function buildEncodeResponse(taskResult) {
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
@@ -262,6 +264,11 @@ export async function handleAction(params) {
 
         // Content-addressed index: rebuild if SHA changed or baseline availability changed
         let index = loadIndex(repoRoot);
+        // Schema version gate: stale index shapes (e.g. missing frontmatter) silently
+        // break newer features. A version mismatch forces a full rebuild.
+        if (index && index.version !== INDEX_VERSION) {
+          index = null;
+        }
         if (index) {
           const hasBaselineDocs = index.documents.some((d) => d.origin === "baseline");
           const indexSha = index.baselineCommitSha || null;
@@ -316,15 +323,33 @@ export async function handleAction(params) {
           action: "search",
           result: {
             status: "FOUND",
-            hits: hits.map((h) => ({
-              uri: h.uri,
-              path: h.path,
-              title: h.title,
-              tags: h.tags,
-              score: h.score,
-              snippet: (h.contentPreview || "").slice(0, 200),
-              source: h.origin || "local",
-            })),
+            hits: hits.map((h) => {
+              const hit = {
+                uri: h.uri,
+                path: h.path,
+                title: h.title,
+                tags: h.tags,
+                score: h.score,
+                snippet: (h.contentPreview || "").slice(0, 200),
+                source: h.origin || "local",
+              };
+              if (include_metadata) {
+                if (h.frontmatter) {
+                  hit.metadata = h.frontmatter;
+                } else if (h.absolutePath && existsSync(h.absolutePath)) {
+                  // Fallback: index predates frontmatter storage — parse from file
+                  try {
+                    const { data } = matter(readFileSync(h.absolutePath, "utf-8"));
+                    if (data && Object.keys(data).length > 0) {
+                      hit.metadata = data;
+                    }
+                  } catch {
+                    // File not readable — omit metadata for this hit
+                  }
+                }
+              }
+              return hit;
+            }),
             evidence,
             docs_considered: index.documents.length,
           },
@@ -338,7 +363,7 @@ export async function handleAction(params) {
         const format = "markdown";
         const uri = input;
         try {
-          const result = await getDocByUri(uri, { format, baseline });
+          const result = await getDocByUri(uri, { format, baseline, include_metadata });
           const updatedState = state ? addCanonRefs(initState(state), [uri]) : undefined;
           return {
             action: "get",

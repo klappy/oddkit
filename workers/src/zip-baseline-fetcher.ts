@@ -395,7 +395,7 @@ export class ZipBaselineFetcher {
           fullPath.includes(".oddkit/")
         ) continue;
 
-        // Only include canon/, odd/, docs/ directories
+        // Only include canon/, odd/, docs/, writings/ directories
         const pathParts = fullPath.split("/");
         // Remove repo-branch prefix (e.g., "klappy.dev-main/")
         const repoPath = pathParts.slice(1).join("/");
@@ -403,7 +403,8 @@ export class ZipBaselineFetcher {
         if (
           !repoPath.startsWith("canon/") &&
           !repoPath.startsWith("odd/") &&
-          !repoPath.startsWith("docs/")
+          !repoPath.startsWith("docs/") &&
+          !repoPath.startsWith("writings/")
         ) continue;
 
         // Decode file content

@@ -15,8 +15,12 @@ function computeContentHash(content) {
   return createHash("sha256").update(normalized).digest("hex").slice(0, 8);
 }
 
+// Schema version — bump when the shape of indexed documents changes.
+// A version mismatch triggers a full rebuild so stale fields don't linger.
+export const INDEX_VERSION = "1.1.0"; // 1.1.0: added frontmatter to indexed docs
+
 // Default include patterns
-const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md"];
+const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -122,6 +126,8 @@ async function indexRoot(rootPath, origin) {
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
         // Identity for dedup (per user critique: path-only is unsafe across repos)
         content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
+        // Full parsed frontmatter for include_metadata support
+        frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : null,
         headings,
         contentLength: content.length,
         contentPreview: content.slice(0, 500),
@@ -212,7 +218,7 @@ export async function buildIndex(repoRoot, baselineRoot = null) {
   const allDocs = [...localDocs, ...baselineDocs];
 
   const index = {
-    version: "1.0.0",
+    version: INDEX_VERSION,
     generated: new Date().toISOString(),
     stats: {
       total: allDocs.length,

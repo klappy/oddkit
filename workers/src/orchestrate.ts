@@ -48,6 +48,7 @@ export interface UnifiedParams {
   context?: string;
   mode?: string;
   canon_url?: string;
+  include_metadata?: boolean;
   state?: OddkitState;
   env: Env;
 }
@@ -254,6 +255,242 @@ function scoreEntries(entries: IndexEntry[], query: string): Array<IndexEntry & 
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Full frontmatter parser for include_metadata support
+// Handles common YAML patterns used in klappy.dev frontmatter without
+// requiring a full YAML library (keeps worker bundle small).
+// ──────────────────────────────────────────────────────────────────────────────
+
+function parseFullFrontmatter(content: string): Record<string, unknown> | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return null;
+
+  const yaml = match[1];
+  const result: Record<string, unknown> = {};
+  const lines = yaml.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("#")) {
+      i++;
+      continue;
+    }
+
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) {
+      i++;
+      continue;
+    }
+
+    const key = trimmed.slice(0, colonIdx).trim();
+    const rawValue = trimmed.slice(colonIdx + 1).trim();
+
+    if (!key) {
+      i++;
+      continue;
+    }
+
+    if (!rawValue) {
+      // Value is on next lines — collect indented block
+      i++;
+      const items: string[] = [];
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const nextTrimmed = nextLine.trim();
+        if (!nextTrimmed) { i++; continue; }
+        // Stop if not indented (new top-level key or comment)
+        if (!nextLine.startsWith("  ") && !nextLine.startsWith("\t")) break;
+        if (nextTrimmed.startsWith("#")) { i++; continue; }
+        items.push(nextLine);
+        i++;
+      }
+
+      if (items.length > 0) {
+        if (items[0].trim().startsWith("- ")) {
+          result[key] = parseYamlList(items);
+        } else {
+          result[key] = parseYamlObject(items);
+        }
+      }
+    } else if (rawValue.startsWith("[")) {
+      // Inline array
+      result[key] = parseInlineArray(rawValue);
+      i++;
+    } else {
+      // Scalar value
+      result[key] = parseScalarValue(rawValue);
+      i++;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseYamlList(lines: string[]): unknown[] {
+  const items: unknown[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed.startsWith("- ")) { i++; continue; }
+
+    const value = trimmed.slice(2).trim();
+
+    // Check if next lines are indented properties (object in list)
+    const objectProps: string[] = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const nextLine = lines[j];
+      const nextTrimmed = nextLine.trim();
+      if (!nextTrimmed || nextTrimmed.startsWith("- ")) break;
+      // Must be more deeply indented than the list item
+      const itemIndent = lines[i].search(/\S/);
+      const nextIndent = nextLine.search(/\S/);
+      if (nextIndent <= itemIndent) break;
+      objectProps.push(nextTrimmed);
+      j++;
+    }
+
+    if (objectProps.length > 0) {
+      // This list item is an object — first property may be in the `- key: val` line
+      const obj: Record<string, unknown> = {};
+      // Parse the first line (e.g., "uri: klappy://...")
+      const firstColonIdx = value.indexOf(":");
+      if (firstColonIdx !== -1) {
+        const k = value.slice(0, firstColonIdx).trim();
+        const v = value.slice(firstColonIdx + 1).trim();
+        if (k) obj[k] = parseScalarValue(v);
+      }
+      // Parse remaining properties
+      for (const prop of objectProps) {
+        const propColonIdx = prop.indexOf(":");
+        if (propColonIdx !== -1) {
+          const k = prop.slice(0, propColonIdx).trim();
+          const v = prop.slice(propColonIdx + 1).trim();
+          if (k) obj[k] = parseScalarValue(v);
+        }
+      }
+      items.push(obj);
+      i = j;
+    } else {
+      items.push(parseScalarValue(value));
+      i++;
+    }
+  }
+
+  return items;
+}
+
+function parseYamlObject(lines: string[]): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+  if (lines.length === 0) return obj;
+
+  // Determine the base indentation level from the first non-empty line
+  const baseIndent = lines[0].search(/\S/);
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("#")) {
+      i++;
+      continue;
+    }
+
+    // Only process lines at the base indentation level
+    const currentIndent = line.search(/\S/);
+    if (currentIndent > baseIndent) {
+      // Stray deeper-indented line without a parent key — skip
+      i++;
+      continue;
+    }
+    if (currentIndent < baseIndent) {
+      // De-indented past our block — stop
+      break;
+    }
+
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) {
+      i++;
+      continue;
+    }
+
+    const key = trimmed.slice(0, colonIdx).trim();
+    const rawValue = trimmed.slice(colonIdx + 1).trim();
+
+    if (!key) {
+      i++;
+      continue;
+    }
+
+    if (!rawValue) {
+      // Collect deeper-indented block
+      i++;
+      const nested: string[] = [];
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const nextTrimmed = nextLine.trim();
+        if (!nextTrimmed) { i++; continue; }
+        const nextIndent = nextLine.search(/\S/);
+        if (nextIndent <= baseIndent) break;
+        if (nextTrimmed.startsWith("#")) { i++; continue; }
+        nested.push(nextLine);
+        i++;
+      }
+
+      if (nested.length > 0) {
+        if (nested[0].trim().startsWith("- ")) {
+          obj[key] = parseYamlList(nested);
+        } else {
+          obj[key] = parseYamlObject(nested);
+        }
+      }
+    } else if (rawValue.startsWith("[")) {
+      obj[key] = parseInlineArray(rawValue);
+      i++;
+    } else {
+      obj[key] = parseScalarValue(rawValue);
+      i++;
+    }
+  }
+
+  return obj;
+}
+
+function parseInlineArray(raw: string): unknown[] {
+  const inner = raw.slice(1, raw.lastIndexOf("]")).trim();
+  if (!inner) return [];
+  return inner.split(",").map((item) => parseScalarValue(item.trim()));
+}
+
+function parseScalarValue(raw: string): unknown {
+  if (!raw) return "";
+
+  // Remove surrounding quotes
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1);
+  }
+
+  // Booleans
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+
+  // Null
+  if (raw === "null" || raw === "~") return null;
+
+  // Numbers
+  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+  if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
+
+  return raw;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Individual action handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -262,6 +499,7 @@ async function runSearch(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
+  includeMetadata?: boolean,
 ): Promise<OddkitEnvelope> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(canonUrl);
@@ -300,11 +538,15 @@ async function runSearch(
     };
   }
 
+  // Cache for fetched content to avoid redundant fetches when include_metadata is enabled
+  const contentCache = new Map<string, string>();
+
   // Fetch excerpts for top results
   const evidence: Array<{ quote: string; citation: string; source: string }> = [];
   for (const entry of hits.slice(0, 3)) {
     const content = await fetcher.getFile(entry.path, canonUrl);
     if (content) {
+      contentCache.set(entry.path, content);
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
       const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
       const excerpt = lines.slice(0, 3).join(" ").slice(0, 200);
@@ -325,19 +567,34 @@ async function runSearch(
     ...hits.map((r) => `- \`${r.path}\` — ${r.title} (score: ${r.score.toFixed(2)}, ${r.source})`),
   ];
 
+  // When include_metadata is requested, fetch and parse frontmatter for each hit
+  const hitsWithMetadata: Array<Record<string, unknown>> = [];
+  for (const h of hits) {
+    const hit: Record<string, unknown> = {
+      uri: h.uri,
+      path: h.path,
+      title: h.title,
+      tags: h.tags,
+      score: h.score,
+      snippet: h.excerpt,
+      source: h.source,
+    };
+    if (includeMetadata) {
+      // Reuse cached content from evidence fetch, or fetch fresh if not cached
+      const fileContent = contentCache.get(h.path) ?? await fetcher.getFile(h.path, canonUrl);
+      if (fileContent) {
+        const metadata = parseFullFrontmatter(fileContent);
+        if (metadata) hit.metadata = metadata;
+      }
+    }
+    hitsWithMetadata.push(hit);
+  }
+
   return {
     action: "search",
     result: {
       status: "FOUND",
-      hits: hits.map((h) => ({
-        uri: h.uri,
-        path: h.path,
-        title: h.title,
-        tags: h.tags,
-        score: h.score,
-        snippet: h.excerpt,
-        source: h.source,
-      })),
+      hits: hitsWithMetadata,
       evidence,
       docs_considered: index.entries.length,
     },
@@ -358,6 +615,7 @@ async function runGet(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
+  includeMetadata?: boolean,
 ): Promise<OddkitEnvelope> {
   const startMs = Date.now();
 
@@ -383,9 +641,17 @@ async function runGet(
     };
   }
 
+  const result: Record<string, unknown> = { path, content, content_hash: hashString(content) };
+
+  // When include_metadata is requested, parse and attach full frontmatter
+  if (includeMetadata) {
+    const metadata = parseFullFrontmatter(content);
+    if (metadata) result.metadata = metadata;
+  }
+
   return {
     action: "get",
-    result: { path, content, content_hash: hashString(content) },
+    result,
     state: updatedState,
     assistant_text: content,
     debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
@@ -925,7 +1191,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, canon_url, state, env } = params;
+  const { action, input, context, mode, canon_url, include_metadata, state, env } = params;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -949,9 +1215,9 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
       case "encode":
         return await runEncodeAction(input, context, fetcher, canon_url, state);
       case "search":
-        return await runSearch(input, fetcher, canon_url, state);
+        return await runSearch(input, fetcher, canon_url, state, include_metadata);
       case "get":
-        return await runGet(input, fetcher, canon_url, state);
+        return await runGet(input, fetcher, canon_url, state, include_metadata);
       case "catalog":
         return await runCatalog(fetcher, canon_url, state);
       case "validate":

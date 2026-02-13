@@ -191,6 +191,7 @@ async function main() {
         canon_url: args.canon_url,
         state: args.state,
         baseline: args.canon_url,
+        include_metadata: args.include_metadata,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -207,6 +208,7 @@ async function main() {
         mode: args.mode,
         canon_url: args.canon_url,
         baseline: args.canon_url,
+        include_metadata: args.include_metadata,
         // No state for individual tools
       });
       return {
