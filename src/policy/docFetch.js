@@ -9,6 +9,7 @@ import { createHash } from "crypto";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import path from "path";
+import matter from "gray-matter";
 import { resolveCanonTarget } from "./canonTarget.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 
@@ -168,7 +169,7 @@ function computeHash(content) {
  * @returns {Promise<Object>} Document result
  */
 export async function getDocByUri(uri, options = {}) {
-  const { format = "markdown", baseline = null } = options;
+  const { format = "markdown", baseline = null, include_metadata = false } = options;
 
   // Resolve canon target
   const canonTarget = await resolveCanonTarget(baseline);
@@ -250,6 +251,18 @@ export async function getDocByUri(uri, options = {}) {
       result.body = content.slice(frontmatterMatch[0].length);
     } else {
       result.body = content;
+    }
+  }
+
+  // When include_metadata is true, parse and attach full frontmatter
+  if (include_metadata) {
+    try {
+      const { data } = matter(content);
+      if (data && Object.keys(data).length > 0) {
+        result.metadata = data;
+      }
+    } catch {
+      // Frontmatter parsing failed — omit metadata silently
     }
   }
 

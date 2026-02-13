@@ -16,7 +16,7 @@ function computeContentHash(content) {
 }
 
 // Default include patterns
-const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md"];
+const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -122,6 +122,8 @@ async function indexRoot(rootPath, origin) {
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
         // Identity for dedup (per user critique: path-only is unsafe across repos)
         content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
+        // Full parsed frontmatter for include_metadata support
+        frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : null,
         headings,
         contentLength: content.length,
         contentPreview: content.slice(0, 500),

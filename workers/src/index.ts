@@ -65,6 +65,10 @@ Use when:
         type: "string",
         description: "Optional GitHub repo URL for canon override.",
       },
+      include_metadata: {
+        type: "boolean",
+        description: "When true, search/get responses include a metadata object with full parsed frontmatter. Default: false.",
+      },
       state: {
         type: "object",
         description: "Optional client-side conversation state, passed back and forth.",
@@ -146,6 +150,7 @@ const INDIVIDUAL_TOOLS = [
       properties: {
         input: { type: "string", description: "Natural language query or tags to search for." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+        include_metadata: { type: "boolean", description: "When true, each hit includes a metadata object with full parsed frontmatter. Default: false." },
       },
       required: ["input"],
     },
@@ -159,6 +164,7 @@ const INDIVIDUAL_TOOLS = [
       properties: {
         input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+        include_metadata: { type: "boolean", description: "When true, response includes a metadata object with full parsed frontmatter. Default: false." },
       },
       required: ["input"],
     },
@@ -442,6 +448,8 @@ async function executeToolCall(
 ): Promise<OddkitEnvelope> {
   const canonUrl = args?.canon_url as string | undefined;
 
+  const includeMetadata = args?.include_metadata as boolean | undefined;
+
   // Layer 1: Unified orchestrator — accepts state
   if (name === "oddkit") {
     return handleUnifiedAction({
@@ -450,6 +458,7 @@ async function executeToolCall(
       context: args?.context as string | undefined,
       mode: args?.mode as string | undefined,
       canon_url: canonUrl,
+      include_metadata: includeMetadata,
       state: args?.state as any,
       env,
     });
@@ -479,6 +488,7 @@ async function executeToolCall(
       context: args?.context as string | undefined,
       mode: args?.mode as string | undefined,
       canon_url: canonUrl,
+      include_metadata: includeMetadata,
       // No state for individual tools
       env,
     });

@@ -20,6 +20,7 @@ import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
 import { createRequire } from "module";
+import matter from "gray-matter";
 
 const require = createRequire(import.meta.url);
 const { version: VERSION } = require("../../package.json");
@@ -160,7 +161,7 @@ export function buildEncodeResponse(taskResult) {
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
@@ -316,15 +317,21 @@ export async function handleAction(params) {
           action: "search",
           result: {
             status: "FOUND",
-            hits: hits.map((h) => ({
-              uri: h.uri,
-              path: h.path,
-              title: h.title,
-              tags: h.tags,
-              score: h.score,
-              snippet: (h.contentPreview || "").slice(0, 200),
-              source: h.origin || "local",
-            })),
+            hits: hits.map((h) => {
+              const hit = {
+                uri: h.uri,
+                path: h.path,
+                title: h.title,
+                tags: h.tags,
+                score: h.score,
+                snippet: (h.contentPreview || "").slice(0, 200),
+                source: h.origin || "local",
+              };
+              if (include_metadata && h.frontmatter) {
+                hit.metadata = h.frontmatter;
+              }
+              return hit;
+            }),
             evidence,
             docs_considered: index.documents.length,
           },
@@ -338,7 +345,7 @@ export async function handleAction(params) {
         const format = "markdown";
         const uri = input;
         try {
-          const result = await getDocByUri(uri, { format, baseline });
+          const result = await getDocByUri(uri, { format, baseline, include_metadata });
           const updatedState = state ? addCanonRefs(initState(state), [uri]) : undefined;
           return {
             action: "get",

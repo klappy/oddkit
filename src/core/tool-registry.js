@@ -53,6 +53,10 @@ Use when:
         type: "string",
         description: "Optional GitHub repo URL for canon override.",
       },
+      include_metadata: {
+        type: "boolean",
+        description: "When true, search/get responses include a metadata object with full parsed frontmatter. Default: false.",
+      },
       state: {
         type: "object",
         description: "Optional client-side conversation state, passed back and forth.",
@@ -157,6 +161,7 @@ export const TOOLS = [
       properties: {
         input: { type: "string", description: "Natural language query or tags to search for." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+        include_metadata: { type: "boolean", description: "When true, each hit includes a metadata object with full parsed frontmatter. Default: false." },
       },
       required: ["input"],
     },
@@ -174,6 +179,7 @@ export const TOOLS = [
       properties: {
         input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
+        include_metadata: { type: "boolean", description: "When true, response includes a metadata object with full parsed frontmatter. Default: false." },
       },
       required: ["input"],
     },
