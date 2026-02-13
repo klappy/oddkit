@@ -538,11 +538,15 @@ async function runSearch(
     };
   }
 
+  // Cache for fetched content to avoid redundant fetches when include_metadata is enabled
+  const contentCache = new Map<string, string>();
+
   // Fetch excerpts for top results
   const evidence: Array<{ quote: string; citation: string; source: string }> = [];
   for (const entry of hits.slice(0, 3)) {
     const content = await fetcher.getFile(entry.path, canonUrl);
     if (content) {
+      contentCache.set(entry.path, content);
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
       const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
       const excerpt = lines.slice(0, 3).join(" ").slice(0, 200);
@@ -576,7 +580,8 @@ async function runSearch(
       source: h.source,
     };
     if (includeMetadata) {
-      const fileContent = await fetcher.getFile(h.path, canonUrl);
+      // Reuse cached content from evidence fetch, or fetch fresh if not cached
+      const fileContent = contentCache.get(h.path) ?? await fetcher.getFile(h.path, canonUrl);
       if (fileContent) {
         const metadata = parseFullFrontmatter(fileContent);
         if (metadata) hit.metadata = metadata;
