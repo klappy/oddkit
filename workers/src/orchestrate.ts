@@ -308,8 +308,13 @@ function parseFullFrontmatter(content: string): Record<string, unknown> | null {
         i++;
       }
 
-      if (items.length > 0 && items[0].trim().startsWith("- ")) {
-        result[key] = parseYamlList(items);
+      if (items.length > 0) {
+        if (items[0].trim().startsWith("- ")) {
+          result[key] = parseYamlList(items);
+        } else {
+          // Object-shaped block: parse as nested object
+          result[key] = parseYamlObject(items);
+        }
       }
     } else if (rawValue.startsWith("[")) {
       // Inline array
@@ -378,6 +383,27 @@ function parseYamlList(lines: string[]): unknown[] {
   }
 
   return items;
+}
+
+function parseYamlObject(lines: string[]): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) continue;
+
+    const key = trimmed.slice(0, colonIdx).trim();
+    const value = trimmed.slice(colonIdx + 1).trim();
+
+    if (key) {
+      obj[key] = parseScalarValue(value);
+    }
+  }
+
+  return obj;
 }
 
 function parseInlineArray(raw: string): unknown[] {

@@ -269,6 +269,8 @@ export async function handleAction(params) {
           if (!baselineAvailable && hasBaselineDocs) index = null;
           else if (baselineAvailable && !hasBaselineDocs) index = null;
           else if (baselineSha && indexSha && baselineSha !== indexSha) index = null;
+          // Invalidate if include_metadata requested but index lacks frontmatter schema
+          else if (include_metadata && index.documents.length > 0 && !("frontmatter" in index.documents[0])) index = null;
         }
         if (!index) {
           index = await buildIndex(repoRoot, baselineAvailable ? baselineResult.root : null);
