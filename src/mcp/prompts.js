@@ -93,7 +93,6 @@ async function loadCanonPrompts() {
 
   try {
     const files = readdirSync(promptsDir).filter((f) => f.endsWith(".md"));
-    cachedCanonPromptsSha = baseline.commitSha || currentSha;
     cachedCanonPrompts = files.map((f) => {
       const filePath = join(promptsDir, f);
       const content = readFileSync(filePath, "utf-8");
@@ -112,6 +111,7 @@ async function loadCanonPrompts() {
 
       return { name, description, path: filePath };
     });
+    cachedCanonPromptsSha = baseline.commitSha || currentSha;
     return cachedCanonPrompts;
   } catch (err) {
     console.error(`oddkit: failed to scan canon prompts: ${err.message}`);

@@ -260,8 +260,8 @@ export function renderNotFoundPage(pathname: string, mcpOrigin: string): string 
 
 <script>
 (function(){
-  var MCP_URL = ${JSON.stringify(mcpOrigin + "/mcp")};
-  var pathname = ${JSON.stringify(pathname)};
+  var MCP_URL = ${JSON.stringify(mcpOrigin + "/mcp").replace(/</g, "\\u003c")};
+  var pathname = ${JSON.stringify(pathname).replace(/</g, "\\u003c")};
 
   // Extract a search hint from the broken URL path
   function extractHint(p) {
