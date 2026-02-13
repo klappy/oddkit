@@ -16,9 +16,10 @@ import { runChallenge } from "../tasks/challenge.js";
 import { runGate } from "../tasks/gate.js";
 import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
-import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
+import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
+import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
 import matter from "gray-matter";
 
@@ -263,14 +264,17 @@ export async function handleAction(params) {
 
         // Content-addressed index: rebuild if SHA changed or baseline availability changed
         let index = loadIndex(repoRoot);
+        // Schema version gate: stale index shapes (e.g. missing frontmatter) silently
+        // break newer features. A version mismatch forces a full rebuild.
+        if (index && index.version !== INDEX_VERSION) {
+          index = null;
+        }
         if (index) {
           const hasBaselineDocs = index.documents.some((d) => d.origin === "baseline");
           const indexSha = index.baselineCommitSha || null;
           if (!baselineAvailable && hasBaselineDocs) index = null;
           else if (baselineAvailable && !hasBaselineDocs) index = null;
           else if (baselineSha && indexSha && baselineSha !== indexSha) index = null;
-          // Invalidate if include_metadata requested but index lacks frontmatter schema
-          else if (include_metadata && index.documents.length > 0 && !("frontmatter" in index.documents[0])) index = null;
         }
         if (!index) {
           index = await buildIndex(repoRoot, baselineAvailable ? baselineResult.root : null);
@@ -329,8 +333,20 @@ export async function handleAction(params) {
                 snippet: (h.contentPreview || "").slice(0, 200),
                 source: h.origin || "local",
               };
-              if (include_metadata && h.frontmatter) {
-                hit.metadata = h.frontmatter;
+              if (include_metadata) {
+                if (h.frontmatter) {
+                  hit.metadata = h.frontmatter;
+                } else if (h.absolutePath && existsSync(h.absolutePath)) {
+                  // Fallback: index predates frontmatter storage — parse from file
+                  try {
+                    const { data } = matter(readFileSync(h.absolutePath, "utf-8"));
+                    if (data && Object.keys(data).length > 0) {
+                      hit.metadata = data;
+                    }
+                  } catch {
+                    // File not readable — omit metadata for this hit
+                  }
+                }
               }
               return hit;
             }),
