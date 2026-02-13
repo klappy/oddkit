@@ -97,12 +97,18 @@ fi
 # ──────────────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "Test 4: Prompt cache is SHA-keyed"
+echo "Test 4: Prompt caches are independently SHA-keyed"
 
-if grep -q "cachedPromptsSha" "$PROJECT_ROOT/src/mcp/prompts.js" 2>/dev/null; then
-  pass "prompts.js uses SHA-keyed cache (cachedPromptsSha)"
+if grep -q "cachedRegistrySha" "$PROJECT_ROOT/src/mcp/prompts.js" 2>/dev/null; then
+  pass "prompts.js registry cache has its own SHA (cachedRegistrySha)"
 else
-  fail "prompts.js not SHA-keyed"
+  fail "prompts.js registry cache not independently SHA-keyed"
+fi
+
+if grep -q "cachedCanonPromptsSha" "$PROJECT_ROOT/src/mcp/prompts.js" 2>/dev/null; then
+  pass "prompts.js canon prompts cache has its own SHA (cachedCanonPromptsSha)"
+else
+  fail "prompts.js canon prompts cache not independently SHA-keyed"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────

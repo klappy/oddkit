@@ -22,11 +22,16 @@ import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRep
 // Content-addressed: cached data is keyed to the baseline commit SHA.
 // When the SHA changes (new baseline commit), caches are automatically
 // invalidated by identity mismatch — no TTL, no manual flush.
+//
+// Each cache tracks its own SHA independently to prevent cross-contamination:
+// loadRegistry updating its SHA must NOT cause loadCanonPrompts to serve
+// stale data from the previous SHA.
 // ──────────────────────────────────────────────────────────────────────────────
 let cachedRegistry = null;
 let cachedBaselineRoot = null;
+let cachedRegistrySha = null;
 let cachedCanonPrompts = null;
-let cachedPromptsSha = null;
+let cachedCanonPromptsSha = null;
 
 /**
  * Load registry from baseline (SHA-keyed cache)
@@ -35,7 +40,7 @@ async function loadRegistry() {
   const currentSha = getSessionSha();
 
   // Content-addressed cache check: if SHA matches, data is truthful
-  if (cachedRegistry && cachedBaselineRoot && cachedPromptsSha === currentSha && currentSha) {
+  if (cachedRegistry && cachedBaselineRoot && cachedRegistrySha === currentSha && currentSha) {
     return { registry: cachedRegistry, baselineRoot: cachedBaselineRoot };
   }
 
@@ -52,7 +57,7 @@ async function loadRegistry() {
   try {
     cachedRegistry = JSON.parse(readFileSync(registryPath, "utf-8"));
     cachedBaselineRoot = baseline.root;
-    cachedPromptsSha = baseline.commitSha || currentSha;
+    cachedRegistrySha = baseline.commitSha || currentSha;
     return { registry: cachedRegistry, baselineRoot: baseline.root };
   } catch (err) {
     return { registry: null, baselineRoot: baseline.root, error: err.message };
@@ -70,7 +75,7 @@ async function loadCanonPrompts() {
   const currentSha = getSessionSha();
 
   // Content-addressed: return cached prompts only if SHA matches
-  if (cachedCanonPrompts && cachedPromptsSha === currentSha && currentSha) {
+  if (cachedCanonPrompts && cachedCanonPromptsSha === currentSha && currentSha) {
     return cachedCanonPrompts;
   }
 
@@ -88,6 +93,7 @@ async function loadCanonPrompts() {
 
   try {
     const files = readdirSync(promptsDir).filter((f) => f.endsWith(".md"));
+    cachedCanonPromptsSha = baseline.commitSha || currentSha;
     cachedCanonPrompts = files.map((f) => {
       const filePath = join(promptsDir, f);
       const content = readFileSync(filePath, "utf-8");
@@ -225,6 +231,7 @@ export async function getPrompt(name) {
 export function clearPromptCache() {
   cachedRegistry = null;
   cachedBaselineRoot = null;
+  cachedRegistrySha = null;
   cachedCanonPrompts = null;
-  cachedPromptsSha = null;
+  cachedCanonPromptsSha = null;
 }
