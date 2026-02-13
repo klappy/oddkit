@@ -312,7 +312,6 @@ function parseFullFrontmatter(content: string): Record<string, unknown> | null {
         if (items[0].trim().startsWith("- ")) {
           result[key] = parseYamlList(items);
         } else {
-          // Object-shaped block: parse as nested object
           result[key] = parseYamlObject(items);
         }
       }
@@ -387,19 +386,76 @@ function parseYamlList(lines: string[]): unknown[] {
 
 function parseYamlObject(lines: string[]): Record<string, unknown> {
   const obj: Record<string, unknown> = {};
+  if (lines.length === 0) return obj;
 
-  for (const line of lines) {
+  // Determine the base indentation level from the first non-empty line
+  const baseIndent = lines[0].search(/\S/);
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith("#")) {
+      i++;
+      continue;
+    }
+
+    // Only process lines at the base indentation level
+    const currentIndent = line.search(/\S/);
+    if (currentIndent > baseIndent) {
+      // Stray deeper-indented line without a parent key — skip
+      i++;
+      continue;
+    }
+    if (currentIndent < baseIndent) {
+      // De-indented past our block — stop
+      break;
+    }
 
     const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) continue;
+    if (colonIdx === -1) {
+      i++;
+      continue;
+    }
 
     const key = trimmed.slice(0, colonIdx).trim();
-    const value = trimmed.slice(colonIdx + 1).trim();
+    const rawValue = trimmed.slice(colonIdx + 1).trim();
 
-    if (key) {
-      obj[key] = parseScalarValue(value);
+    if (!key) {
+      i++;
+      continue;
+    }
+
+    if (!rawValue) {
+      // Collect deeper-indented block
+      i++;
+      const nested: string[] = [];
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const nextTrimmed = nextLine.trim();
+        if (!nextTrimmed) { i++; continue; }
+        const nextIndent = nextLine.search(/\S/);
+        if (nextIndent <= baseIndent) break;
+        if (nextTrimmed.startsWith("#")) { i++; continue; }
+        nested.push(nextLine);
+        i++;
+      }
+
+      if (nested.length > 0) {
+        if (nested[0].trim().startsWith("- ")) {
+          obj[key] = parseYamlList(nested);
+        } else {
+          obj[key] = parseYamlObject(nested);
+        }
+      }
+    } else if (rawValue.startsWith("[")) {
+      obj[key] = parseInlineArray(rawValue);
+      i++;
+    } else {
+      obj[key] = parseScalarValue(rawValue);
+      i++;
     }
   }
 
