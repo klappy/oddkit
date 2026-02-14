@@ -10,7 +10,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { buildIndex, loadIndex, saveIndex } from "../index/buildIndex.js";
+import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { tokenize, scoreDocument, findBestHeading } from "../utils/scoring.js";
@@ -205,6 +205,11 @@ export async function runOrient(options) {
   const creed = readCreedFromBaseline(baseline.root);
 
   let index = loadIndex(repoRoot);
+  // Schema version gate: stale index shapes (e.g. missing start_here fields) silently
+  // break newer features. A version mismatch forces a full rebuild.
+  if (index && index.version !== INDEX_VERSION) {
+    index = null;
+  }
   if (!index) {
     index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
     saveIndex(index, repoRoot);

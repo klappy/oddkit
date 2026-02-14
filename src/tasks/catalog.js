@@ -132,10 +132,25 @@ export async function runCatalog(options) {
   }));
 
   // next_up: items after the first in start_here, capped at NEXT_UP_COUNT
-  const nextUp = startHere.slice(1, 1 + NEXT_UP_COUNT).map((d) => ({
+  // When start_here has multiple items (explicit frontmatter), use the sequence.
+  // When start_here has only one item (fallback), backfill from canon and playbooks.
+  let nextUp = startHere.slice(1, 1 + NEXT_UP_COUNT).map((d) => ({
     path: d.path,
     title: d.title ?? null,
   }));
+
+  // Backfill next_up when it's empty but we have canon/playbook docs available
+  if (nextUp.length === 0) {
+    const startPath = startHere.length > 0 ? startHere[0].path : null;
+    const backfillCandidates = [
+      ...canon.filter((d) => d.path !== startPath),
+      ...playbookCandidates.filter((d) => d.path !== startPath),
+    ];
+    nextUp = backfillCandidates.slice(0, NEXT_UP_COUNT).map((d) => ({
+      path: d.path,
+      title: d.title ?? null,
+    }));
+  }
 
   const result = {
     status: "SUPPORTED",

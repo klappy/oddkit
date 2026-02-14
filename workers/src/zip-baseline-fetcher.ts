@@ -492,8 +492,10 @@ export class ZipBaselineFetcher {
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
     const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
 
-    // Step 2: Content-addressed lookup — SHA is the cache key
-    const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
+    // Step 2: Content-addressed lookup — SHA + schema version is the cache key
+    // Including INDEX_VERSION ensures schema changes (e.g. adding writings/) invalidate old caches.
+    const INDEX_VERSION = "2.0";
+    const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}_v${INDEX_VERSION}`;
     const cacheKey = `index/${getCacheKey(canonUrl || "default")}_${shaKey}`;
 
     if (this.env.BASELINE_CACHE) {
