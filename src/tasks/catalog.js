@@ -3,7 +3,6 @@ import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRe
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { writeLast } from "../state/last.js";
 
-const START_TAGS = ["quickstart", "getting-started", "start"];
 const TOP_TAGS_COUNT = 5;
 const DOCS_PER_TAG = 3;
 const PLAYBOOKS_CAP = 7;
@@ -94,41 +93,28 @@ export async function runCatalog(options) {
     title: d.title ?? null,
   }));
 
-  const quickstartMatch = (d) => {
-    if (!d.path) return false;
-    const p = d.path.toLowerCase();
-    if (p.includes("quickstart")) return true;
-    const tags = (d.tags || []).map((t) => String(t).toLowerCase().trim());
-    return START_TAGS.some((t) => tags.includes(t));
-  };
+  // Build start_here list from frontmatter (start_here: true, sorted by start_here_order)
+  const startHereDocs = docs
+    .filter((d) => d.start_here === true)
+    .sort((a, b) => {
+      const oa = a.start_here_order ?? Infinity;
+      const ob = b.start_here_order ?? Infinity;
+      if (oa !== ob) return oa - ob;
+      return (a.path || "").localeCompare(b.path || "");
+    });
 
-  let startHere = null;
-  const startCandidate = docs.find(quickstartMatch);
-  if (startCandidate) {
-    startHere = { path: startCandidate.path, title: startCandidate.title ?? null };
-  } else if (canon.length > 0) {
-    const first = canon[0];
-    startHere = { path: first.path, title: first.title ?? null };
-  }
+  const startHere = startHereDocs.map((d) => ({
+    path: d.path,
+    title: d.title ?? null,
+    start_here_order: d.start_here_order ?? null,
+    start_here_label: d.start_here_label ?? null,
+  }));
 
-  const nextUp = [];
-  if (startHere) {
-    const canonPaths = canon.map((d) => d.path);
-    const idx = canonPaths.indexOf(startHere.path);
-    const after = idx < 0 ? canon : canon.slice(idx + 1);
-    for (const d of after) {
-      if (nextUp.length >= NEXT_UP_COUNT) break;
-      nextUp.push({ path: d.path, title: d.title ?? null });
-    }
-    const used = new Set([startHere.path, ...nextUp.map((x) => x.path)]);
-    for (const p of playbooks) {
-      if (nextUp.length >= NEXT_UP_COUNT) break;
-      if (!used.has(p.path)) {
-        used.add(p.path);
-        nextUp.push(p);
-      }
-    }
-  }
+  // next_up: items after the first in start_here, capped at NEXT_UP_COUNT
+  const nextUp = startHere.slice(1, 1 + NEXT_UP_COUNT).map((d) => ({
+    path: d.path,
+    title: d.title ?? null,
+  }));
 
   const result = {
     status: "SUPPORTED",
