@@ -1,8 +1,9 @@
-import { buildIndex, loadIndex, saveIndex, INTENT_HIERARCHY } from "../index/buildIndex.js";
+import { buildIndex, loadIndex, saveIndex, INTENT_HIERARCHY, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getBaselineRef } from "../baseline/ensureBaselineRepo.js";
 import { applySupersedes } from "../resolve/applySupersedes.js";
 import { writeLast } from "../state/last.js";
 
+const START_TAGS = ["quickstart", "getting-started", "start"];
 const TOP_TAGS_COUNT = 5;
 const DOCS_PER_TAG = 3;
 const PLAYBOOKS_CAP = 7;
@@ -26,6 +27,11 @@ export async function runCatalog(options) {
   const baselineAvailable = !!baseline.root;
 
   let index = loadIndex(repoRoot);
+  // Schema version gate: stale index shapes (e.g. missing start_here fields) silently
+  // break newer features. A version mismatch forces a full rebuild.
+  if (index && index.version !== INDEX_VERSION) {
+    index = null;
+  }
   if (index) {
     const hasBaselineDocs = index.documents.some((d) => d.origin === "baseline");
     if (!baselineAvailable && hasBaselineDocs) index = null;
@@ -94,7 +100,7 @@ export async function runCatalog(options) {
   }));
 
   // Build start_here list from frontmatter (start_here: true, sorted by start_here_order)
-  const startHereDocs = docs
+  let startHereDocs = docs
     .filter((d) => d.start_here === true)
     .sort((a, b) => {
       const oa = a.start_here_order ?? Infinity;
@@ -102,6 +108,21 @@ export async function runCatalog(options) {
       if (oa !== ob) return oa - ob;
       return (a.path || "").localeCompare(b.path || "");
     });
+
+  // Fallback when no docs have start_here frontmatter: match quickstart path/tags or first canon doc
+  if (startHereDocs.length === 0) {
+    const quickstartMatch = (d) => {
+      if (!d.path) return false;
+      const p = d.path.toLowerCase();
+      if (p.includes("quickstart")) return true;
+      const tags = (d.tags || []).map((t) => String(t).toLowerCase().trim());
+      return START_TAGS.some((t) => tags.includes(t));
+    };
+    const fallbackDoc = docs.find(quickstartMatch) || (canon.length > 0 ? canon[0] : null);
+    if (fallbackDoc) {
+      startHereDocs = [fallbackDoc];
+    }
+  }
 
   const startHere = startHereDocs.map((d) => ({
     path: d.path,
