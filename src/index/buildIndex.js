@@ -17,7 +17,7 @@ function computeContentHash(content) {
 
 // Schema version — bump when the shape of indexed documents changes.
 // A version mismatch triggers a full rebuild so stale fields don't linger.
-export const INDEX_VERSION = "1.1.0"; // 1.1.0: added frontmatter to indexed docs
+export const INDEX_VERSION = "1.2.0"; // 1.2.0: added writings/ support, start_here/start_here_order fields
 
 // Default include patterns
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
@@ -124,6 +124,10 @@ async function indexRoot(rootPath, origin) {
         scope_key: frontmatter.scope_key || null, // identifier for scope
         intent: inferIntent(filePath, frontmatter), // workaround | experiment | operational | pattern | promoted
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
+        // Start here metadata (for catalog ordering)
+        start_here: frontmatter.start_here === true,
+        start_here_order: typeof frontmatter.start_here_order === "number" ? frontmatter.start_here_order : null,
+        start_here_label: frontmatter.start_here_label || null,
         // Identity for dedup (per user critique: path-only is unsafe across repos)
         content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
         // Full parsed frontmatter for include_metadata support
@@ -169,6 +173,9 @@ function inferIntent(filePath, frontmatter) {
   if (filePath.startsWith("odd/")) {
     return "pattern"; // ODD docs are patterns
   }
+  if (filePath.startsWith("writings/")) {
+    return "promoted"; // Writings are primary public-facing essays
+  }
   if (filePath.includes("/workaround")) {
     return "workaround";
   }
@@ -190,7 +197,7 @@ function inferAuthorityBand(filePath, frontmatter) {
   }
 
   // Path-based inference
-  if (filePath.startsWith("canon/") || filePath.startsWith("odd/")) {
+  if (filePath.startsWith("canon/") || filePath.startsWith("odd/") || filePath.startsWith("writings/")) {
     return "governing";
   }
   if (filePath.startsWith("docs/")) {

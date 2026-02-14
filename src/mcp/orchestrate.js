@@ -558,7 +558,16 @@ export async function runOrchestrate(options) {
 function buildCatalogAssistantText(taskResult) {
   const lines = [];
 
-  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const startHereList = Array.isArray(taskResult.start_here) ? taskResult.start_here : [];
+  if (startHereList.length > 0) {
+    lines.push("Start here:");
+    for (const d of startHereList) {
+      const label = d.start_here_label || d.title || d.path;
+      lines.push(`  - ${d.path} — ${label}`);
+    }
+  } else {
+    lines.push("Start here: (none)");
+  }
   const nextPaths = (taskResult.next_up || []).map((d) => d.path);
   lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
   lines.push("Top canon by tag:");
@@ -636,7 +645,16 @@ function buildOrientAssistantText(taskResult, epistemic) {
     lines.push("");
   }
 
-  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const startHereList = Array.isArray(taskResult.start_here) ? taskResult.start_here : [];
+  if (startHereList.length > 0) {
+    lines.push("Start here:");
+    for (const d of startHereList) {
+      const label = d.start_here_label || d.title || d.path;
+      lines.push(`  - ${d.path} — ${label}`);
+    }
+  } else {
+    lines.push("Start here: (none)");
+  }
   const nextPaths = (taskResult.next_up || []).map((d) => d.path);
   lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
   lines.push("");
@@ -808,7 +826,16 @@ function buildPreflightAssistantText(taskResult) {
   lines.push("");
 
   // Start here + Next up (reuse catalog format)
-  lines.push("Start here: " + (taskResult.start_here?.path ?? "(none)"));
+  const startHereList = Array.isArray(taskResult.start_here) ? taskResult.start_here : [];
+  if (startHereList.length > 0) {
+    lines.push("Start here:");
+    for (const d of startHereList) {
+      const label = d.start_here_label || d.title || d.path;
+      lines.push(`  - ${d.path} — ${label}`);
+    }
+  } else {
+    lines.push("Start here: (none)");
+  }
   const nextPaths = (taskResult.next_up || []).map((d) => d.path);
   lines.push("Next up: " + (nextPaths.length ? nextPaths.join(", ") : "(none)"));
   lines.push("");
