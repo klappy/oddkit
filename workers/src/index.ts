@@ -781,19 +781,41 @@ export default {
       const wantsSSE = acceptHeader.includes("text/event-stream");
       const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
 
-      // Stateless server — no server-initiated notifications to push.
-      // MCP spec: servers that do not support GET MUST return 405.
       if (request.method === "GET") {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Method not allowed. This server is stateless and does not support GET. Use POST for JSON-RPC requests." },
-          }),
-          {
-            status: 405,
-            headers: { Allow: "POST", "Content-Type": "application/json", ...corsHeaders(origin) },
+        if (!wantsSSE) {
+          // No SSE requested — return 405 per MCP spec.
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32000, message: "Method not allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream." },
+            }),
+            {
+              status: 405,
+              headers: { Allow: "POST", "Content-Type": "application/json", ...corsHeaders(origin) },
+            },
+          );
+        }
+
+        // Stateless server — no server-initiated notifications to push.
+        // Return a minimal SSE stream that closes immediately.
+        // Key fix: controller.close() prevents the zombie connection that
+        // caused the original hanging bug.
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(": connected\n\n"));
+            controller.close();
           },
-        );
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
+            ...corsHeaders(origin),
+          },
+        });
       }
 
       if (request.method === "DELETE") {
@@ -827,7 +849,7 @@ export default {
           return new Response(null, { status: 202, headers: responseHeaders });
         }
 
-        if (wantsSSE && !acceptHeader.includes("application/json")) {
+        if (wantsSSE) {
           responseHeaders["Content-Type"] = "text/event-stream";
           responseHeaders["Cache-Control"] = "no-cache";
           let sseBody = "";
