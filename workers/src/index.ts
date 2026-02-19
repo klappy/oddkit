@@ -778,36 +778,37 @@ export default {
     // MCP endpoint
     if (url.pathname === "/mcp") {
       const acceptHeader = request.headers.get("Accept") || "";
-      const wantsSSE = acceptHeader.includes("text/event-stream");
       const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
 
+      // Prefer JSON when client accepts it (stateless server — no streaming needed).
+      // Only fall back to SSE when the client exclusively accepts text/event-stream.
+      const acceptsJson =
+        !acceptHeader ||
+        acceptHeader.includes("application/json") ||
+        acceptHeader.includes("*/*");
+      const useSSE = !acceptsJson && acceptHeader.includes("text/event-stream");
+
+      // Stateless server (no Durable Objects / session storage) — cannot push
+      // server-initiated notifications, so GET SSE is not supported.
+      // Returning 405 tells MCP clients to use POST-only mode.
       if (request.method === "GET") {
-        if (!wantsSSE) {
-          return new Response(
-            "Method Not Allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream for SSE.\nDiscovery: GET /.well-known/mcp.json",
-            {
-              status: 405,
-              headers: { Allow: "POST", ...corsHeaders(origin) },
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Server does not support GET SSE stream (stateless mode). Use POST for all requests.",
             },
-          );
-        }
-
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+          }),
+          {
+            status: 405,
+            headers: {
+              Allow: "POST, DELETE",
+              "Content-Type": "application/json",
+              ...corsHeaders(origin),
+            },
           },
-          cancel() {},
-        });
-
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
-            ...corsHeaders(origin),
-          },
-        });
+        );
       }
 
       if (request.method === "DELETE") {
@@ -841,7 +842,7 @@ export default {
           return new Response(null, { status: 202, headers: responseHeaders });
         }
 
-        if (wantsSSE) {
+        if (useSSE) {
           responseHeaders["Content-Type"] = "text/event-stream";
           responseHeaders["Cache-Control"] = "no-cache";
           let sseBody = "";
