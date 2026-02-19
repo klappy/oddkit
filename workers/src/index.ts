@@ -811,6 +811,7 @@ export default {
           return new Response(
             JSON.stringify({
               jsonrpc: "2.0",
+              id: null,
               error: { code: -32000, message: "Method not allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream." },
             }),
             {
@@ -895,7 +896,7 @@ export default {
         return new Response(jsonBody, { headers: responseHeaders });
       } catch (err) {
         return new Response(
-          JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }),
+          JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }),
           { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders(origin) } },
         );
       }
