@@ -775,35 +775,71 @@ export default {
       );
     }
 
-    // MCP endpoint
+    // MCP endpoint — SSE contract (DO NOT change without updating tests)
+    //
+    // The MCP 2025-03-26 spec defines two response formats:
+    //   1. JSON:  Content-Type: application/json  (single response)
+    //   2. SSE:   Content-Type: text/event-stream (streaming, supports batches)
+    //
+    // When the client includes "text/event-stream" in Accept, the server
+    // MUST respond with SSE — even if "application/json" is also listed.
+    // Real MCP clients (Claude Desktop, Claude Code) send:
+    //   Accept: application/json, text/event-stream
+    // and expect SSE back. Preferring JSON breaks them.
+    //
+    // GET /mcp behavior:
+    //   - With Accept: text/event-stream → return SSE stream (test 4c)
+    //   - Without text/event-stream     → return 405        (test 4d)
+    //
+    // POST /mcp behavior:
+    //   - With Accept containing text/event-stream → SSE (tests 4f, 4g, 4h)
+    //   - Without text/event-stream                → JSON (all other tests)
+    //
+    // See: tests/cloudflare-production.test.sh tests 4c, 4d, 4f, 4g, 4h
     if (url.pathname === "/mcp") {
       const acceptHeader = request.headers.get("Accept") || "";
+      // DO NOT add `&& !acceptHeader.includes("application/json")` here.
+      // MCP clients send both; SSE takes priority when present.
       const wantsSSE = acceptHeader.includes("text/event-stream");
       const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
 
+      // GET /mcp: Only valid with Accept: text/event-stream (test 4c).
+      // Without it, return 405 (test 4d).
+      // DO NOT return 405 for ALL GETs — that breaks SSE-capable clients.
       if (request.method === "GET") {
         if (!wantsSSE) {
           return new Response(
-            "Method Not Allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream for SSE.\nDiscovery: GET /.well-known/mcp.json",
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32000, message: "Method not allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream." },
+            }),
             {
               status: 405,
-              headers: { Allow: "POST", ...corsHeaders(origin) },
+              headers: { Allow: "POST", "Content-Type": "application/json", ...corsHeaders(origin) },
             },
           );
         }
 
+        // Stateless server — no server-initiated notifications to push.
+        // Return a minimal SSE stream that closes immediately.
+        //
+        // BUG FIX: controller.close() is CRITICAL. Without it the
+        // ReadableStream stays open forever, creating a zombie connection
+        // that hangs MCP clients. This was the root cause of the original
+        // "MCP HTTP hanging" bug. DO NOT remove controller.close().
+        const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
-            controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+            controller.enqueue(encoder.encode(": connected\n\n"));
+            controller.close(); // ← MUST close. Removing this causes hanging.
           },
-          cancel() {},
         });
 
         return new Response(stream, {
           headers: {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive",
             ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
             ...corsHeaders(origin),
           },
@@ -841,6 +877,10 @@ export default {
           return new Response(null, { status: 202, headers: responseHeaders });
         }
 
+        // Return SSE when client accepts it (tests 4f, 4g, 4h).
+        // DO NOT add `&& !acceptHeader.includes("application/json")` — MCP
+        // clients send "Accept: application/json, text/event-stream" and
+        // expect SSE. Adding that guard causes tests 4f, 4g, 4h to fail.
         if (wantsSSE) {
           responseHeaders["Content-Type"] = "text/event-stream";
           responseHeaders["Cache-Control"] = "no-cache";
@@ -856,7 +896,7 @@ export default {
         return new Response(jsonBody, { headers: responseHeaders });
       } catch (err) {
         return new Response(
-          JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }),
+          JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }),
           { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders(origin) } },
         );
       }
