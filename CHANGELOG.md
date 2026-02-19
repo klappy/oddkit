@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-02-19
+
 ### Fixed
 
 - **MCP session ID missing on tool call responses** — `Mcp-Session-Id` header was only returned on `initialize` responses, not on subsequent `tools/call` or other requests. Claude Code cloud's MCP HTTP client expects session confirmation on every response and hangs indefinitely when it is missing. Now echoes the client's session ID back on all `/mcp` POST responses. (Regression from incomplete v0.10.1 fix which only added the header to `initialize`.)
