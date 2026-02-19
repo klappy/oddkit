@@ -848,7 +848,7 @@ export default {
           return new Response(null, { status: 202, headers: responseHeaders });
         }
 
-        if (wantsSSE) {
+        if (wantsSSE && !acceptHeader.includes("application/json")) {
           responseHeaders["Content-Type"] = "text/event-stream";
           responseHeaders["Cache-Control"] = "no-cache";
           let sseBody = "";
