@@ -778,37 +778,43 @@ export default {
     // MCP endpoint
     if (url.pathname === "/mcp") {
       const acceptHeader = request.headers.get("Accept") || "";
+      const wantsSSE = acceptHeader.includes("text/event-stream");
       const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
 
-      // Prefer JSON when client accepts it (stateless server — no streaming needed).
-      // Only fall back to SSE when the client exclusively accepts text/event-stream.
-      const acceptsJson =
-        !acceptHeader ||
-        acceptHeader.includes("application/json") ||
-        acceptHeader.includes("*/*");
-      const useSSE = !acceptsJson && acceptHeader.includes("text/event-stream");
-
-      // Stateless server (no Durable Objects / session storage) — cannot push
-      // server-initiated notifications, so GET SSE is not supported.
-      // Returning 405 tells MCP clients to use POST-only mode.
       if (request.method === "GET") {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Server does not support GET SSE stream (stateless mode). Use POST for all requests.",
+        if (!wantsSSE) {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32000, message: "Method not allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream." },
+            }),
+            {
+              status: 405,
+              headers: { Allow: "POST", "Content-Type": "application/json", ...corsHeaders(origin) },
             },
-          }),
-          {
-            status: 405,
-            headers: {
-              Allow: "POST, DELETE",
-              "Content-Type": "application/json",
-              ...corsHeaders(origin),
-            },
+          );
+        }
+
+        // Stateless server — no server-initiated notifications to push.
+        // Return a minimal SSE stream that signals readiness then closes
+        // immediately. The original bug: ReadableStream never called
+        // controller.close(), creating a zombie connection that hung clients.
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(": connected\n\n"));
+            controller.close();
           },
-        );
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
+            ...corsHeaders(origin),
+          },
+        });
       }
 
       if (request.method === "DELETE") {
@@ -842,7 +848,7 @@ export default {
           return new Response(null, { status: 202, headers: responseHeaders });
         }
 
-        if (useSSE) {
+        if (wantsSSE) {
           responseHeaders["Content-Type"] = "text/event-stream";
           responseHeaders["Cache-Control"] = "no-cache";
           let sseBody = "";
