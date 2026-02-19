@@ -834,7 +834,8 @@ export default {
         }
 
         const responseHeaders: Record<string, string> = { ...corsHeaders(origin) };
-        if (initSessionId) responseHeaders["Mcp-Session-Id"] = initSessionId;
+        const effectiveSessionId = initSessionId || sessionId;
+        if (effectiveSessionId) responseHeaders["Mcp-Session-Id"] = effectiveSessionId;
 
         if (responses.length === 0) {
           return new Response(null, { status: 202, headers: responseHeaders });
