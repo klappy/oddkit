@@ -73,10 +73,11 @@ async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
     const registryJson = await fetcher.getFile("canon/instructions/REGISTRY.json");
     if (!registryJson) return cachedRegistry;
     cachedRegistry = JSON.parse(registryJson) as PromptRegistry;
-    registryFetchedAt = now;
     return cachedRegistry;
   } catch {
     return cachedRegistry;
+  } finally {
+    registryFetchedAt = now;
   }
 }
 
