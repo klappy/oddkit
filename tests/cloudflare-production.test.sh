@@ -22,20 +22,36 @@ echo ""
 PASSED=0
 FAILED=0
 
+# Helper: extract JSON from potentially SSE-formatted response
+# WorkerTransport (agents SDK) returns SSE by default: "event: message\ndata: {...}\n\n"
+extract_json() {
+  local response="$1"
+  if echo "$response" | grep -q "^data: "; then
+    echo "$response" | grep "^data: " | head -1 | sed 's/^data: //'
+  else
+    echo "$response"
+  fi
+}
+
 # Helper: make JSON-RPC request to /mcp
 mcp_call() {
   local method="$1"
   local params="$2"
+  local response
 
   if [ -z "$params" ]; then
-    curl -sf "$WORKER_URL/mcp" -X POST \
+    response=$(curl -sf "$WORKER_URL/mcp" -X POST \
       -H "Content-Type: application/json" \
-      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}"
+      -H "Accept: application/json, text/event-stream" \
+      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}")
   else
-    curl -sf "$WORKER_URL/mcp" -X POST \
+    response=$(curl -sf "$WORKER_URL/mcp" -X POST \
       -H "Content-Type: application/json" \
-      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}"
+      -H "Accept: application/json, text/event-stream" \
+      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}")
   fi
+
+  extract_json "$response"
 }
 
 # Helper: validate JSON response
@@ -180,15 +196,16 @@ else
   FAILED=$((FAILED + 1))
 fi
 
-# Test 4d: GET /mcp without SSE Accept returns 405 (MCP spec compliance)
+# Test 4d: GET /mcp without SSE Accept returns 406 Not Acceptable
+# WorkerTransport (agents SDK) returns 406 when Accept doesn't include text/event-stream
 echo ""
-echo "Test 4d: GET /mcp without SSE Accept returns 405 Method Not Allowed"
+echo "Test 4d: GET /mcp without SSE Accept returns 406 Not Acceptable"
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$WORKER_URL/mcp" -X GET 2>&1)
-if [ "$HTTP_STATUS" = "405" ]; then
-  echo "PASS - GET /mcp returns 405 (spec-compliant)"
+if [ "$HTTP_STATUS" = "406" ]; then
+  echo "PASS - GET /mcp returns 406 (spec-compliant)"
   PASSED=$((PASSED + 1))
 else
-  echo "FAIL - GET /mcp returned $HTTP_STATUS (expected 405)"
+  echo "FAIL - GET /mcp returned $HTTP_STATUS (expected 406)"
   FAILED=$((FAILED + 1))
 fi
 
@@ -333,41 +350,51 @@ echo ""
 
 # Test 14b: oddkit_orient
 echo "Test 14b: tools/call oddkit_orient"
-RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_orient","arguments":{"input":"I want to add authentication to my app"}}}')
+RESULT=$(extract_json "$RAW")
 check_json "oddkit_orient" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # Test 14c: oddkit_challenge
 echo ""
 echo "Test 14c: tools/call oddkit_challenge"
-RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_challenge","arguments":{"input":"We should use MongoDB for everything"}}}')
+RESULT=$(extract_json "$RAW")
 check_json "oddkit_challenge" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # Test 14d: oddkit_gate
 echo ""
 echo "Test 14d: tools/call oddkit_gate"
-RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_gate","arguments":{"input":"ready to build the auth module"}}}')
+RESULT=$(extract_json "$RAW")
 check_json "oddkit_gate" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # Test 14e: oddkit_encode
 echo ""
 echo "Test 14e: tools/call oddkit_encode"
-RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_encode","arguments":{"input":"We decided to use JWT tokens because they are stateless and scalable"}}}')
+RESULT=$(extract_json "$RAW")
 check_json "oddkit_encode" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # Test 14f: oddkit_catalog
 echo ""
 echo "Test 14f: tools/call oddkit_catalog"
-RESULT=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_catalog","arguments":{}}}')
+RESULT=$(extract_json "$RAW")
 check_json "oddkit_catalog" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
 # ============================================
