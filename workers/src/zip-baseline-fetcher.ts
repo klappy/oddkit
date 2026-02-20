@@ -208,15 +208,18 @@ export class ZipBaselineFetcher {
    * Get unzipped file map, caching the result to avoid repeated decompression.
    * unzipSync is CPU-intensive; calling it once per ZIP per request
    * keeps us within Cloudflare Worker CPU limits.
+   *
+   * NOTE: No file-type filter here. Callers that only need .md files
+   * (e.g. extractMarkdownFiles) apply their own filter. getFile() needs
+   * access to ALL file types (.json, .md, etc.) for the prompt registry
+   * and other non-markdown resources. Do not re-add a .md filter here.
    */
   private getUnzipped(zipData: Uint8Array, cacheKey: string): Record<string, Uint8Array> {
     const existing = this.unzippedCache.get(cacheKey);
     if (existing) {
       return existing;
     }
-    const unzipped = unzipSync(zipData, {
-      filter: (file) => file.name.endsWith(".md"),
-    });
+    const unzipped = unzipSync(zipData);
     this.unzippedCache.set(cacheKey, unzipped);
     return unzipped;
   }

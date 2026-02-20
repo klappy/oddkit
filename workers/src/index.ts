@@ -19,6 +19,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { handleUnifiedAction, type Env } from "./orchestrate";
+import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { renderChatPage } from "./chat-ui";
 import { renderNotFoundPage } from "./not-found-ui";
 import { handleChatRequest } from "./chat-api";
@@ -45,22 +46,33 @@ interface PromptRegistry {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Prompt registry helpers — direct HTTP fetch with module-level cache
+// Prompt registry helpers — ZipBaselineFetcher with module-level cache
+//
+// Uses ZipBaselineFetcher (R2/KV content-addressed cache) for both registry
+// and prompt content. Module-level cache (5-min TTL) avoids re-fetching the
+// registry on every MCP request. Prompt content is fetched lazily on
+// prompts/get and benefits from ZipBaselineFetcher's R2 cache.
+//
+// DO NOT replace with raw HTTP fetch — that bypasses the R2 cache pipeline
+// and hammers raw.githubusercontent.com on every request. The .md filter
+// bug that previously caused REGISTRY.json to return null has been fixed
+// in ZipBaselineFetcher.getUnzipped (see zip-baseline-fetcher.ts).
 // ──────────────────────────────────────────────────────────────────────────────
 
 let cachedRegistry: PromptRegistry | null = null;
 let registryFetchedAt = 0;
 const REGISTRY_CACHE_TTL_MS = 5 * 60 * 1000;
 
-async function fetchPromptsRegistry(baselineUrl: string): Promise<PromptRegistry | null> {
+async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
   const now = Date.now();
   if (cachedRegistry && now - registryFetchedAt < REGISTRY_CACHE_TTL_MS) {
     return cachedRegistry;
   }
   try {
-    const response = await fetch(`${baselineUrl}/canon/instructions/REGISTRY.json`);
-    if (!response.ok) return cachedRegistry;
-    cachedRegistry = (await response.json()) as PromptRegistry;
+    const fetcher = new ZipBaselineFetcher(env);
+    const registryJson = await fetcher.getFile("canon/instructions/REGISTRY.json");
+    if (!registryJson) return cachedRegistry;
+    cachedRegistry = JSON.parse(registryJson) as PromptRegistry;
     registryFetchedAt = now;
     return cachedRegistry;
   } catch {
@@ -68,11 +80,11 @@ async function fetchPromptsRegistry(baselineUrl: string): Promise<PromptRegistry
   }
 }
 
-async function fetchPromptContent(baselineUrl: string, path: string): Promise<string | null> {
+async function fetchPromptContent(env: Env, path: string): Promise<string | null> {
   try {
-    const response = await fetch(`${baselineUrl}/${path}`);
-    if (!response.ok) return null;
-    const content = await response.text();
+    const fetcher = new ZipBaselineFetcher(env);
+    const content = await fetcher.getFile(path);
+    if (!content) return null;
     return content.replace(/^---[\s\S]*?---\n/, "").trim();
   } catch {
     return null;
@@ -90,9 +102,9 @@ async function fetchPromptContent(baselineUrl: string, path: string): Promise<st
  * cross-client data leakage (CVE fix). The `env` is closed over
  * at request time so tools can access bindings.
  *
- * Prompts are fetched from the baseline registry via direct HTTP with
- * module-level caching (5-minute TTL). Prompt content is fetched lazily
- * on prompts/get.
+ * Prompts are fetched from the baseline registry via ZipBaselineFetcher
+ * (R2-cached) with module-level caching (5-minute TTL). Prompt content
+ * is fetched lazily on prompts/get via the same R2 pipeline.
  */
 async function createServer(env: Env): Promise<McpServer> {
   const server = new McpServer({
@@ -321,18 +333,18 @@ Use when:
     }),
   );
 
-  // ── Prompts (from baseline registry via direct HTTP, cached at module scope)
+  // ── Prompts (from baseline registry via ZipBaselineFetcher, cached at module scope)
   //
-  // Uses direct HTTP fetch to the raw GitHub URL (not ZIP pipeline) since
-  // the registry is JSON, not markdown. Module-level cache avoids re-fetching
-  // on every request. Prompt content is fetched lazily on prompts/get.
+  // Registry is fetched via ZipBaselineFetcher (R2-cached, content-addressed).
+  // Module-level cache (5-min TTL) avoids re-fetching on every MCP request.
+  // Prompt content is fetched lazily on prompts/get via the same R2 pipeline.
 
   try {
-    const registry = await fetchPromptsRegistry(env.BASELINE_URL);
+    const registry = await fetchPromptsRegistry(env);
     if (registry) {
       for (const inst of registry.instructions.filter((i) => i.audience === "agent")) {
         server.prompt(inst.id, `Agent: ${inst.id} (${inst.uri})`, async () => {
-          const text = await fetchPromptContent(env.BASELINE_URL, inst.path);
+          const text = await fetchPromptContent(env, inst.path);
           return {
             messages: [
               {
