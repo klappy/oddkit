@@ -73,11 +73,10 @@ async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
     const registryJson = await fetcher.getFile("canon/instructions/REGISTRY.json");
     if (!registryJson) return cachedRegistry;
     cachedRegistry = JSON.parse(registryJson) as PromptRegistry;
+    registryFetchedAt = now;
     return cachedRegistry;
   } catch {
     return cachedRegistry;
-  } finally {
-    registryFetchedAt = now;
   }
 }
 
@@ -352,11 +351,14 @@ Use when:
       for (const inst of registry.instructions.filter((i) => i.audience === "agent")) {
         server.prompt(inst.id, `Agent: ${inst.id} (${inst.uri})`, async () => {
           const text = await fetchPromptContent(env, inst.path);
+          if (!text) {
+            throw new Error(`Failed to fetch prompt content: ${inst.path}`);
+          }
           return {
             messages: [
               {
                 role: "user" as const,
-                content: { type: "text" as const, text: text || `Failed to load prompt: ${inst.path}` },
+                content: { type: "text" as const, text },
               },
             ],
           };
