@@ -1,9 +1,10 @@
 # oddkit MCP Worker
 # Exposes oddkit as a remote MCP server for Claude.ai
+# Uses createMcpHandler (stateless) from CF Agents SDK
 
 name = "oddkit"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2025-03-10"
 compatibility_flags = ["nodejs_compat"]
 keep_vars = true
 
@@ -13,8 +14,6 @@ BASELINE_URL = "https://raw.githubusercontent.com/klappy/klappy.dev/main"
 # ODDKIT_VERSION injected at deploy time from root package.json
 
 # OPENAI_API_KEY — set via Cloudflare dashboard: Workers > oddkit > Settings > Variables and Secrets
-# OAUTH_CLIENT_ID = ""
-# OAUTH_CLIENT_SECRET = ""
 
 # KV for caching baseline index
 [[kv_namespaces]]
@@ -25,9 +24,3 @@ id = "6baa38d843404fc9b703f3c9053d8c52"
 [[r2_buckets]]
 binding = "BASELINE"
 bucket_name = "oddkit-baseline"
-
-# Optional: Durable Objects for session state
-# [durable_objects]
-# bindings = [
-#   { name = "SESSIONS", class_name = "SessionState" }
-# ]

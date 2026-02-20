@@ -75,6 +75,7 @@ jobs:
     if: github.event_name != 'schedule'
     name: Test CF Preview
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

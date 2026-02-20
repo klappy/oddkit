@@ -2,16 +2,24 @@
  * oddkit MCP Worker
  *
  * Remote MCP server for oddkit, deployable to Cloudflare Workers.
- * Provides policy retrieval and completion validation for Claude.ai.
+ * Uses Cloudflare's `createMcpHandler` from the Agents SDK for
+ * streamable-http transport (MCP 2025-03-26 spec).
  *
- * Uses streamable-http transport for MCP communication.
- *
- * v2: Two-layer tool surface — unified `oddkit` orchestrator with state
- * threading + individual tools as direct, stateless access points.
- * All tools use `canon_url` for canon override.
+ * Architecture:
+ *   /mcp          → createMcpHandler (MCP protocol)
+ *   /             → Chat UI
+ *   /api/chat     → Chat API
+ *   /health       → Health check
+ *   /.well-known/ → MCP server card
+ *   *             → 404
  */
 
-import { handleUnifiedAction, type OddkitEnvelope, type Env } from "./orchestrate";
+import { createMcpHandler } from "agents/mcp";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+import { handleUnifiedAction, type Env } from "./orchestrate";
+import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { renderChatPage } from "./chat-ui";
 import { renderNotFoundPage } from "./not-found-ui";
 import { handleChatRequest } from "./chat-api";
@@ -19,13 +27,102 @@ import pkg from "../package.json";
 
 export type { Env };
 
+const BUILD_VERSION = pkg.version;
+
 // ──────────────────────────────────────────────────────────────────────────────
-// Tool definitions — Layer 1: Unified orchestrator + Layer 2: Individual tools
+// Types
 // ──────────────────────────────────────────────────────────────────────────────
 
-const ODDKIT_TOOL = {
-  name: "oddkit",
-  description: `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or cleanup_storage actions.
+interface PromptRegistryEntry {
+  id: string;
+  uri: string;
+  path: string;
+  audience: string;
+}
+
+interface PromptRegistry {
+  version: string;
+  instructions: PromptRegistryEntry[];
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Prompt registry helpers — ZipBaselineFetcher with module-level cache
+//
+// Uses ZipBaselineFetcher (R2/KV content-addressed cache) for both registry
+// and prompt content. Module-level cache (5-min TTL) avoids re-fetching the
+// registry on every MCP request. Prompt content is fetched lazily on
+// prompts/get and benefits from ZipBaselineFetcher's R2 cache.
+//
+// DO NOT replace with raw HTTP fetch — that bypasses the R2 cache pipeline
+// and hammers raw.githubusercontent.com on every request. The .md filter
+// bug that previously caused REGISTRY.json to return null has been fixed
+// in ZipBaselineFetcher.getUnzipped (see zip-baseline-fetcher.ts).
+// ──────────────────────────────────────────────────────────────────────────────
+
+let cachedRegistry: PromptRegistry | null = null;
+let registryFetchedAt = 0;
+const REGISTRY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
+  const now = Date.now();
+  if (cachedRegistry && now - registryFetchedAt < REGISTRY_CACHE_TTL_MS) {
+    return cachedRegistry;
+  }
+  try {
+    const fetcher = new ZipBaselineFetcher(env);
+    const registryJson = await fetcher.getFile("canon/instructions/REGISTRY.json");
+    if (!registryJson) return cachedRegistry;
+    cachedRegistry = JSON.parse(registryJson) as PromptRegistry;
+    registryFetchedAt = now;
+    return cachedRegistry;
+  } catch {
+    return cachedRegistry;
+  }
+}
+
+async function fetchPromptContent(env: Env, path: string): Promise<string | null> {
+  try {
+    const fetcher = new ZipBaselineFetcher(env);
+    const content = await fetcher.getFile(path);
+    if (!content) return null;
+    return content.replace(/^---[\s\S]*?---\n/, "").trim();
+  } catch {
+    return null;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MCP Server — tool, resource, and prompt registration
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create a fresh McpServer instance per request.
+ *
+ * MCP SDK 1.26.0+ requires new instances per request to prevent
+ * cross-client data leakage (CVE fix). The `env` is closed over
+ * at request time so tools can access bindings.
+ *
+ * Prompts are fetched from the baseline registry via ZipBaselineFetcher
+ * (R2-cached) with module-level caching (5-minute TTL). Prompt content
+ * is fetched lazily on prompts/get via the same R2 pipeline.
+ */
+async function createServer(env: Env): Promise<McpServer> {
+  const server = new McpServer(
+    {
+      name: "oddkit",
+      version: env.ODDKIT_VERSION || BUILD_VERSION,
+    },
+    {
+      instructions:
+        "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use the unified `oddkit` tool with action parameter for multi-step workflows with state threading, or use individual tools (oddkit_search, oddkit_orient, oddkit_challenge, etc.) for direct, stateless calls.",
+    },
+  );
+
+  // ── Layer 1: Unified orchestrator (state threading) ──────────────────────
+
+  server.tool(
+    "oddkit",
+    `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or cleanup_storage actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
@@ -37,228 +134,247 @@ Use when:
 - Pre-implementation: action="preflight"
 - Validating completion: action="validate"
 - Listing available docs: action="catalog"`,
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      action: {
-        type: "string",
-        enum: [
-          "orient", "challenge", "gate", "encode", "search", "get",
-          "catalog", "validate", "preflight", "version", "cleanup_storage",
-        ],
-        description: "Which epistemic action to perform.",
-      },
-      input: {
-        type: "string",
-        description: "Primary input — query, claim, URI, goal, or completion claim depending on action.",
-      },
-      context: {
-        type: "string",
-        description: "Optional supporting context.",
-      },
-      mode: {
-        type: "string",
-        enum: ["exploration", "planning", "execution"],
-        description: "Optional epistemic mode hint.",
-      },
-      canon_url: {
-        type: "string",
-        description: "Optional GitHub repo URL for canon override.",
-      },
-      include_metadata: {
-        type: "boolean",
-        description: "When true, search/get responses include a metadata object with full parsed frontmatter. Default: false.",
-      },
-      state: {
-        type: "object",
-        description: "Optional client-side conversation state, passed back and forth.",
-      },
+    {
+      action: z.enum([
+        "orient", "challenge", "gate", "encode", "search", "get",
+        "catalog", "validate", "preflight", "version", "cleanup_storage",
+      ]).describe("Which epistemic action to perform."),
+      input: z.string().describe("Primary input — query, claim, URI, goal, or completion claim depending on action."),
+      context: z.string().optional().describe("Optional supporting context."),
+      mode: z.enum(["exploration", "planning", "execution"]).optional().describe("Optional epistemic mode hint."),
+      canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
+      include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
+      state: z.record(z.string(), z.unknown()).optional().describe("Optional client-side conversation state, passed back and forth."),
     },
-    required: ["action", "input"],
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: true,
-  },
-};
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async (args) => {
+      const result = await handleUnifiedAction({
+        action: args.action,
+        input: args.input,
+        context: args.context,
+        mode: args.mode,
+        canon_url: args.canon_url,
+        include_metadata: args.include_metadata,
+        state: args.state as any,
+        env,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    },
+  );
 
-// Layer 2: Individual tools — direct, stateless access to each action.
-// Same internal handlers as the orchestrator, but no state threading.
-const INDIVIDUAL_TOOLS = [
-  {
-    name: "oddkit_orient",
-    description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "A goal, idea, or situation description to orient against." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_challenge",
-    description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "A claim, assumption, or proposal to challenge." },
-        mode: { type: "string", enum: ["exploration", "planning", "execution"], description: "Optional epistemic mode for proportional challenge." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_gate",
-    description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "The proposed transition (e.g., 'ready to build', 'moving to planning')." },
-        context: { type: "string", description: "Optional context about what's been decided so far." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_encode",
-    description: "Structure a decision, insight, or boundary as a durable record. Assesses quality and suggests improvements.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "A decision, insight, or boundary to capture." },
-        context: { type: "string", description: "Optional supporting context." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "oddkit_search",
-    description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "Natural language query or tags to search for." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-        include_metadata: { type: "boolean", description: "When true, each hit includes a metadata object with full parsed frontmatter. Default: false." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_get",
-    description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-        include_metadata: { type: "boolean", description: "When true, response includes a metadata object with full parsed frontmatter. Default: false." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_catalog",
-    description: "Lists available documentation with categories, counts, and start-here suggestions.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: [] as string[],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_validate",
-    description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "The completion claim with artifact references." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "oddkit_preflight",
-    description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        input: { type: "string", description: "Description of what you're about to implement." },
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: ["input"],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
-    name: "oddkit_version",
-    description: "Returns oddkit version and the authoritative canon target (commit/mode).",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: [] as string[],
-    },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "oddkit_cleanup_storage",
-    description: "Storage hygiene: clears orphaned cached data. NOT required for correctness — content-addressed caching ensures fresh content is served automatically when the baseline changes.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
-      },
-      required: [] as string[],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-];
+  // ── Layer 2: Individual tools (stateless, direct access) ─────────────────
 
-const ALL_TOOLS = [ODDKIT_TOOL, ...INDIVIDUAL_TOOLS];
+  const individualTools: Array<{
+    name: string;
+    description: string;
+    action: string;
+    schema: Record<string, z.ZodTypeAny>;
+    annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
+  }> = [
+    {
+      name: "oddkit_orient",
+      description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions.",
+      action: "orient",
+      schema: {
+        input: z.string().describe("A goal, idea, or situation description to orient against."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_challenge",
+      description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions.",
+      action: "challenge",
+      schema: {
+        input: z.string().describe("A claim, assumption, or proposal to challenge."),
+        mode: z.enum(["exploration", "planning", "execution"]).optional().describe("Optional epistemic mode for proportional challenge."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_gate",
+      description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence.",
+      action: "gate",
+      schema: {
+        input: z.string().describe("The proposed transition (e.g., 'ready to build', 'moving to planning')."),
+        context: z.string().optional().describe("Optional context about what's been decided so far."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_encode",
+      description: "Structure a decision, insight, or boundary as a durable record. Assesses quality and suggests improvements.",
+      action: "encode",
+      schema: {
+        input: z.string().describe("A decision, insight, or boundary to capture."),
+        context: z.string().optional().describe("Optional supporting context."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "oddkit_search",
+      description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts.",
+      action: "search",
+      schema: {
+        input: z.string().describe("Natural language query or tags to search for."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        include_metadata: z.boolean().optional().describe("When true, each hit includes a metadata object with full parsed frontmatter. Default: false."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_get",
+      description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash.",
+      action: "get",
+      schema: {
+        input: z.string().describe("Canonical URI (e.g., klappy://canon/values/orientation)."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        include_metadata: z.boolean().optional().describe("When true, response includes a metadata object with full parsed frontmatter. Default: false."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_catalog",
+      description: "Lists available documentation with categories, counts, and start-here suggestions.",
+      action: "catalog",
+      schema: {
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_validate",
+      description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS.",
+      action: "validate",
+      schema: {
+        input: z.string().describe("The completion claim with artifact references."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "oddkit_preflight",
+      description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls.",
+      action: "preflight",
+      schema: {
+        input: z.string().describe("Description of what you're about to implement."),
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_version",
+      description: "Returns oddkit version and the authoritative canon target (commit/mode).",
+      action: "version",
+      schema: {
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "oddkit_cleanup_storage",
+      description: "Storage hygiene: clears orphaned cached data. NOT required for correctness — content-addressed caching ensures fresh content is served automatically when the baseline changes.",
+      action: "cleanup_storage",
+      schema: {
+        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+  ];
+
+  for (const tool of individualTools) {
+    server.tool(
+      tool.name,
+      tool.description,
+      tool.schema,
+      tool.annotations,
+      async (args: Record<string, unknown>) => {
+        const result = await handleUnifiedAction({
+          action: tool.action,
+          input: (args.input as string) || "",
+          context: args.context as string | undefined,
+          mode: args.mode as string | undefined,
+          canon_url: args.canon_url as string | undefined,
+          include_metadata: args.include_metadata as boolean | undefined,
+          env,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      },
+    );
+  }
+
+  // ── Resources ────────────────────────────────────────────────────────────
+
+  server.resource(
+    "ODDKIT Decision Gate",
+    "oddkit://instructions",
+    { mimeType: "text/plain" },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/plain", text: getInstructionsResource() }],
+    }),
+  );
+
+  server.resource(
+    "ODDKIT Quick Start for Agents",
+    "oddkit://quickstart",
+    { mimeType: "text/plain" },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/plain", text: getQuickStartResource() }],
+    }),
+  );
+
+  server.resource(
+    "ODDKIT Usage Examples",
+    "oddkit://examples",
+    { mimeType: "text/plain" },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/plain", text: getExamplesResource() }],
+    }),
+  );
+
+  // ── Prompts (from baseline registry via ZipBaselineFetcher, cached at module scope)
+  //
+  // Registry is fetched via ZipBaselineFetcher (R2-cached, content-addressed).
+  // Module-level cache (5-min TTL) avoids re-fetching on every MCP request.
+  // Prompt content is fetched lazily on prompts/get via the same R2 pipeline.
+
+  try {
+    const registry = await fetchPromptsRegistry(env);
+    if (registry) {
+      for (const inst of registry.instructions.filter((i) => i.audience === "agent")) {
+        server.prompt(inst.id, `Agent: ${inst.id} (${inst.uri})`, async () => {
+          const text = await fetchPromptContent(env, inst.path);
+          if (!text) {
+            throw new Error(`Failed to fetch prompt content: ${inst.path}`);
+          }
+          return {
+            messages: [
+              {
+                role: "user" as const,
+                content: { type: "text" as const, text },
+              },
+            ],
+          };
+        });
+      }
+    }
+  } catch {
+    // Non-fatal: prompts are supplementary. Tools and resources still work.
+  }
+
+  return server;
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Resource definitions
+// Resource content (unchanged from original)
 // ──────────────────────────────────────────────────────────────────────────────
-
-const RESOURCES = [
-  {
-    uri: "oddkit://instructions",
-    name: "ODDKIT Decision Gate",
-    description: "When and how to call the oddkit tool",
-    mimeType: "text/plain",
-  },
-  {
-    uri: "oddkit://quickstart",
-    name: "ODDKIT Quick Start for Agents",
-    description: "Essential oddkit usage patterns for spawned agents",
-    mimeType: "text/plain",
-  },
-  {
-    uri: "oddkit://examples",
-    name: "ODDKIT Usage Examples",
-    description: "Common oddkit call patterns",
-    mimeType: "text/plain",
-  },
-];
 
 function getInstructionsResource(): string {
   return `ODDKIT DECISION GATE
@@ -352,350 +468,8 @@ Call 2: oddkit({ action: "challenge", input: "...", state: <state from call 1> }
 → Returns: { ..., state: { phase: "exploration", unresolved: [...], ... } }`;
 }
 
-function getResourceContent(uri: string): string | null {
-  switch (uri) {
-    case "oddkit://instructions":
-      return getInstructionsResource();
-    case "oddkit://quickstart":
-      return getQuickStartResource();
-    case "oddkit://examples":
-      return getExamplesResource();
-    default:
-      return null;
-  }
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
-// Prompt registry
-// ──────────────────────────────────────────────────────────────────────────────
-
-interface PromptRegistryEntry {
-  id: string;
-  uri: string;
-  path: string;
-  audience: string;
-}
-
-interface PromptRegistry {
-  version: string;
-  instructions: PromptRegistryEntry[];
-}
-
-async function fetchPromptsRegistry(baselineUrl: string): Promise<PromptRegistry | null> {
-  try {
-    const response = await fetch(`${baselineUrl}/canon/instructions/REGISTRY.json`);
-    if (!response.ok) return null;
-    return (await response.json()) as PromptRegistry;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchPromptContent(baselineUrl: string, path: string): Promise<string | null> {
-  try {
-    const response = await fetch(`${baselineUrl}/${path}`);
-    if (!response.ok) return null;
-    const content = await response.text();
-    return content.replace(/^---[\s\S]*?---\n/, "").trim();
-  } catch {
-    return null;
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// MCP protocol
-// ──────────────────────────────────────────────────────────────────────────────
-
-const PROTOCOL_VERSION = "2025-03-26";
-const BUILD_VERSION = pkg.version;
-
-function getServerInfo(envVersion: string | undefined) {
-  return {
-    name: "oddkit",
-    version: envVersion || BUILD_VERSION,
-  };
-}
-
-function generateSessionId(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 10);
-  return `oddkit-${timestamp}-${random}`;
-}
-
-function formatSseEvent(data: unknown, eventId?: string): string {
-  const lines: string[] = [];
-  if (eventId) lines.push(`id: ${eventId}`);
-  lines.push("event: message");
-  lines.push(`data: ${JSON.stringify(data)}`);
-  lines.push("");
-  return lines.join("\n") + "\n";
-}
-
-const MCP_TOOL_TIMEOUT_MS = 25_000;
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Tool execution — unified routing
-// ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Execute a tool call by routing to the unified handler.
- * Layer 1 (oddkit) passes state; Layer 2 (individual tools) does not.
- */
-async function executeToolCall(
-  name: string,
-  args: Record<string, unknown> | undefined,
-  env: Env,
-): Promise<OddkitEnvelope> {
-  const canonUrl = args?.canon_url as string | undefined;
-
-  const includeMetadata = args?.include_metadata as boolean | undefined;
-
-  // Layer 1: Unified orchestrator — accepts state
-  if (name === "oddkit") {
-    return handleUnifiedAction({
-      action: (args?.action as string) || "search",
-      input: (args?.input as string) || "",
-      context: args?.context as string | undefined,
-      mode: args?.mode as string | undefined,
-      canon_url: canonUrl,
-      include_metadata: includeMetadata,
-      state: args?.state as any,
-      env,
-    });
-  }
-
-  // Layer 2: Individual tools — stateless, route to same handlers
-  // Extract the action name from the tool name (oddkit_orient → orient)
-  const actionFromName: Record<string, string> = {
-    oddkit_orient: "orient",
-    oddkit_challenge: "challenge",
-    oddkit_gate: "gate",
-    oddkit_encode: "encode",
-    oddkit_search: "search",
-    oddkit_get: "get",
-    oddkit_catalog: "catalog",
-    oddkit_validate: "validate",
-    oddkit_preflight: "preflight",
-    oddkit_version: "version",
-    oddkit_cleanup_storage: "cleanup_storage",
-  };
-
-  const action = actionFromName[name];
-  if (action) {
-    return handleUnifiedAction({
-      action,
-      input: (args?.input as string) || "",
-      context: args?.context as string | undefined,
-      mode: args?.mode as string | undefined,
-      canon_url: canonUrl,
-      include_metadata: includeMetadata,
-      // No state for individual tools
-      env,
-    });
-  }
-
-  throw new Error(`Unknown tool: ${name}`);
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// MCP request handler
-// ──────────────────────────────────────────────────────────────────────────────
-
-interface McpResponse {
-  jsonrpc: string;
-  id?: unknown;
-  result?: unknown;
-  error?: unknown;
-  _sessionId?: string;
-}
-
-async function handleMcpRequest(
-  body: unknown,
-  env: Env,
-  sessionId?: string,
-): Promise<McpResponse> {
-  const request = body as {
-    jsonrpc: string;
-    id?: unknown;
-    method: string;
-    params?: unknown;
-  };
-
-  const { method, params, id } = request;
-
-  try {
-    switch (method) {
-      case "initialize": {
-        const newSessionId = generateSessionId();
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            protocolVersion: PROTOCOL_VERSION,
-            serverInfo: getServerInfo(env.ODDKIT_VERSION),
-            capabilities: {
-              tools: {},
-              resources: {},
-              prompts: {},
-            },
-            instructions:
-              "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use the unified `oddkit` tool with action parameter for multi-step workflows with state threading, or use individual tools (oddkit_search, oddkit_orient, oddkit_challenge, etc.) for direct, stateless calls.",
-          },
-          _sessionId: newSessionId,
-        };
-      }
-
-      case "tools/list":
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { tools: ALL_TOOLS },
-        };
-
-      case "resources/list":
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: { resources: RESOURCES },
-        };
-
-      case "resources/read": {
-        const { uri } = params as { uri: string };
-        const content = getResourceContent(uri);
-
-        if (!content) {
-          return {
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32602, message: `Unknown resource: ${uri}` },
-          };
-        }
-
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            contents: [{ uri, mimeType: "text/plain", text: content }],
-          },
-        };
-      }
-
-      case "prompts/list": {
-        const registry = await fetchPromptsRegistry(env.BASELINE_URL);
-        if (!registry) {
-          return { jsonrpc: "2.0", id, result: { prompts: [] } };
-        }
-
-        const prompts = registry.instructions
-          .filter((inst) => inst.audience === "agent")
-          .map((inst) => ({
-            name: inst.id,
-            description: `Agent: ${inst.id} (${inst.uri})`,
-          }));
-
-        return { jsonrpc: "2.0", id, result: { prompts } };
-      }
-
-      case "prompts/get": {
-        const { name } = params as { name: string };
-        const registry = await fetchPromptsRegistry(env.BASELINE_URL);
-
-        if (!registry) {
-          return {
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32602, message: "Failed to load prompts registry" },
-          };
-        }
-
-        const instruction = registry.instructions.find((i) => i.id === name);
-        if (!instruction) {
-          return {
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32602, message: `Unknown prompt: ${name}` },
-          };
-        }
-
-        const content = await fetchPromptContent(env.BASELINE_URL, instruction.path);
-        if (!content) {
-          return {
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32602, message: `Failed to fetch prompt content: ${instruction.path}` },
-          };
-        }
-
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            description: `Agent: ${instruction.id}`,
-            messages: [
-              { role: "user", content: { type: "text", text: content } },
-            ],
-          },
-        };
-      }
-
-      case "tools/call": {
-        const { name, arguments: args } = params as {
-          name: string;
-          arguments?: Record<string, unknown>;
-        };
-
-        let result: OddkitEnvelope;
-        try {
-          result = await Promise.race([
-            executeToolCall(name, args, env),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`Tool '${name}' timed out after ${MCP_TOOL_TIMEOUT_MS}ms`)),
-                MCP_TOOL_TIMEOUT_MS,
-              ),
-            ),
-          ]);
-        } catch (toolErr) {
-          const message = toolErr instanceof Error ? toolErr.message : "Tool execution failed";
-          const code = message.startsWith("Unknown tool:") ? -32601 : -32603;
-          return { jsonrpc: "2.0", id, error: { code, message } };
-        }
-
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [
-              { type: "text", text: JSON.stringify(result, null, 2) },
-            ],
-          },
-        };
-      }
-
-      case "notifications/initialized":
-        return { jsonrpc: "2.0" };
-
-      default:
-        return {
-          jsonrpc: "2.0",
-          id,
-          error: { code: -32601, message: `Method not found: ${method}` },
-        };
-    }
-  } catch (err) {
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: {
-        code: -32603,
-        message: err instanceof Error ? err.message : "Internal error",
-      },
-    };
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// HTTP handler
+// CORS helper (for non-MCP routes; MCP CORS handled by createMcpHandler)
 // ──────────────────────────────────────────────────────────────────────────────
 
 function corsHeaders(origin: string = "*"): Record<string, string> {
@@ -706,6 +480,10 @@ function corsHeaders(origin: string = "*"): Record<string, string> {
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// HTTP handler
+// ──────────────────────────────────────────────────────────────────────────────
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -742,7 +520,6 @@ export default {
             name: "oddkit",
             version: env.ODDKIT_VERSION || BUILD_VERSION,
             description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
-            protocolVersion: PROTOCOL_VERSION,
             capabilities: { tools: {}, resources: {}, prompts: {} },
           },
         },
@@ -775,131 +552,26 @@ export default {
       );
     }
 
-    // MCP endpoint — SSE contract (DO NOT change without updating tests)
-    //
-    // The MCP 2025-03-26 spec defines two response formats:
-    //   1. JSON:  Content-Type: application/json  (single response)
-    //   2. SSE:   Content-Type: text/event-stream (streaming, supports batches)
-    //
-    // When the client includes "text/event-stream" in Accept, the server
-    // MUST respond with SSE — even if "application/json" is also listed.
-    // Real MCP clients (Claude Desktop, Claude Code) send:
-    //   Accept: application/json, text/event-stream
-    // and expect SSE back. Preferring JSON breaks them.
-    //
-    // GET /mcp behavior:
-    //   - With Accept: text/event-stream → return SSE stream (test 4c)
-    //   - Without text/event-stream     → return 405        (test 4d)
-    //
-    // POST /mcp behavior:
-    //   - With Accept containing text/event-stream → SSE (tests 4f, 4g, 4h)
-    //   - Without text/event-stream                → JSON (all other tests)
-    //
-    // See: tests/cloudflare-production.test.sh tests 4c, 4d, 4f, 4g, 4h
-    if (url.pathname === "/mcp") {
-      const acceptHeader = request.headers.get("Accept") || "";
-      // DO NOT add `&& !acceptHeader.includes("application/json")` here.
-      // MCP clients send both; SSE takes priority when present.
-      const wantsSSE = acceptHeader.includes("text/event-stream");
-      const sessionId = request.headers.get("Mcp-Session-Id") || undefined;
-
-      // GET /mcp: Only valid with Accept: text/event-stream (test 4c).
-      // Without it, return 405 (test 4d).
-      // DO NOT return 405 for ALL GETs — that breaks SSE-capable clients.
-      if (request.method === "GET") {
-        if (!wantsSSE) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: null,
-              error: { code: -32000, message: "Method not allowed. Use POST for JSON-RPC or GET with Accept: text/event-stream." },
-            }),
-            {
-              status: 405,
-              headers: { Allow: "POST", "Content-Type": "application/json", ...corsHeaders(origin) },
-            },
-          );
-        }
-
-        // Stateless server — no server-initiated notifications to push.
-        // Return a minimal SSE stream that closes immediately.
-        //
-        // BUG FIX: controller.close() is CRITICAL. Without it the
-        // ReadableStream stays open forever, creating a zombie connection
-        // that hangs MCP clients. This was the root cause of the original
-        // "MCP HTTP hanging" bug. DO NOT remove controller.close().
-        const encoder = new TextEncoder();
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(encoder.encode(": connected\n\n"));
-            controller.close(); // ← MUST close. Removing this causes hanging.
-          },
-        });
-
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
-            ...corsHeaders(origin),
-          },
-        });
-      }
-
-      if (request.method === "DELETE") {
-        return new Response(null, { status: 204, headers: corsHeaders(origin) });
-      }
-
-      if (request.method !== "POST") {
-        return new Response("Method not allowed", { status: 405, headers: corsHeaders(origin) });
-      }
-
-      try {
-        const body = await request.json();
-        const isBatch = Array.isArray(body);
-        const messages = isBatch ? (body as unknown[]) : [body];
-
-        const responses: McpResponse[] = [];
-        let initSessionId: string | undefined;
-
-        for (const msg of messages) {
-          const resp = await handleMcpRequest(msg, env, sessionId || initSessionId);
-          if (resp._sessionId) initSessionId = resp._sessionId;
-          delete resp._sessionId;
-          if (resp.id !== undefined || resp.error) responses.push(resp);
-        }
-
-        const responseHeaders: Record<string, string> = { ...corsHeaders(origin) };
-        const effectiveSessionId = initSessionId || sessionId;
-        if (effectiveSessionId) responseHeaders["Mcp-Session-Id"] = effectiveSessionId;
-
-        if (responses.length === 0) {
-          return new Response(null, { status: 202, headers: responseHeaders });
-        }
-
-        // Return SSE when client accepts it (tests 4f, 4g, 4h).
-        // DO NOT add `&& !acceptHeader.includes("application/json")` — MCP
-        // clients send "Accept: application/json, text/event-stream" and
-        // expect SSE. Adding that guard causes tests 4f, 4g, 4h to fail.
-        if (wantsSSE) {
-          responseHeaders["Content-Type"] = "text/event-stream";
-          responseHeaders["Cache-Control"] = "no-cache";
-          let sseBody = "";
-          for (const resp of responses) sseBody += formatSseEvent(resp);
-          return new Response(sseBody, { status: 200, headers: responseHeaders });
-        }
-
-        responseHeaders["Content-Type"] = "application/json";
-        const jsonBody = isBatch || responses.length > 1
-          ? JSON.stringify(responses)
-          : JSON.stringify(responses[0]);
-        return new Response(jsonBody, { headers: responseHeaders });
-      } catch (err) {
-        return new Response(
-          JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }),
-          { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders(origin) } },
-        );
-      }
+    // ── MCP endpoint ─────────────────────────────────────────────────────────
+    // Delegate entirely to createMcpHandler which handles:
+    //   - Streamable HTTP transport (MCP 2025-03-26 spec)
+    //   - SSE and JSON response formats
+    //   - Session management
+    //   - GET/POST/DELETE method handling
+    //   - CORS for MCP requests
+    //   - Error responses in JSON-RPC format
+    if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
+      const server = await createServer(env);
+      const handler = createMcpHandler(server, {
+        route: "/mcp",
+        corsOptions: {
+          origin: origin,
+          methods: "GET, POST, DELETE, OPTIONS",
+          headers: "Content-Type, Accept, Authorization, Mcp-Session-Id, Last-Event-ID",
+          exposeHeaders: "Mcp-Session-Id",
+        },
+      });
+      return handler(request, env, ctx);
     }
 
     return new Response(renderNotFoundPage(url.pathname, url.origin), {
