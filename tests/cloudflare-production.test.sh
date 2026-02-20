@@ -58,6 +58,8 @@ mcp_call() {
 }
 
 # Helper: validate JSON response
+# Always returns 0 so set -e doesn't abort the script on test failure.
+# Failures are tracked via the FAILED counter and reported in the summary.
 check_json() {
   local name="$1"
   local json="$2"
@@ -68,7 +70,7 @@ check_json() {
     echo "FAIL - $name: Invalid JSON"
     echo "Output: $json"
     FAILED=$((FAILED + 1))
-    return 1
+    return 0
   fi
 
   # Run additional check if provided
@@ -77,7 +79,7 @@ check_json() {
       echo "FAIL - $name: Check failed ($check_expr)"
       echo "Output: $json"
       FAILED=$((FAILED + 1))
-      return 1
+      return 0
     fi
   fi
 
@@ -260,19 +262,22 @@ else
 fi
 
 # Test 4h: Batch JSON-RPC request support
+# Note: Agents SDK rejects batch requests that include initialize
+# ("Only one initialization request is allowed"), so use tools/list +
+# resources/list instead. Drop -f so a 400 doesn't abort under set -e.
 echo ""
-echo "Test 4h: Batch JSON-RPC request (initialize + tools/list)"
-BATCH_RESPONSE=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+echo "Test 4h: Batch JSON-RPC request (tools/list + resources/list)"
+BATCH_RESPONSE=$(curl -s --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]' 2>&1)
+  -d '[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"resources/list"}]' 2>&1)
 # Count SSE data lines (should have 2 for batch of 2 requests)
 DATA_COUNT=$(echo "$BATCH_RESPONSE" | grep -c "^data: " || true)
 if [ "$DATA_COUNT" -ge 2 ]; then
   echo "PASS - Batch request returned $DATA_COUNT SSE events"
   PASSED=$((PASSED + 1))
 else
-  echo "FAIL - Batch request returned $DATA_COUNT events (expected 2+)"
+  echo "FAIL - Batch request returned $DATA_COUNT events (expected 2+). Response: $BATCH_RESPONSE"
   FAILED=$((FAILED + 1))
 fi
 
@@ -449,10 +454,12 @@ RESULT=$(mcp_call "unknown/method")
 check_json "Unknown method error" "$RESULT" "assert 'error' in d, 'no error for unknown method'"
 
 # Test 18: Unknown tool returns error
+# MCP spec: unknown tool → result with isError:true (in-band error), not a JSON-RPC error.
+# The Agents SDK wraps tool-not-found as {result: {isError: true, content: [...]}}
 echo ""
 echo "Test 18: Unknown tool returns error"
 RESULT=$(mcp_call "tools/call" '{"name":"nonexistent_tool","arguments":{}}')
-check_json "Unknown tool error" "$RESULT" "assert 'error' in d, 'no error for unknown tool'"
+check_json "Unknown tool error" "$RESULT" "assert d.get('result',{}).get('isError') is True or 'error' in d, 'no error for unknown tool'"
 
 # Test 19: Unknown resource returns error
 echo ""
