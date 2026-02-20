@@ -34,18 +34,21 @@ extract_json() {
 }
 
 # Helper: make JSON-RPC request to /mcp
+# Uses --max-time 30 to prevent curl from hanging indefinitely when
+# the Agents SDK responds with SSE (text/event-stream). Without a
+# timeout, curl waits forever for the stream to close. Do not remove.
 mcp_call() {
   local method="$1"
   local params="$2"
   local response
 
   if [ -z "$params" ]; then
-    response=$(curl -sf "$WORKER_URL/mcp" -X POST \
+    response=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
       -H "Content-Type: application/json" \
       -H "Accept: application/json, text/event-stream" \
       -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}")
   else
-    response=$(curl -sf "$WORKER_URL/mcp" -X POST \
+    response=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
       -H "Content-Type: application/json" \
       -H "Accept: application/json, text/event-stream" \
       -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}")
@@ -92,7 +95,7 @@ echo ""
 
 # Test 1: Root serves chat UI (HTML)
 echo "Test 1: Chat UI (GET /)"
-CONTENT_TYPE_ROOT=$(curl -sf "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
+CONTENT_TYPE_ROOT=$(curl -sf --max-time 10 "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
 if echo "$CONTENT_TYPE_ROOT" | grep -qi "text/html"; then
   echo "PASS - Root returns text/html"
   PASSED=$((PASSED + 1))
@@ -104,7 +107,7 @@ fi
 # Test 1b: Root includes Link header for MCP discovery
 echo ""
 echo "Test 1b: Root Link header points to MCP endpoint"
-LINK_HEADER=$(curl -sf "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "^link:" | head -1 || true)
+LINK_HEADER=$(curl -sf --max-time 10 "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "^link:" | head -1 || true)
 if echo "$LINK_HEADER" | grep -qi "mcp"; then
   echo "PASS - Root has Link header with MCP reference: $LINK_HEADER"
   PASSED=$((PASSED + 1))
@@ -116,7 +119,7 @@ fi
 # Test 1c: .well-known/mcp.json discovery endpoint
 echo ""
 echo "Test 1c: MCP discovery (GET /.well-known/mcp.json)"
-RESULT=$(curl -sf "$WORKER_URL/.well-known/mcp.json" 2>&1) || { echo "FAIL - /.well-known/mcp.json unreachable"; FAILED=$((FAILED + 1)); }
+RESULT=$(curl -sf --max-time 10 "$WORKER_URL/.well-known/mcp.json" 2>&1) || { echo "FAIL - /.well-known/mcp.json unreachable"; FAILED=$((FAILED + 1)); }
 if [ -n "$RESULT" ]; then
   check_json "MCP discovery" "$RESULT" "assert 'oddkit' in d.get('mcpServers', {}), 'no oddkit server in mcpServers'"
 fi
@@ -138,7 +141,7 @@ fi
 # Test 2: /health returns JSON
 echo ""
 echo "Test 2: Health endpoint (GET /health)"
-RESULT=$(curl -sf "$WORKER_URL/health" 2>&1) || { echo "FAIL - /health unreachable"; exit 1; }
+RESULT=$(curl -sf --max-time 10 "$WORKER_URL/health" 2>&1) || { echo "FAIL - /health unreachable"; exit 1; }
 check_json "Health endpoint" "$RESULT" "assert d.get('service') == 'oddkit', 'wrong service'"
 
 # Test 3: Version present
@@ -169,7 +172,7 @@ check_json "MCP initialize" "$RESULT" "assert d.get('result',{}).get('protocolVe
 # Test 4b: Initialize returns Mcp-Session-Id header
 echo ""
 echo "Test 4b: MCP initialize returns Mcp-Session-Id header"
-SESSION_HEADER=$(curl -sf "$WORKER_URL/mcp" -X POST \
+SESSION_HEADER=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -D - \
@@ -185,7 +188,7 @@ fi
 # Test 4c: GET /mcp with SSE Accept header returns stream
 echo ""
 echo "Test 4c: GET /mcp with SSE Accept returns text/event-stream"
-CONTENT_TYPE=$(curl -sf "$WORKER_URL/mcp" -X GET \
+CONTENT_TYPE=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X GET \
   -H "Accept: text/event-stream" \
   -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
 if echo "$CONTENT_TYPE" | grep -qi "text/event-stream"; then
@@ -200,7 +203,7 @@ fi
 # WorkerTransport (agents SDK) returns 406 when Accept doesn't include text/event-stream
 echo ""
 echo "Test 4d: GET /mcp without SSE Accept returns 406 Not Acceptable"
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$WORKER_URL/mcp" -X GET 2>&1)
+HTTP_STATUS=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" "$WORKER_URL/mcp" -X GET 2>&1)
 if [ "$HTTP_STATUS" = "406" ]; then
   echo "PASS - GET /mcp returns 406 (spec-compliant)"
   PASSED=$((PASSED + 1))
@@ -225,7 +228,7 @@ fi
 # Test 4f: POST with Accept: text/event-stream returns SSE format
 echo ""
 echo "Test 4f: POST /mcp with SSE Accept returns text/event-stream"
-SSE_RESPONSE=$(curl -sf "$WORKER_URL/mcp" -X POST \
+SSE_RESPONSE=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -D /tmp/oddkit_sse_headers \
@@ -259,7 +262,7 @@ fi
 # Test 4h: Batch JSON-RPC request support
 echo ""
 echo "Test 4h: Batch JSON-RPC request (initialize + tools/list)"
-BATCH_RESPONSE=$(curl -sf "$WORKER_URL/mcp" -X POST \
+BATCH_RESPONSE=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]' 2>&1)
