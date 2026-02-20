@@ -218,8 +218,9 @@ export class ZipBaselineFetcher {
     zipData: Uint8Array,
     cacheKey: string,
     filter?: (file: { name: string }) => boolean,
+    filterKey?: string,
   ): Record<string, Uint8Array> {
-    const effectiveKey = filter ? `${cacheKey}:filtered` : cacheKey;
+    const effectiveKey = filter ? `${cacheKey}:filtered:${filterKey || "default"}` : cacheKey;
     const existing = this.unzippedCache.get(effectiveKey);
     if (existing) {
       return existing;
@@ -392,7 +393,7 @@ export class ZipBaselineFetcher {
     const entries: IndexEntry[] = [];
 
     try {
-      const unzipped = this.getUnzipped(zipData, zipCacheKey, (file) => file.name.endsWith(".md"));
+      const unzipped = this.getUnzipped(zipData, zipCacheKey, (file) => file.name.endsWith(".md"), "md-only");
 
       for (const [fullPath, fileData] of Object.entries(unzipped)) {
 

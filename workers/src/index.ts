@@ -520,6 +520,7 @@ export default {
             name: "oddkit",
             version: env.ODDKIT_VERSION || BUILD_VERSION,
             description: "Epistemic governance — policy retrieval, completion validation, and decision capture",
+            protocolVersion: "2025-03-26",
             capabilities: { tools: {}, resources: {}, prompts: {} },
           },
         },

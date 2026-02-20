@@ -27,7 +27,7 @@ FAILED=0
 extract_json() {
   local response="$1"
   if echo "$response" | grep -q "^data: "; then
-    echo "$response" | grep "^data: " | head -1 | sed 's/^data: //'
+    echo "$response" | grep "^data: " | tail -1 | sed 's/^data: //'
   else
     echo "$response"
   fi
@@ -247,7 +247,7 @@ fi
 # Test 4g: SSE response contains valid JSON-RPC in data field
 echo ""
 echo "Test 4g: SSE response has event: message + valid JSON-RPC data"
-SSE_DATA=$(echo "$SSE_RESPONSE" | grep "^data: " | head -1 | sed 's/^data: //')
+SSE_DATA=$(echo "$SSE_RESPONSE" | grep "^data: " | tail -1 | sed 's/^data: //')
 if [ -n "$SSE_DATA" ]; then
   if echo "$SSE_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); assert 'result' in d, 'no result in SSE data'" 2>/dev/null; then
     echo "PASS - SSE data contains valid JSON-RPC response"
