@@ -7,7 +7,6 @@ tier: 3
 voice: neutral
 stability: stable
 tags: ["template", "readme", "index", "oddkit"]
-supersedes: "Previous version that included hand-maintained contents tables"
 ---
 
 # README Index Template
