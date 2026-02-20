@@ -209,18 +209,25 @@ export class ZipBaselineFetcher {
    * unzipSync is CPU-intensive; calling it once per ZIP per request
    * keeps us within Cloudflare Worker CPU limits.
    *
-   * NOTE: No file-type filter here. Callers that only need .md files
-   * (e.g. extractMarkdownFiles) apply their own filter. getFile() needs
-   * access to ALL file types (.json, .md, etc.) for the prompt registry
-   * and other non-markdown resources. Do not re-add a .md filter here.
+   * When a filter is provided, only matching files are decompressed (fflate
+   * skips decompression for non-matching entries). Filtered and unfiltered
+   * results use separate cache keys so getFile() (needs all types) and
+   * extractMarkdownFiles() (needs .md only) don't interfere.
    */
-  private getUnzipped(zipData: Uint8Array, cacheKey: string): Record<string, Uint8Array> {
-    const existing = this.unzippedCache.get(cacheKey);
+  private getUnzipped(
+    zipData: Uint8Array,
+    cacheKey: string,
+    filter?: (file: { name: string }) => boolean,
+  ): Record<string, Uint8Array> {
+    const effectiveKey = filter ? `${cacheKey}:filtered` : cacheKey;
+    const existing = this.unzippedCache.get(effectiveKey);
     if (existing) {
       return existing;
     }
-    const unzipped = unzipSync(zipData);
-    this.unzippedCache.set(cacheKey, unzipped);
+    const unzipped = filter
+      ? unzipSync(zipData, { filter })
+      : unzipSync(zipData);
+    this.unzippedCache.set(effectiveKey, unzipped);
     return unzipped;
   }
 
@@ -385,11 +392,9 @@ export class ZipBaselineFetcher {
     const entries: IndexEntry[] = [];
 
     try {
-      const unzipped = this.getUnzipped(zipData, zipCacheKey);
+      const unzipped = this.getUnzipped(zipData, zipCacheKey, (file) => file.name.endsWith(".md"));
 
       for (const [fullPath, fileData] of Object.entries(unzipped)) {
-        // Skip non-markdown files
-        if (!fullPath.endsWith(".md")) continue;
 
         // Skip excluded directories
         if (

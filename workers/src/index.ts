@@ -107,10 +107,16 @@ async function fetchPromptContent(env: Env, path: string): Promise<string | null
  * is fetched lazily on prompts/get via the same R2 pipeline.
  */
 async function createServer(env: Env): Promise<McpServer> {
-  const server = new McpServer({
-    name: "oddkit",
-    version: env.ODDKIT_VERSION || BUILD_VERSION,
-  });
+  const server = new McpServer(
+    {
+      name: "oddkit",
+      version: env.ODDKIT_VERSION || BUILD_VERSION,
+    },
+    {
+      instructions:
+        "oddkit provides epistemic governance — policy retrieval, completion validation, and decision capture. Use the unified `oddkit` tool with action parameter for multi-step workflows with state threading, or use individual tools (oddkit_search, oddkit_orient, oddkit_challenge, etc.) for direct, stateless calls.",
+    },
+  );
 
   // ── Layer 1: Unified orchestrator (state threading) ──────────────────────
 
