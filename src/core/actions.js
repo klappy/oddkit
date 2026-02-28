@@ -18,7 +18,7 @@ import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
-import { ACTION_NAMES } from "./tool-registry.js";
+import { ALL_ACTION_NAMES } from "./tool-registry.js";
 import { validateFiles } from "../utils/writeValidation.js";
 import {
   parseBaselineUrl, getFileSha, writeFile,
@@ -36,7 +36,7 @@ const { version: VERSION } = require("../../package.json");
 // Valid actions — derived from the shared tool registry (single source of truth)
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const VALID_ACTIONS = ACTION_NAMES;
+export const VALID_ACTIONS = ALL_ACTION_NAMES;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // State management

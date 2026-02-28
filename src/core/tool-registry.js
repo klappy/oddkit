@@ -339,7 +339,10 @@ export const TOOLS = [
 // Derived constants — single source of truth is TOOLS above
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Canonical list of action names, derived from TOOLS (excludes write — it has its own dedicated tool with correct schema). */
+/** All action names — used as the routing allowlist in handleAction. */
+export const ALL_ACTION_NAMES = TOOLS.map((t) => t.name);
+
+/** Orchestrator-only action names (excludes write — it has its own dedicated MCP tool with correct schema). */
 export const ACTION_NAMES = TOOLS.filter((t) => t.name !== "write").map((t) => t.name);
 
 /** Orchestrator tool definition with action enum derived from TOOLS. */
