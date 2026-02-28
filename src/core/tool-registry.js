@@ -65,8 +65,8 @@ Use when:
     required: ["action", "input"],
   },
   annotations: {
-    destructiveHint: false,
-    idempotentHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
     openWorldHint: true,
   },
   };
@@ -264,6 +264,40 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     cliFlags: {},
+  },
+  {
+    name: "write",
+    mcpName: "oddkit_write",
+    description: "Write files to the GitHub repo. Accepts file path(s), content, commit message. Validates against governance constraints. Supports branches and PRs optionally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Repo-relative file path (e.g., docs/decisions/D0017.md)" },
+              content: { type: "string", description: "File content (UTF-8 text)" },
+            },
+            required: ["path", "content"],
+          },
+          description: "Array of files to write",
+        },
+        message: { type: "string", description: "Commit message" },
+        branch: { type: "string", description: "Optional: target branch. If omitted, writes to default branch." },
+        pr: { type: "boolean", description: "Optional: if true, opens a PR from branch to default branch." },
+        repo: { type: "string", description: "Optional: GitHub repo (owner/repo). Defaults to baseline repo." },
+      },
+      required: ["files", "message"],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    cliFlags: {
+      files: { flag: "--files <json>", description: "JSON array of {path, content} objects" },
+      commitMessage: { flag: "--commit-message <text>", description: "Commit message", required: true },
+      branch: { flag: "--branch <name>", description: "Optional branch name" },
+      pr: { flag: "--pr", description: "Open PR after commit" },
+    },
   },
 ];
 
