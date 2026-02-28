@@ -210,6 +210,11 @@ export function run() {
           return;
         }
 
+        // Build author from CLI flags if provided
+        const author = (options.authorName && options.authorEmail)
+          ? { name: options.authorName, email: options.authorEmail }
+          : undefined;
+
         const result = await handleAction({
           action: tool.name,
           input: input || "",
@@ -221,6 +226,8 @@ export function run() {
           message: options.commitMessage,
           branch: options.branch,
           pr: options.pr,
+          repo: options.repoTarget,
+          author,
           surface: "cli",
         });
 
@@ -541,6 +548,11 @@ export function run() {
           return;
         }
 
+        // Build author from CLI flags if provided
+        const author = (options.authorName && options.authorEmail)
+          ? { name: options.authorName, email: options.authorEmail }
+          : undefined;
+
         const result = await handleAction({
           action: tool.name,
           input: input || "",
@@ -552,6 +564,8 @@ export function run() {
           message: options.commitMessage,
           branch: options.branch,
           pr: options.pr,
+          repo: options.repoTarget,
+          author,
           surface: "cli",
         });
         const ok = !isActionError(result);

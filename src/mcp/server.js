@@ -197,6 +197,8 @@ async function main() {
         branch: args.branch,
         pr: args.pr,
         repo: args.repo,
+        author: args.author,
+        provenance: args.provenance,
         surface: "mcp",
       });
       return {
@@ -220,6 +222,8 @@ async function main() {
         branch: args.branch,
         pr: args.pr,
         repo: args.repo,
+        author: args.author,
+        provenance: args.provenance,
         surface: "mcp",
       });
       return {
