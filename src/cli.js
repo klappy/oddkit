@@ -217,6 +217,10 @@ export function run() {
           mode: options.mode,
           baseline: options.baseline,
           repoRoot: options.repo,
+          files: options.files ? JSON.parse(options.files) : undefined,
+          message: options.commitMessage,
+          branch: options.branch,
+          pr: options.pr,
         });
 
         outputActionResult(tool.name, result, format, quiet);
@@ -543,6 +547,10 @@ export function run() {
           mode: options.mode,
           baseline: options.baseline,
           repoRoot: options.repo,
+          files: options.files ? JSON.parse(options.files) : undefined,
+          message: options.commitMessage,
+          branch: options.branch,
+          pr: options.pr,
         });
         const ok = !isActionError(result);
         console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));

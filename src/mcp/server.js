@@ -192,6 +192,11 @@ async function main() {
         state: args.state,
         baseline: args.canon_url,
         include_metadata: args.include_metadata,
+        files: args.files,
+        message: args.message,
+        branch: args.branch,
+        pr: args.pr,
+        repo: args.repo,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -209,7 +214,11 @@ async function main() {
         canon_url: args.canon_url,
         baseline: args.canon_url,
         include_metadata: args.include_metadata,
-        // No state for individual tools
+        files: args.files,
+        message: args.message,
+        branch: args.branch,
+        pr: args.pr,
+        repo: args.repo,
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

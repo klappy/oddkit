@@ -293,9 +293,9 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     cliFlags: {
-      files: { flag: "-f, --files <json>", description: "JSON array of {path, content} objects" },
-      message: { flag: "-m, --message <text>", description: "Commit message", required: true },
-      branch: { flag: "-b, --branch <name>", description: "Optional branch name" },
+      files: { flag: "--files <json>", description: "JSON array of {path, content} objects" },
+      commitMessage: { flag: "--commit-message <text>", description: "Commit message", required: true },
+      branch: { flag: "--branch <name>", description: "Optional branch name" },
       pr: { flag: "--pr", description: "Open PR after commit" },
     },
   },
