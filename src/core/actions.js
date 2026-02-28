@@ -18,7 +18,13 @@ import { runEncode } from "../tasks/encode.js";
 import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
-import { ACTION_NAMES } from "./tool-registry.js";
+import { ALL_ACTION_NAMES } from "./tool-registry.js";
+import { validateFiles } from "../utils/writeValidation.js";
+import {
+  parseBaselineUrl, getFileSha, writeFile,
+  getDefaultBranch, getBranchSha, branchExists, createBranch, createPR,
+  atomicMultiFileCommit,
+} from "../utils/githubApi.js";
 import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
 import matter from "gray-matter";
@@ -30,7 +36,7 @@ const { version: VERSION } = require("../../package.json");
 // Valid actions — derived from the shared tool registry (single source of truth)
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const VALID_ACTIONS = ACTION_NAMES;
+export const VALID_ACTIONS = ALL_ACTION_NAMES;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // State management
@@ -476,6 +482,215 @@ export async function handleAction(params) {
             "when the baseline changes — no manual cleanup is required for correctness.",
           debug: makeDebug(),
         };
+      }
+
+      case "write": {
+        // oddkit_write — one action, progressive protection
+        // Tier 1: Contents API for single file
+        // Tier 2: Git Data API for multi-file atomic commits
+        // Tier 3: Branch creation and PR support (layers on top)
+        const { files, message, pr, repo: providedRepo, author, provenance } = params;
+        let { branch } = params;
+
+        // --- Input validation ---
+        if (!files || !Array.isArray(files) || files.length === 0) {
+          return {
+            action: "write",
+            result: { error: "No files provided. Expected array of {path, content} objects." },
+            assistant_text: "No files provided. Please provide an array of files with path and content.",
+            debug: makeDebug(),
+          };
+        }
+
+        if (!message) {
+          return {
+            action: "write",
+            result: { error: "Commit message required." },
+            assistant_text: "Commit message is required.",
+            debug: makeDebug(),
+          };
+        }
+
+        if (pr && !branch) {
+          branch = `oddkit-write/${Date.now()}`;
+        }
+
+        // --- Resolve target repo ---
+        let owner, repoName;
+
+        if (providedRepo) {
+          const parts = providedRepo.split("/");
+          if (parts.length !== 2 || !parts[0] || !parts[1]) {
+            return {
+              action: "write",
+              result: { error: `Invalid repo format: "${providedRepo}". Expected "owner/repo".` },
+              assistant_text: `Invalid repo format: "${providedRepo}". Expected "owner/repo".`,
+              debug: makeDebug(),
+            };
+          }
+          owner = parts[0];
+          repoName = parts[1];
+        } else {
+          const baselineUrl = baseline || process.env.ODDKIT_BASELINE;
+          if (!baselineUrl) {
+            return {
+              action: "write",
+              result: { error: "No target repo specified. Provide repo param or set ODDKIT_BASELINE." },
+              assistant_text: "Write requires an explicit target repo. Provide the repo parameter (owner/repo) or set ODDKIT_BASELINE.",
+              debug: makeDebug(),
+            };
+          }
+          try {
+            const parsed = parseBaselineUrl(baselineUrl);
+            owner = parsed.owner;
+            repoName = parsed.repo;
+          } catch (err) {
+            return {
+              action: "write",
+              result: { error: err.message },
+              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE or use repo parameter.`,
+              debug: makeDebug(),
+            };
+          }
+        }
+
+        // --- Validate files against governance constraints ---
+        const validation = validateFiles(files);
+
+        // Block writes if any path is unsafe (traversal sequences)
+        const unsafePaths = validation.results
+          .filter((r) => r.checks.some((c) => c.name === "path_safe" && !c.passed))
+          .map((r) => r.file);
+        if (unsafePaths.length > 0) {
+          return {
+            action: "write",
+            result: { error: `Unsafe path(s) detected: ${unsafePaths.join(", ")}`, validation },
+            assistant_text: `Write blocked: path traversal detected in ${unsafePaths.join(", ")}. Remove '..' sequences.`,
+            debug: makeDebug(),
+          };
+        }
+
+        // --- Build provenance footer ---
+        // Use structured provenance param when present, fall back to surface from caller context
+        const surfaceValue = provenance?.surface || params.surface || "mcp";
+        const provenanceLines = [`oddkit-surface: ${surfaceValue}`];
+        if (provenance?.session_id) {
+          provenanceLines.push(`oddkit-session: ${provenance.session_id}`);
+        }
+        provenanceLines.push(`oddkit-timestamp: ${new Date().toISOString()}`);
+        const commitMessage = `${message}\n\n---\n${provenanceLines.join("\n")}`;
+
+        // --- Determine author ---
+        const gitAuthor = author || null;
+
+        try {
+          // --- Resolve target branch ---
+          let targetBranch = branch;
+          let defaultBranch = null;
+          let status = "committed";
+
+          if (!targetBranch) {
+            defaultBranch = await getDefaultBranch(owner, repoName);
+            targetBranch = defaultBranch;
+          } else {
+            const exists = await branchExists(owner, repoName, targetBranch);
+            if (!exists) {
+              defaultBranch = await getDefaultBranch(owner, repoName);
+              const sourceSha = await getBranchSha(owner, repoName, defaultBranch);
+              await createBranch(owner, repoName, targetBranch, sourceSha);
+              status = "branch_created";
+            }
+          }
+
+          // --- Write files ---
+          let commitResult;
+
+          if (files.length === 1) {
+            // Tier 1: Contents API — single file
+            const file = files[0];
+            const sha = await getFileSha(owner, repoName, file.path, targetBranch);
+            const result = await writeFile(
+              owner, repoName, file.path, file.content,
+              commitMessage, targetBranch, sha, gitAuthor,
+            );
+            commitResult = { commit_sha: result.commit_sha, commit_url: result.commit_url };
+          } else {
+            // Tier 2: Git Data API — multi-file atomic commit
+            commitResult = await atomicMultiFileCommit(
+              owner, repoName, targetBranch, files, commitMessage, gitAuthor,
+            );
+          }
+
+          // --- Handle PR if requested (Tier 3) ---
+          let prResult = null;
+          // TODO: Orphan prevention (Layer 4) — before creating a new PR, check for
+          // existing open PRs from oddkit on the same branch or targeting the same files.
+          // If found, push to the existing branch instead (the PR updates automatically).
+          // The output interface supports this via pr_updated. Deferred until Layer 4.
+          if (pr && branch) {
+            const prOpts = typeof pr === "object" ? pr : {};
+            const prTitle = prOpts.title || message;
+            const prBody = prOpts.body || `Files:\n${files.map((f) => `- ${f.path}`).join("\n")}\n\n---\nWritten via oddkit_write`;
+            const prDraft = prOpts.draft || false;
+            const baseBranch = defaultBranch || await getDefaultBranch(owner, repoName);
+            prResult = await createPR(owner, repoName, prTitle, prBody, branch, baseBranch, prDraft);
+            status = "pr_opened";
+          }
+
+          const filesWritten = files.map((f) => f.path);
+          const validationWarnings = !validation.passed
+            ? validation.results.map((r) => r.checks.filter((c) => !c.passed).map((c) => c.name).join(", ")).filter((x) => x).join("; ")
+            : "";
+
+          return {
+            action: "write",
+            result: {
+              status,
+              commit_sha: commitResult.commit_sha,
+              commit_url: commitResult.commit_url,
+              branch: targetBranch,
+              files_written: filesWritten,
+              pr_url: prResult?.pr_url || undefined,
+              pr_number: prResult?.pr_number || undefined,
+              pr_updated: false, // TODO: set to true when orphan prevention detects existing PR
+              validation,
+            },
+            assistant_text: `Successfully wrote ${filesWritten.length} file(s) to ${owner}/${repoName} on branch ${targetBranch}. Commit: ${commitResult.commit_url}${prResult ? `\nPR: ${prResult.pr_url}` : ""}${validationWarnings ? `\n\nValidation warnings: ${validationWarnings}` : ""}`,
+            debug: makeDebug({ files_count: files.length, tier: files.length === 1 ? 1 : 2, validation_passed: validation.passed }),
+          };
+
+        } catch (err) {
+          // --- Conflict handling ---
+          if (err.status === 409 && err.conflictData) {
+            return {
+              action: "write",
+              result: {
+                status: "conflict",
+                error: err.message,
+                conflict: err.conflictData,
+                validation,
+              },
+              assistant_text: `${err.conflictData.guidance || err.message}`,
+              debug: makeDebug({ files_count: files.length }),
+            };
+          }
+
+          // --- Network failure: preserve content so it's not lost ---
+          const preserved = err.retryFailed
+            ? files.map((f) => ({ path: f.path, content: f.content }))
+            : undefined;
+
+          return {
+            action: "write",
+            result: {
+              error: err.message,
+              validation,
+              preserved_content: preserved,
+            },
+            assistant_text: `Write failed: ${err.message}${preserved ? "\n\nFile contents have been preserved in the response so they are not lost." : ""}${!validation.passed ? "\nValidation warnings: " + validation.results.map((r) => r.checks.filter((c) => !c.passed).map((c) => c.name).join(", ")).filter((x) => x).join("; ") : ""}`,
+            debug: makeDebug({ files_count: files.length }),
+          };
+        }
       }
 
       default:

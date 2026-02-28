@@ -265,14 +265,85 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     cliFlags: {},
   },
+  {
+    name: "write",
+    mcpName: "oddkit_write",
+    description: "Write files to the GitHub repo. Accepts file path(s), content, commit message. Validates against governance constraints. Single-file uses Contents API; multi-file uses Git Data API for atomic commits. Supports branches and PRs optionally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Repo-relative file path (e.g., docs/decisions/D0017.md)" },
+              content: { type: "string", description: "File content (UTF-8 text)" },
+              encoding: { type: "string", description: "Content encoding. Default: \"utf-8\". Reserved for future: \"base64\" for binary files." },
+            },
+            required: ["path", "content"],
+          },
+          description: "Array of files to write",
+        },
+        message: { type: "string", description: "Commit message" },
+        branch: { type: "string", description: "Optional: target branch. If omitted, writes to default branch. If provided and doesn't exist, creates it from default branch HEAD." },
+        pr: {
+          oneOf: [
+            { type: "boolean" },
+            {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "PR title. Default: commit message." },
+                body: { type: "string", description: "PR body. Default: auto-generated from file list." },
+                draft: { type: "boolean", description: "Open as draft PR. Default: false." },
+              },
+            },
+          ],
+          description: "Optional: if true or object, opens a PR from branch to default branch.",
+        },
+        repo: { type: "string", description: "Optional: GitHub repo (owner/repo). Defaults to baseline repo." },
+        author: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Git author name." },
+            email: { type: "string", description: "Git author email." },
+          },
+          required: ["name", "email"],
+          description: "Optional: git author override. Default: authenticated user.",
+        },
+        provenance: {
+          type: "object",
+          properties: {
+            session_id: { type: "string", description: "Session identifier for traceability." },
+            surface: { type: "string", description: "Calling surface: \"claude-chat\", \"voice-agent\", \"team-chat\", \"cli\", \"mcp\", etc." },
+          },
+          description: "Optional: traceability metadata stored in commit message footer.",
+        },
+      },
+      required: ["files", "message"],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    cliFlags: {
+      files: { flag: "--files <json>", description: "JSON array of {path, content} objects" },
+      commitMessage: { flag: "--commit-message <text>", description: "Commit message", required: true },
+      branch: { flag: "--branch <name>", description: "Optional branch name" },
+      pr: { flag: "--pr", description: "Open PR after commit" },
+      repo: { flag: "--repo-target <owner/repo>", description: "Target GitHub repo (owner/repo)" },
+      authorName: { flag: "--author-name <name>", description: "Git author name" },
+      authorEmail: { flag: "--author-email <email>", description: "Git author email" },
+    },
+  },
 ];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Derived constants — single source of truth is TOOLS above
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Canonical list of action names, derived from TOOLS. */
-export const ACTION_NAMES = TOOLS.map((t) => t.name);
+/** All action names — used as the routing allowlist in handleAction. */
+export const ALL_ACTION_NAMES = TOOLS.map((t) => t.name);
+
+/** Orchestrator-only action names (excludes write — it has its own dedicated MCP tool with correct schema). */
+export const ACTION_NAMES = TOOLS.filter((t) => t.name !== "write").map((t) => t.name);
 
 /** Orchestrator tool definition with action enum derived from TOOLS. */
 export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ACTION_NAMES);
