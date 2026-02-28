@@ -65,8 +65,8 @@ Use when:
     required: ["action", "input"],
   },
   annotations: {
-    destructiveHint: false,
-    idempotentHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
     openWorldHint: true,
   },
   };

@@ -197,6 +197,7 @@ async function main() {
         branch: args.branch,
         pr: args.pr,
         repo: args.repo,
+        surface: "mcp",
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -219,6 +220,7 @@ async function main() {
         branch: args.branch,
         pr: args.pr,
         repo: args.repo,
+        surface: "mcp",
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

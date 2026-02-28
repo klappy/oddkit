@@ -221,6 +221,7 @@ export function run() {
           message: options.commitMessage,
           branch: options.branch,
           pr: options.pr,
+          surface: "cli",
         });
 
         outputActionResult(tool.name, result, format, quiet);
@@ -551,6 +552,7 @@ export function run() {
           message: options.commitMessage,
           branch: options.branch,
           pr: options.pr,
+          surface: "cli",
         });
         const ok = !isActionError(result);
         console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));

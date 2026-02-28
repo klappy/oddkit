@@ -525,7 +525,15 @@ export async function handleAction(params) {
           owner = parts[0];
           repoName = parts[1];
         } else {
-          const baselineUrl = baseline || process.env.ODDKIT_BASELINE || "https://github.com/klappy/klappy.dev";
+          const baselineUrl = baseline || process.env.ODDKIT_BASELINE;
+          if (!baselineUrl) {
+            return {
+              action: "write",
+              result: { error: "No target repo specified. Provide repo param or set ODDKIT_BASELINE." },
+              assistant_text: "Write requires an explicit target repo. Provide the repo parameter (owner/repo) or set ODDKIT_BASELINE.",
+              debug: makeDebug(),
+            };
+          }
           try {
             const parsed = parseBaselineUrl(baselineUrl);
             owner = parsed.owner;
@@ -534,7 +542,7 @@ export async function handleAction(params) {
             return {
               action: "write",
               result: { error: err.message },
-              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE or use canon_url parameter.`,
+              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE or use repo parameter.`,
               debug: makeDebug(),
             };
           }
@@ -543,6 +551,19 @@ export async function handleAction(params) {
         // Validate files against governance constraints
         const validation = validateFiles(files);
         
+        // Block writes if any path is unsafe (traversal sequences)
+        const unsafePaths = validation.results
+          .filter(r => r.checks.some(c => c.name === "path_safe" && !c.passed))
+          .map(r => r.file);
+        if (unsafePaths.length > 0) {
+          return {
+            action: "write",
+            result: { error: `Unsafe path(s) detected: ${unsafePaths.join(", ")}`, validation },
+            assistant_text: `Write blocked: path traversal detected in ${unsafePaths.join(", ")}. Remove '..' or '~' sequences.`,
+            debug: makeDebug(),
+          };
+        }
+
         // Add provenance to commit message
         const provenanceFooter = `\n---\noddkit-surface: ${params.surface || "mcp"}\noddkit-timestamp: ${new Date().toISOString()}`;
         const commitMessage = message + provenanceFooter;
@@ -602,15 +623,15 @@ export async function handleAction(params) {
             action: "write",
             result: {
               status,
-              commit_sha: writeResults[0]?.commit_sha,
-              commit_url: writeResults[0]?.commit_url,
+              commit_sha: writeResults[writeResults.length - 1]?.commit_sha,
+              commit_url: writeResults[writeResults.length - 1]?.commit_url,
               branch: targetBranch,
               files_written: filesWritten,
               pr_url: prResult?.pr_url,
               pr_number: prResult?.pr_number,
               validation,
             },
-            assistant_text: `Successfully wrote ${filesWritten.length} file(s) to ${owner}/${repoName} on branch ${targetBranch}. Commit: ${writeResults[0]?.commit_url}${prResult ? `\nPR: ${prResult.pr_url}` : ""}${!validation.passed ? "\n\nValidation warnings: " + validation.results.map(r => r.checks.filter(c => !c.passed).map(c => c.name).join(", ")).filter(x => x).join("; ") : ""}`,
+            assistant_text: `Successfully wrote ${filesWritten.length} file(s) to ${owner}/${repoName} on branch ${targetBranch}. Commit: ${writeResults[writeResults.length - 1]?.commit_url}${prResult ? `\nPR: ${prResult.pr_url}` : ""}${!validation.passed ? "\n\nValidation warnings: " + validation.results.map(r => r.checks.filter(c => !c.passed).map(c => c.name).join(", ")).filter(x => x).join("; ") : ""}`,
             debug: makeDebug({ files_count: files.length, validation_passed: validation.passed }),
           };
           
