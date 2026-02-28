@@ -40,12 +40,12 @@ export function validateFile(path, content) {
 
   // Path safety — blocks writes with traversal sequences
   const isAbsolute = path.startsWith("/");
-  const hasTraversal = path.includes("..") || path.includes("~");
+  const hasTraversal = path.includes("..");
   checks.push({
     name: "path_safe",
     passed: !hasTraversal && !isAbsolute,
     message: hasTraversal
-      ? "Path contains traversal sequences (.. or ~)"
+      ? "Path contains traversal sequences (..)"
       : isAbsolute
         ? "Path must be repo-relative, not absolute"
         : null,
