@@ -483,7 +483,8 @@ export async function handleAction(params) {
       case "write": {
         // Write files to GitHub repo via Contents API
         // Validates against governance constraints, commits to default branch or branch
-        const { files, message, branch, pr, repo: providedRepo } = params;
+        const { files, message, pr, repo: providedRepo } = params;
+        let { branch } = params;
         
         // Validate input
         if (!files || !Array.isArray(files) || files.length === 0) {
@@ -504,6 +505,10 @@ export async function handleAction(params) {
           };
         }
 
+        if (pr && !branch) {
+          branch = `oddkit-write/${Date.now()}`;
+        }
+
         // Determine target repo: explicit repo param takes precedence over baseline URL
         let owner, repoName;
         
@@ -520,7 +525,7 @@ export async function handleAction(params) {
           owner = parts[0];
           repoName = parts[1];
         } else {
-          const baselineUrl = canon_url || process.env.ODDKIT_BASELINE_URL || "https://github.com/klappy/klappy.dev";
+          const baselineUrl = baseline || process.env.ODDKIT_BASELINE || "https://github.com/klappy/klappy.dev";
           try {
             const parsed = parseBaselineUrl(baselineUrl);
             owner = parsed.owner;
@@ -529,7 +534,7 @@ export async function handleAction(params) {
             return {
               action: "write",
               result: { error: err.message },
-              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE_URL or use canon_url parameter.`,
+              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE or use canon_url parameter.`,
               debug: makeDebug(),
             };
           }

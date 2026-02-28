@@ -57,6 +57,7 @@ async function githubRequest(endpoint, options = {}) {
     headers: {
       "Authorization": `Bearer ${token}`,
       "Accept": "application/vnd.github+json",
+      "Content-Type": "application/json",
       "X-GitHub-Api-Version": "2022-11-28",
       ...options.headers,
     },
@@ -139,7 +140,7 @@ export async function getDefaultBranch(owner, repo) {
  */
 export async function branchExists(owner, repo, branch) {
   try {
-    await githubRequest(`/repos/${owner}/${repo}/branches/${branch}`);
+    await githubRequest(`/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`);
     return true;
   } catch (err) {
     if (err.message.includes("404")) {
@@ -153,7 +154,7 @@ export async function branchExists(owner, repo, branch) {
  * Get the HEAD commit SHA for a branch
  */
 export async function getBranchSha(owner, repo, branch) {
-  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
+  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
   return data.object.sha;
 }
 
