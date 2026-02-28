@@ -37,7 +37,7 @@ export function parseBaselineUrl(baselineUrl) {
   }
   
   // Try github.com format
-  match = baselineUrl.match(/github\.com\/([^/]+)\/([^/.]+)/);
+  match = baselineUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
   if (match) {
     return { owner: match[1], repo: match[2] };
   }
@@ -147,6 +147,14 @@ export async function branchExists(owner, repo, branch) {
     }
     throw err;
   }
+}
+
+/**
+ * Get the HEAD commit SHA for a branch
+ */
+export async function getBranchSha(owner, repo, branch) {
+  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
+  return data.object.sha;
 }
 
 /**

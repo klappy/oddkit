@@ -20,7 +20,7 @@ import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildI
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
 import { validateFiles } from "../utils/writeValidation.js";
-import { parseBaselineUrl, getFileSha, writeFile, getDefaultBranch, branchExists, createBranch, createPR } from "../utils/githubApi.js";
+import { parseBaselineUrl, getFileSha, writeFile, getDefaultBranch, getBranchSha, branchExists, createBranch, createPR } from "../utils/githubApi.js";
 import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
 import matter from "gray-matter";
@@ -504,21 +504,35 @@ export async function handleAction(params) {
           };
         }
 
-        // Get baseline URL to determine target repo
-        const baselineUrl = canon_url || process.env.ODDKIT_BASELINE_URL || "https://github.com/klappy/klappy.dev";
+        // Determine target repo: explicit repo param takes precedence over baseline URL
         let owner, repoName;
         
-        try {
-          const parsed = parseBaselineUrl(baselineUrl);
-          owner = parsed.owner;
-          repoName = parsed.repo;
-        } catch (err) {
-          return {
-            action: "write",
-            result: { error: err.message },
-            assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE_URL or use canon_url parameter.`,
-            debug: makeDebug(),
-          };
+        if (providedRepo) {
+          const parts = providedRepo.split("/");
+          if (parts.length !== 2 || !parts[0] || !parts[1]) {
+            return {
+              action: "write",
+              result: { error: `Invalid repo format: "${providedRepo}". Expected "owner/repo".` },
+              assistant_text: `Invalid repo format: "${providedRepo}". Expected "owner/repo".`,
+              debug: makeDebug(),
+            };
+          }
+          owner = parts[0];
+          repoName = parts[1];
+        } else {
+          const baselineUrl = canon_url || process.env.ODDKIT_BASELINE_URL || "https://github.com/klappy/klappy.dev";
+          try {
+            const parsed = parseBaselineUrl(baselineUrl);
+            owner = parsed.owner;
+            repoName = parsed.repo;
+          } catch (err) {
+            return {
+              action: "write",
+              result: { error: err.message },
+              assistant_text: `Failed to parse baseline URL: ${err.message}. Set ODDKIT_BASELINE_URL or use canon_url parameter.`,
+              debug: makeDebug(),
+            };
+          }
         }
 
         // Validate files against governance constraints
@@ -531,17 +545,19 @@ export async function handleAction(params) {
         try {
           // Get default branch if no branch specified
           let targetBranch = branch;
+          let defaultBranch = null;
           let status = "committed";
           
           if (!targetBranch) {
-            targetBranch = await getDefaultBranch(owner, repoName);
+            defaultBranch = await getDefaultBranch(owner, repoName);
+            targetBranch = defaultBranch;
           } else {
             // Check if branch exists, create if not
             const exists = await branchExists(owner, repoName, targetBranch);
             if (!exists) {
-              // Get default branch SHA to create new branch from
-              const defaultBranch = await getDefaultBranch(owner, repoName);
-              // This is simplified - in production we'd get the actual SHA
+              defaultBranch = await getDefaultBranch(owner, repoName);
+              const sourceSha = await getBranchSha(owner, repoName, defaultBranch);
+              await createBranch(owner, repoName, targetBranch, sourceSha);
               status = "branch_created";
             }
           }
@@ -572,7 +588,8 @@ export async function handleAction(params) {
           let prResult = null;
           if (pr && branch) {
             const prBody = `Files:\n${files.map(f => `- ${f.path}`).join("\n")}\n\n---\nWritten via oddkit_write`;
-            prResult = await createPR(owner, repoName, message, prBody, branch);
+            const baseBranch = defaultBranch || await getDefaultBranch(owner, repoName);
+            prResult = await createPR(owner, repoName, message, prBody, branch, baseBranch);
             status = "pr_opened";
           }
 
