@@ -65,8 +65,8 @@ Use when:
     required: ["action", "input"],
   },
   annotations: {
-    destructiveHint: true,
-    idempotentHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: true,
   },
   };
@@ -339,8 +339,8 @@ export const TOOLS = [
 // Derived constants — single source of truth is TOOLS above
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Canonical list of action names, derived from TOOLS. */
-export const ACTION_NAMES = TOOLS.map((t) => t.name);
+/** Canonical list of action names, derived from TOOLS (excludes write — it has its own dedicated tool with correct schema). */
+export const ACTION_NAMES = TOOLS.filter((t) => t.name !== "write").map((t) => t.name);
 
 /** Orchestrator tool definition with action enum derived from TOOLS. */
 export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ACTION_NAMES);

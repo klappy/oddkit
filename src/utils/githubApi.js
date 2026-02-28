@@ -227,7 +227,7 @@ export async function writeFile(owner, repo, path, content, message, branch = nu
  * Returns { sha, url } for the ref object.
  */
 export async function getRef(owner, repo, branch) {
-  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
   return {
     sha: data.object.sha,
     url: data.object.url,
@@ -308,7 +308,7 @@ export async function createCommit(owner, repo, { treeSha, parentShas, message, 
  */
 export async function updateRef(owner, repo, branch, commitSha) {
   try {
-    await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, {
+    await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
       method: "PATCH",
       body: JSON.stringify({ sha: commitSha, force: false }),
     });
@@ -406,7 +406,7 @@ export async function branchExists(owner, repo, branch) {
  * Get the HEAD commit SHA for a branch.
  */
 export async function getBranchSha(owner, repo, branch) {
-  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
   return data.object.sha;
 }
 
