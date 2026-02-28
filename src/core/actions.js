@@ -478,6 +478,51 @@ export async function handleAction(params) {
         };
       }
 
+      case "write": {
+        // Write files to GitHub repo via Contents API
+        // Validates against governance constraints, commits to default branch or branch
+        const { files, message, branch, pr, repo } = params;
+        
+        // Validate input
+        if (!files || !Array.isArray(files) || files.length === 0) {
+          return {
+            action: "write",
+            result: { error: "No files provided. Expected array of {path, content} objects." },
+            assistant_text: "No files provided. Please provide an array of files with path and content.",
+            debug: makeDebug(),
+          };
+        }
+        
+        if (!message) {
+          return {
+            action: "write",
+            result: { error: "Commit message required." },
+            assistant_text: "Commit message is required.",
+            debug: makeDebug(),
+          };
+        }
+
+        // TODO: Implement actual GitHub API write
+        // - Parse repo from baseline or use provided repo
+        // - Get current file SHA if updating existing files (Contents API requires SHA for updates)
+        // - Write via GitHub REST API
+        // - Handle branch creation if branch param provided
+        // - Handle PR opening if pr param provided
+        // - Include inline validation against governance constraints
+        // - Add provenance metadata (surface, session, timestamp)
+        
+        return {
+          action: "write",
+          result: { 
+            status: "not_implemented", 
+            message: "Write action is planned but not yet implemented.",
+            files_written: [],
+          },
+          assistant_text: `Write action is planned. Files: ${files.length} file(s), Message: ${message}, Branch: ${branch || 'default'}, PR: ${pr || false}, Repo: ${repo || 'default'}. Implementation pending.`,
+          debug: makeDebug({ files_count: files.length }),
+        };
+      }
+
       default:
         return {
           action: "error",
