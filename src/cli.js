@@ -210,6 +210,11 @@ export function run() {
           return;
         }
 
+        // Build author from CLI flags if provided
+        const author = (options.authorName && options.authorEmail)
+          ? { name: options.authorName, email: options.authorEmail }
+          : undefined;
+
         const result = await handleAction({
           action: tool.name,
           input: input || "",
@@ -217,6 +222,13 @@ export function run() {
           mode: options.mode,
           baseline: options.baseline,
           repoRoot: options.repo,
+          files: options.files ? JSON.parse(options.files) : undefined,
+          message: options.commitMessage,
+          branch: options.branch,
+          pr: options.pr,
+          repo: options.repoTarget,
+          author,
+          surface: "cli",
         });
 
         outputActionResult(tool.name, result, format, quiet);
@@ -536,6 +548,11 @@ export function run() {
           return;
         }
 
+        // Build author from CLI flags if provided
+        const author = (options.authorName && options.authorEmail)
+          ? { name: options.authorName, email: options.authorEmail }
+          : undefined;
+
         const result = await handleAction({
           action: tool.name,
           input: input || "",
@@ -543,6 +560,13 @@ export function run() {
           mode: options.mode,
           baseline: options.baseline,
           repoRoot: options.repo,
+          files: options.files ? JSON.parse(options.files) : undefined,
+          message: options.commitMessage,
+          branch: options.branch,
+          pr: options.pr,
+          repo: options.repoTarget,
+          author,
+          surface: "cli",
         });
         const ok = !isActionError(result);
         console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));
