@@ -38,14 +38,14 @@ const GENERIC_HEADERS = [
 export function validateFile(path, content) {
   const checks = [];
 
-  // Path safety — blocks writes with traversal sequences
+  // Path safety — blocks writes with traversal sequences or suspicious characters
   const isAbsolute = path.startsWith("/");
-  const hasTraversal = path.includes("..");
+  const hasTraversal = path.includes("..") || path.includes("~");
   checks.push({
     name: "path_safe",
     passed: !hasTraversal && !isAbsolute,
     message: hasTraversal
-      ? "Path contains traversal sequences (..)"
+      ? "Path contains traversal or suspicious sequences (.. or ~)"
       : isAbsolute
         ? "Path must be repo-relative, not absolute"
         : null,

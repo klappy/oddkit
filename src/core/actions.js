@@ -565,7 +565,7 @@ export async function handleAction(params) {
           return {
             action: "write",
             result: { error: `Unsafe path(s) detected: ${unsafePaths.join(", ")}`, validation },
-            assistant_text: `Write blocked: path traversal detected in ${unsafePaths.join(", ")}. Remove '..' sequences.`,
+            assistant_text: `Write blocked: unsafe path detected in ${unsafePaths.join(", ")}. Remove '..' or '~' sequences.`,
             debug: makeDebug(),
           };
         }

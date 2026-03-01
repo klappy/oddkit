@@ -394,7 +394,7 @@ export async function getDefaultBranch(owner, repo) {
  */
 export async function branchExists(owner, repo, branch) {
   try {
-    await githubRequest(`/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`);
+    await githubRequest(`/repos/${owner}/${repo}/branches/${branch}`);
     return true;
   } catch (err) {
     if (err.message.includes("404")) return false;
