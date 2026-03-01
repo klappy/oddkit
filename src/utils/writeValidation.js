@@ -51,17 +51,14 @@ export function validateFile(path, content) {
         : null,
   });
 
-  // UTF-8 validity
-  try {
-    Buffer.from(content, "utf-8");
-    checks.push({ name: "utf8_valid", passed: true });
-  } catch {
-    checks.push({
-      name: "utf8_valid",
-      passed: false,
-      message: "Content is not valid UTF-8",
-    });
-  }
+  // UTF-8 validity — detect unpaired surrogates (valid in JS strings but not in UTF-8)
+  const hasLoneSurrogates =
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(content);
+  checks.push({
+    name: "utf8_valid",
+    passed: !hasLoneSurrogates,
+    message: hasLoneSurrogates ? "Content contains unpaired surrogate characters (not valid UTF-8)" : null,
+  });
 
   // Governed file checks (canon/, odd/, docs/)
   const isGoverned = path.startsWith("canon/") || path.startsWith("odd/") || path.startsWith("docs/");

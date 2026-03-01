@@ -623,18 +623,24 @@ export async function handleAction(params) {
 
           // --- Handle PR if requested (Tier 3) ---
           let prResult = null;
+          let prError = null;
           // TODO: Orphan prevention (Layer 4) — before creating a new PR, check for
           // existing open PRs from oddkit on the same branch or targeting the same files.
           // If found, push to the existing branch instead (the PR updates automatically).
           // The output interface supports this via pr_updated. Deferred until Layer 4.
           if (pr && branch) {
-            const prOpts = typeof pr === "object" ? pr : {};
-            const prTitle = prOpts.title || message;
-            const prBody = prOpts.body || `Files:\n${files.map((f) => `- ${f.path}`).join("\n")}\n\n---\nWritten via oddkit_write`;
-            const prDraft = prOpts.draft || false;
-            const baseBranch = defaultBranch || await getDefaultBranch(owner, repoName);
-            prResult = await createPR(owner, repoName, prTitle, prBody, branch, baseBranch, prDraft);
-            status = "pr_opened";
+            try {
+              const prOpts = typeof pr === "object" ? pr : {};
+              const prTitle = prOpts.title || message;
+              const prBody = prOpts.body || `Files:\n${files.map((f) => `- ${f.path}`).join("\n")}\n\n---\nWritten via oddkit_write`;
+              const prDraft = prOpts.draft || false;
+              const baseBranch = defaultBranch || await getDefaultBranch(owner, repoName);
+              prResult = await createPR(owner, repoName, prTitle, prBody, branch, baseBranch, prDraft);
+              status = "pr_opened";
+            } catch (prErr) {
+              prError = prErr.message;
+              status = "committed_pr_failed";
+            }
           }
 
           const filesWritten = files.map((f) => f.path);
@@ -652,10 +658,11 @@ export async function handleAction(params) {
               files_written: filesWritten,
               pr_url: prResult?.pr_url || undefined,
               pr_number: prResult?.pr_number || undefined,
+              pr_error: prError || undefined,
               pr_updated: false, // TODO: set to true when orphan prevention detects existing PR
               validation,
             },
-            assistant_text: `Successfully wrote ${filesWritten.length} file(s) to ${owner}/${repoName} on branch ${targetBranch}. Commit: ${commitResult.commit_url}${prResult ? `\nPR: ${prResult.pr_url}` : ""}${validationWarnings ? `\n\nValidation warnings: ${validationWarnings}` : ""}`,
+            assistant_text: `Successfully wrote ${filesWritten.length} file(s) to ${owner}/${repoName} on branch ${targetBranch}. Commit: ${commitResult.commit_url}${prResult ? `\nPR: ${prResult.pr_url}` : ""}${prError ? `\nPR creation failed: ${prError}` : ""}${validationWarnings ? `\n\nValidation warnings: ${validationWarnings}` : ""}`,
             debug: makeDebug({ files_count: files.length, tier: files.length === 1 ? 1 : 2, validation_passed: validation.passed }),
           };
 
