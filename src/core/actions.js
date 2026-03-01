@@ -22,7 +22,7 @@ import { ALL_ACTION_NAMES } from "./tool-registry.js";
 import { validateFiles } from "../utils/writeValidation.js";
 import {
   parseBaselineUrl, getFileSha, writeFile,
-  getDefaultBranch, getBranchSha, branchExists, createBranch, createPR,
+  getDefaultBranch, getRef, branchExists, createBranch, createPR,
   atomicMultiFileCommit,
 } from "../utils/githubApi.js";
 import { readFileSync, existsSync } from "fs";
@@ -596,7 +596,7 @@ export async function handleAction(params) {
             const exists = await branchExists(owner, repoName, targetBranch);
             if (!exists) {
               defaultBranch = await getDefaultBranch(owner, repoName);
-              const sourceSha = await getBranchSha(owner, repoName, defaultBranch);
+              const { sha: sourceSha } = await getRef(owner, repoName, defaultBranch);
               await createBranch(owner, repoName, targetBranch, sourceSha);
               status = "branch_created";
             }

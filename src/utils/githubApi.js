@@ -403,14 +403,6 @@ export async function branchExists(owner, repo, branch) {
 }
 
 /**
- * Get the HEAD commit SHA for a branch.
- */
-export async function getBranchSha(owner, repo, branch) {
-  const data = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${branch}`);
-  return data.object.sha;
-}
-
-/**
  * Create a new branch from a ref.
  */
 export async function createBranch(owner, repo, branchName, sourceSha) {
