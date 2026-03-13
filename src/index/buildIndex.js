@@ -86,7 +86,8 @@ async function indexRoot(rootPath, origin, { supplementary = false } = {}) {
   const docs = [];
   let excludedByNoindex = 0;
 
-  // Supplementary repos (canon_url) index all .md files — no directory whitelist
+  // Supplementary repos use broad glob but gate on frontmatter title.
+  // Baseline/local repos use directory whitelist as defense-in-depth.
   const patterns = supplementary ? SUPPLEMENTARY_INCLUDE_PATTERNS : INCLUDE_PATTERNS;
 
   // Find all matching files
@@ -111,6 +112,13 @@ async function indexRoot(rootPath, origin, { supplementary = false } = {}) {
     try {
       const raw = readFileSync(absolutePath, "utf-8");
       const { data: frontmatter, content } = matter(raw);
+
+      // Frontmatter-driven inclusion for supplementary repos:
+      // only index files that declare a title (meaning-must-not-depend-on-path).
+      if (supplementary && !frontmatter.title) continue;
+
+      // Explicit opt-out via frontmatter
+      if (frontmatter.exposure === "noindex") continue;
 
       const headings = extractHeadings(content);
 

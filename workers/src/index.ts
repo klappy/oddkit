@@ -144,6 +144,7 @@ Use when:
       mode: z.enum(["exploration", "planning", "execution"]).optional().describe("Optional epistemic mode hint."),
       canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
       include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
+      section: z.string().optional().describe("For action='get': extract only the named ## section from the document. Returns section content or available sections if not found."),
       state: z.record(z.string(), z.unknown()).optional().describe("Optional client-side conversation state, passed back and forth."),
     },
     {
@@ -160,6 +161,7 @@ Use when:
         mode: args.mode,
         canon_url: args.canon_url,
         include_metadata: args.include_metadata,
+        section: args.section,
         state: args.state as any,
         env,
       });
@@ -232,12 +234,13 @@ Use when:
     },
     {
       name: "oddkit_get",
-      description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash.",
+      description: "Fetch a canonical document by klappy:// URI. Returns full content, commit, and content hash. Use section parameter to extract a specific ## section.",
       action: "get",
       schema: {
         input: z.string().describe("Canonical URI (e.g., klappy://canon/values/orientation)."),
         canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
         include_metadata: z.boolean().optional().describe("When true, response includes a metadata object with full parsed frontmatter. Default: false."),
+        section: z.string().optional().describe("Extract only the named ## section from the document. Returns available sections if not found."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -303,6 +306,7 @@ Use when:
           mode: args.mode as string | undefined,
           canon_url: args.canon_url as string | undefined,
           include_metadata: args.include_metadata as boolean | undefined,
+          section: args.section as string | undefined,
           env,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
