@@ -19,10 +19,7 @@ function computeContentHash(content) {
 // A version mismatch triggers a full rebuild so stale fields don't linger.
 export const INDEX_VERSION = "1.2.0"; // 1.2.0: added writings/ support, start_here/start_here_order fields
 
-// Default include patterns (for baseline/local repos with known structure).
-// Supplementary repos index all markdown files — no directory whitelist.
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
-const SUPPLEMENTARY_INCLUDE_PATTERNS = ["**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -82,16 +79,11 @@ function extractHeadings(content) {
  * Build index for a single root directory
  * @returns {{ docs: Array, excludedByNoindex: number }}
  */
-async function indexRoot(rootPath, origin, { supplementary = false } = {}) {
+async function indexRoot(rootPath, origin) {
   const docs = [];
   let excludedByNoindex = 0;
 
-  // Supplementary repos use broad glob but gate on frontmatter title.
-  // Baseline/local repos use directory whitelist as defense-in-depth.
-  const patterns = supplementary ? SUPPLEMENTARY_INCLUDE_PATTERNS : INCLUDE_PATTERNS;
-
-  // Find all matching files
-  const files = await fg(patterns, {
+  const files = await fg(INCLUDE_PATTERNS, {
     cwd: rootPath,
     ignore: EXCLUDE_PATTERNS,
     absolute: false,
@@ -112,10 +104,6 @@ async function indexRoot(rootPath, origin, { supplementary = false } = {}) {
     try {
       const raw = readFileSync(absolutePath, "utf-8");
       const { data: frontmatter, content } = matter(raw);
-
-      // Frontmatter-driven inclusion for supplementary repos:
-      // only index files that declare a title (meaning-must-not-depend-on-path).
-      if (supplementary && !frontmatter.title) continue;
 
       // Explicit opt-out via frontmatter
       if (frontmatter.exposure === "noindex") continue;
