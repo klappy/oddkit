@@ -403,12 +403,15 @@ export class ZipBaselineFetcher {
           fullPath.includes(".oddkit/")
         ) continue;
 
-        // Only include canon/, odd/, docs/, writings/ directories
         const pathParts = fullPath.split("/");
         // Remove repo-branch prefix (e.g., "klappy.dev-main/")
         const repoPath = pathParts.slice(1).join("/");
 
+        // For supplementary repos (canon_url), index all .md files.
+        // The directory whitelist only applies to the baseline repo,
+        // which contains non-canon content alongside canon directories.
         if (
+          source === "baseline" &&
           !repoPath.startsWith("canon/") &&
           !repoPath.startsWith("odd/") &&
           !repoPath.startsWith("docs/") &&
@@ -421,7 +424,9 @@ export class ZipBaselineFetcher {
 
         const entry: IndexEntry = {
           path: repoPath,
-          uri: frontmatter.uri || `klappy://${repoPath.replace(/\.md$/, "")}`,
+          uri: frontmatter.uri || (source === "baseline"
+            ? `klappy://${repoPath.replace(/\.md$/, "")}`
+            : `canon://${repoPath.replace(/\.md$/, "")}`),
           title: frontmatter.title || extractTitle(content, repoPath),
           intent: frontmatter.intent,
           authority_band: frontmatter.authority_band,

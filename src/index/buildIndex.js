@@ -19,8 +19,10 @@ function computeContentHash(content) {
 // A version mismatch triggers a full rebuild so stale fields don't linger.
 export const INDEX_VERSION = "1.2.0"; // 1.2.0: added writings/ support, start_here/start_here_order fields
 
-// Default include patterns
+// Default include patterns (for baseline/local repos with known structure).
+// Supplementary repos index all markdown files — no directory whitelist.
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
+const SUPPLEMENTARY_INCLUDE_PATTERNS = ["**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -80,12 +82,15 @@ function extractHeadings(content) {
  * Build index for a single root directory
  * @returns {{ docs: Array, excludedByNoindex: number }}
  */
-async function indexRoot(rootPath, origin) {
+async function indexRoot(rootPath, origin, { supplementary = false } = {}) {
   const docs = [];
   let excludedByNoindex = 0;
 
+  // Supplementary repos (canon_url) index all .md files — no directory whitelist
+  const patterns = supplementary ? SUPPLEMENTARY_INCLUDE_PATTERNS : INCLUDE_PATTERNS;
+
   // Find all matching files
-  const files = await fg(INCLUDE_PATTERNS, {
+  const files = await fg(patterns, {
     cwd: rootPath,
     ignore: EXCLUDE_PATTERNS,
     absolute: false,
