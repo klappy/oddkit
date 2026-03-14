@@ -8,7 +8,7 @@
  * and consistent response envelope.
  */
 
-import { ZipBaselineFetcher, type Env, type BaselineIndex, type IndexEntry } from "./zip-baseline-fetcher";
+import { ZipBaselineFetcher, extractSection, type Env, type BaselineIndex, type IndexEntry, type SectionResult } from "./zip-baseline-fetcher";
 import { buildBM25Index, searchBM25, type BM25Index } from "./bm25";
 import pkg from "../package.json";
 
@@ -49,6 +49,7 @@ export interface UnifiedParams {
   mode?: string;
   canon_url?: string;
   include_metadata?: boolean;
+  section?: string;
   state?: OddkitState;
   env: Env;
 }
@@ -616,6 +617,7 @@ async function runGet(
   canonUrl?: string,
   state?: OddkitState,
   includeMetadata?: boolean,
+  section?: string,
 ): Promise<OddkitEnvelope> {
   const startMs = Date.now();
 
@@ -637,6 +639,46 @@ async function runGet(
       result: { error: `Document not found: ${input}`, path },
       state: updatedState,
       assistant_text: `Document not found: \`${input}\`. Use action "search" or "catalog" to find available documents.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
+  }
+
+  // Section extraction: return only the requested ## section
+  if (section) {
+    const sectionResult = extractSection(content, section);
+    if (!sectionResult.found) {
+      return {
+        action: "get",
+        result: {
+          error: sectionResult.error,
+          path,
+          requested_section: section,
+          available_sections: sectionResult.available_sections,
+        },
+        state: updatedState,
+        assistant_text: `Section "${section}" not found in \`${input}\`. Available sections: ${(sectionResult.available_sections || []).map((s) => `"${s}"`).join(", ") || "(none)"}`,
+        debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+      };
+    }
+
+    const sectionContent = sectionResult.content!;
+    const result: Record<string, unknown> = {
+      path,
+      section,
+      content: sectionContent,
+      content_hash: hashString(sectionContent),
+    };
+
+    if (includeMetadata) {
+      const metadata = parseFullFrontmatter(content);
+      if (metadata) result.metadata = metadata;
+    }
+
+    return {
+      action: "get",
+      result,
+      state: updatedState,
+      assistant_text: sectionContent,
       debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
     };
   }
@@ -1191,7 +1233,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, canon_url, include_metadata, state, env } = params;
+  const { action, input, context, mode, canon_url, include_metadata, section, state, env } = params;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -1217,7 +1259,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
       case "search":
         return await runSearch(input, fetcher, canon_url, state, include_metadata);
       case "get":
-        return await runGet(input, fetcher, canon_url, state, include_metadata);
+        return await runGet(input, fetcher, canon_url, state, include_metadata, section);
       case "catalog":
         return await runCatalog(fetcher, canon_url, state);
       case "validate":

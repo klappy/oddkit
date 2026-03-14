@@ -61,6 +61,7 @@ interface FrontmatterResult {
   authority_band?: string;
   tags?: string[];
   uri?: string;
+  exposure?: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -97,6 +98,9 @@ function parseFrontmatter(content: string): FrontmatterResult {
     result.tags = tagsMatch[1].split(",").map((t) => t.trim().replace(/["']/g, ""));
   }
 
+  const exposureMatch = yaml.match(/^exposure:\s*["']?(.+?)["']?\s*$/m);
+  if (exposureMatch) result.exposure = exposureMatch[1];
+
   return result;
 }
 
@@ -122,6 +126,43 @@ function extractExcerpt(content: string): string {
   // Get first paragraph (non-heading, non-empty lines)
   const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
   return lines.slice(0, 2).join(" ").slice(0, 200);
+}
+
+export interface SectionResult {
+  found: boolean;
+  content?: string;
+  section?: string;
+  available_sections?: string[];
+  error?: string;
+}
+
+/**
+ * Extract a section from markdown content by ## header title.
+ * Returns content from the matched ## header to the next ## header (or EOF).
+ * If section is not found, returns the list of available ## headers.
+ */
+export function extractSection(content: string, section: string): SectionResult {
+  // Escape regex special chars in section title
+  const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headerPattern = new RegExp(`^## ${escaped}\\s*$`, "m");
+  const startMatch = content.match(headerPattern);
+
+  if (startMatch && startMatch.index !== undefined) {
+    const rest = content.slice(startMatch.index);
+    // Find the next ## header (but not the current one)
+    const nextHeader = rest.indexOf("\n## ");
+    const sectionContent = nextHeader > 0 ? rest.slice(0, nextHeader) : rest;
+    return { found: true, content: sectionContent, section };
+  }
+
+  // Section not found — return available headers
+  const available = [...content.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  return {
+    found: false,
+    error: `Section not found: "${section}"`,
+    section,
+    available_sections: available,
+  };
 }
 
 /**
@@ -403,21 +444,33 @@ export class ZipBaselineFetcher {
           fullPath.includes(".oddkit/")
         ) continue;
 
-        // Only include canon/, odd/, docs/, writings/ directories
         const pathParts = fullPath.split("/");
         // Remove repo-branch prefix (e.g., "klappy.dev-main/")
         const repoPath = pathParts.slice(1).join("/");
 
+        // For the baseline repo, apply a directory whitelist as defense-in-depth
+        // (it contains non-document .md files outside canon directories).
         if (
+          source === "baseline" &&
           !repoPath.startsWith("canon/") &&
           !repoPath.startsWith("odd/") &&
           !repoPath.startsWith("docs/") &&
           !repoPath.startsWith("writings/")
         ) continue;
 
-        // Decode file content
+        // Decode file content and parse frontmatter
         const content = new TextDecoder().decode(fileData);
         const frontmatter = parseFrontmatter(content);
+
+        // Frontmatter-driven inclusion: index files that declare a title.
+        // This satisfies meaning-must-not-depend-on-path — inclusion is
+        // determined by what the file declares about itself, not where it lives.
+        // For baseline, the directory whitelist above provides defense-in-depth.
+        // For supplementary repos, this is the sole inclusion gate.
+        if (source === "canon" && !frontmatter.title) continue;
+
+        // Explicit opt-out via frontmatter
+        if (frontmatter.exposure === "noindex") continue;
 
         const entry: IndexEntry = {
           path: repoPath,
