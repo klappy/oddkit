@@ -6,7 +6,7 @@
  */
 
 import { createHash } from "crypto";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import path from "path";
 import matter from "gray-matter";
@@ -154,6 +154,23 @@ function findDocPath(baseRoot, basePath) {
     const oddPrefixed = join(baseRoot, dir, `odd-${filename.replace(".md", "")}.md`);
     if (existsSync(oddPrefixed)) {
       return oddPrefixed;
+    }
+  }
+
+  // Try compound suffixes (e.g., .surface.md, .full.md) — kb:// URIs may
+  // reference files whose real suffix can't be derived from the URI alone.
+  const baseName = filename.replace(/\.md$/, "");
+  const dirPath = join(baseRoot, dir);
+  if (existsSync(dirPath)) {
+    try {
+      const match = readdirSync(dirPath).sort().find(
+        (f) => f.startsWith(baseName + ".") && f.endsWith(".md") && f !== filename,
+      );
+      if (match) {
+        return join(dirPath, match);
+      }
+    } catch {
+      // Directory unreadable — fall through
     }
   }
 

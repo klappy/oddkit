@@ -195,10 +195,32 @@ else
   exit 1
 fi
 
-# Test 7: kb:// path traversal rejected
+# Test 7: getDocByUri resolves kb:// URIs with compound suffixes (.surface.md)
 echo ""
-echo "Test 7: kb:// path traversal rejected"
+echo "Test 7: getDocByUri resolves kb:// with .surface.md suffix"
 RESULT7=$(node --input-type=module -e "
+import { getDocByUri } from 'file://$PROJECT_ROOT/src/policy/docFetch.js';
+const doc = await getDocByUri('kb://sources/stringer-widening-the-table', { baseline: '$FIXTURE_DIR' });
+if (doc?.content?.includes('Test content for kb:// URI resolution')) {
+  console.log('PASS');
+} else if (doc?.error) {
+  console.log('ERROR: ' + JSON.stringify(doc.error));
+} else {
+  console.log('FAIL: content not found');
+}
+" 2>&1)
+
+if [ "$RESULT7" = "PASS" ]; then
+  echo "PASS: getDocByUri resolves kb:// with .surface.md suffix"
+else
+  echo "FAIL: getDocByUri kb:// .surface.md resolution: $RESULT7"
+  exit 1
+fi
+
+# Test 8: kb:// path traversal rejected
+echo ""
+echo "Test 8: kb:// path traversal rejected"
+RESULT8=$(node --input-type=module -e "
 import { getDocByUri } from 'file://$PROJECT_ROOT/src/policy/docFetch.js';
 try {
   await getDocByUri('kb://../../../etc/passwd', { baseline: '$FIXTURE_DIR' });
@@ -212,10 +234,10 @@ try {
 }
 " 2>&1)
 
-if [ "$RESULT7" = "EXPECTED_ERROR" ]; then
+if [ "$RESULT8" = "EXPECTED_ERROR" ]; then
   echo "PASS: kb:// rejects traversal"
 else
-  echo "FAIL: kb:// traversal check: $RESULT7"
+  echo "FAIL: kb:// traversal check: $RESULT8"
   exit 1
 fi
 
