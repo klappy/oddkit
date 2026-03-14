@@ -695,7 +695,9 @@ async function runGet(
     if (entry) {
       path = entry.path;
     } else {
-      // Fallback: strip scheme and try as path with .md
+      // Fallback: strip scheme and try as path with .md.
+      // odd:// URIs map to the odd/ directory (odd://x → odd/x.md),
+      // matching the local docFetch.js safeSubpath("odd", p) behaviour.
       if (path.startsWith("odd://")) {
         path = "odd/" + path.slice("odd://".length);
       } else {
