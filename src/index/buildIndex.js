@@ -17,7 +17,7 @@ function computeContentHash(content) {
 
 // Schema version — bump when the shape of indexed documents changes.
 // A version mismatch triggers a full rebuild so stale fields don't linger.
-export const INDEX_VERSION = "1.2.0"; // 1.2.0: added writings/ support, start_here/start_here_order fields
+export const INDEX_VERSION = "1.3.0"; // 1.3.0: frontmatter-driven inclusion, exposure:noindex opt-out
 
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
 
