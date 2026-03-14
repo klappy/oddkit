@@ -621,13 +621,36 @@ async function runGet(
 ): Promise<OddkitEnvelope> {
   const startMs = Date.now();
 
-  // Resolve URI to path: klappy://canon/values/orientation → canon/values/orientation.md
+  // Resolve URI to file path. Three cases:
+  // 1. klappy:// — strip scheme, append .md (fast path, no index needed)
+  // 2. Other URI schemes (kb://, odd://) — look up in index to get real path
+  // 3. Raw path — ensure .md extension
   let path = input;
+
   if (path.startsWith("klappy://")) {
     path = path.replace("klappy://", "");
-  }
-  if (!path.endsWith(".md")) {
-    path = path + ".md";
+    if (!path.endsWith(".md")) {
+      path = path + ".md";
+    }
+  } else if (path.includes("://")) {
+    // Non-klappy URI (e.g., kb://sources/stringer-widening-the-table)
+    // The index knows the real file path for each URI, including suffixes
+    // like .surface.md or .full.md that can't be guessed from the URI alone.
+    const index = await fetcher.getIndex(canonUrl);
+    const entry = index.entries.find((e) => e.uri === input);
+    if (entry) {
+      path = entry.path;
+    } else {
+      // Fallback: strip scheme and try as path with .md
+      path = path.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+      if (!path.endsWith(".md")) {
+        path = path + ".md";
+      }
+    }
+  } else {
+    if (!path.endsWith(".md")) {
+      path = path + ".md";
+    }
   }
 
   const content = await fetcher.getFile(path, canonUrl);
