@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { createHash } from "crypto";
 import fg from "fast-glob";
 import matter from "gray-matter";
+import { extractHeadings } from "../utils/extractHeadings.js";
 
 /**
  * Compute content hash for identity dedup (non-URI fallback)
@@ -45,37 +46,6 @@ function isExcludedByNoindex(relFilePath, rootPath) {
     }
   }
   return false;
-}
-
-/**
- * Extract headings with line numbers from content
- */
-function extractHeadings(content) {
-  const lines = content.split("\n");
-  const headings = [];
-  let currentHeading = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
-
-    if (match) {
-      // Close previous heading's region
-      if (currentHeading) {
-        currentHeading.endLine = i - 1;
-      }
-
-      currentHeading = {
-        level: match[1].length,
-        text: match[2].trim(),
-        startLine: i,
-        endLine: lines.length - 1, // Will be updated when next heading found
-      };
-      headings.push(currentHeading);
-    }
-  }
-
-  return headings;
 }
 
 /**
@@ -136,7 +106,8 @@ async function indexRoot(rootPath, origin, { structureAgnostic = false } = {}) {
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
         // Start here metadata (for catalog ordering)
         start_here: frontmatter.start_here === true,
-        start_here_order: typeof frontmatter.start_here_order === "number" ? frontmatter.start_here_order : null,
+        start_here_order:
+          typeof frontmatter.start_here_order === "number" ? frontmatter.start_here_order : null,
         start_here_label: frontmatter.start_here_label || null,
         // Identity for dedup (per user critique: path-only is unsafe across repos)
         content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
@@ -207,7 +178,11 @@ function inferAuthorityBand(filePath, frontmatter) {
   }
 
   // Path-based inference
-  if (filePath.startsWith("canon/") || filePath.startsWith("odd/") || filePath.startsWith("writings/")) {
+  if (
+    filePath.startsWith("canon/") ||
+    filePath.startsWith("odd/") ||
+    filePath.startsWith("writings/")
+  ) {
     return "governing";
   }
   if (filePath.startsWith("docs/")) {
@@ -225,7 +200,11 @@ function inferAuthorityBand(filePath, frontmatter) {
  *   files in the baseline repo instead of hardcoded directory patterns. Set to true for
  *   canon_url repos with unknown directory structure.
  */
-export async function buildIndex(repoRoot, baselineRoot = null, { baselineStructureAgnostic = false } = {}) {
+export async function buildIndex(
+  repoRoot,
+  baselineRoot = null,
+  { baselineStructureAgnostic = false } = {},
+) {
   const localResult = await indexRoot(repoRoot, "local");
   const localDocs = localResult.docs;
   const localExcluded = localResult.excludedByNoindex;
@@ -233,7 +212,9 @@ export async function buildIndex(repoRoot, baselineRoot = null, { baselineStruct
   let baselineDocs = [];
   let baselineExcluded = 0;
   if (baselineRoot) {
-    const baselineResult = await indexRoot(baselineRoot, "baseline", { structureAgnostic: baselineStructureAgnostic });
+    const baselineResult = await indexRoot(baselineRoot, "baseline", {
+      structureAgnostic: baselineStructureAgnostic,
+    });
     baselineDocs = baselineResult.docs;
     baselineExcluded = baselineResult.excludedByNoindex;
   }
@@ -317,13 +298,7 @@ export function loadIndex(repoRoot) {
  */
 export function loadBaselineIndex(ref, commitSha = null) {
   const key = commitSha || ref.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const indexPath = join(
-    homedir(),
-    ".oddkit",
-    "cache",
-    "indexes",
-    `klappy.dev-${key}.json`,
-  );
+  const indexPath = join(homedir(), ".oddkit", "cache", "indexes", `klappy.dev-${key}.json`);
 
   if (!existsSync(indexPath)) {
     return null;

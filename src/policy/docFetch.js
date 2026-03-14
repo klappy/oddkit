@@ -12,6 +12,7 @@ import path from "path";
 import matter from "gray-matter";
 import { resolveCanonTarget } from "./canonTarget.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { extractHeadings } from "../utils/extractHeadings.js";
 
 /**
  * Security: reject null bytes in URI paths
@@ -160,32 +161,6 @@ function computeHash(content) {
 }
 
 /**
- * Extract headings with line numbers from markdown content.
- */
-function extractHeadings(content) {
-  const lines = content.split("\n");
-  const headings = [];
-  let currentHeading = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^(#{1,6})\s+(.+)$/);
-    if (match) {
-      if (currentHeading) {
-        currentHeading.endLine = i - 1;
-      }
-      currentHeading = {
-        level: match[1].length,
-        text: match[2].trim(),
-        startLine: i,
-        endLine: lines.length - 1,
-      };
-      headings.push(currentHeading);
-    }
-  }
-  return headings;
-}
-
-/**
  * Extract a section from markdown content by heading text.
  * Returns content from the matching heading through the line before
  * the next heading at the same or higher level.
@@ -213,22 +188,27 @@ function extractSection(content, sectionName) {
     if (partials.length === 0) return null;
     target = partials[0];
     if (partials.length > 1) {
-      partialWarning = `Multiple partial matches found. Returning first match. Alternatives: ${partials.slice(1).map((h) => h.text).join(", ")}`;
+      partialWarning = `Multiple partial matches found. Returning first match. Alternatives: ${partials
+        .slice(1)
+        .map((h) => h.text)
+        .join(", ")}`;
     }
   }
 
   // Find end of section: next heading at same or higher (lower number) level
+  const lines = content.split("\n");
   const targetIdx = headings.indexOf(target);
-  let endLine = target.endLine;
+  let endLine = lines.length - 1;
   for (let i = targetIdx + 1; i < headings.length; i++) {
     if (headings[i].level <= target.level) {
       endLine = headings[i].startLine - 1;
       break;
     }
   }
-
-  const lines = content.split("\n");
-  const result = { content: lines.slice(target.startLine, endLine + 1).join("\n"), matched: target.text };
+  const result = {
+    content: lines.slice(target.startLine, endLine + 1).join("\n"),
+    matched: target.text,
+  };
   if (partialWarning) result.warning = partialWarning;
   return result;
 }
@@ -243,7 +223,12 @@ function extractSection(content, sectionName) {
  * @returns {Promise<Object>} Document result
  */
 export async function getDocByUri(uri, options = {}) {
-  const { format = "markdown", baseline = null, include_metadata = false, section = null } = options;
+  const {
+    format = "markdown",
+    baseline = null,
+    include_metadata = false,
+    section = null,
+  } = options;
 
   // Resolve canon target
   const canonTarget = await resolveCanonTarget(baseline);
@@ -305,6 +290,7 @@ export async function getDocByUri(uri, options = {}) {
 
   // Compute hash of full file (before section extraction)
   const contentHash = computeHash(content);
+  const fullContent = content;
 
   // Section extraction: if requested, extract a single section by heading
   let sectionWarning = null;
@@ -336,20 +322,20 @@ export async function getDocByUri(uri, options = {}) {
   if (format === "markdown") {
     result.content = content;
   } else if (format === "json") {
-    // For JSON format, try to extract frontmatter
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+    // For JSON format, try to extract frontmatter from full file content
+    const frontmatterMatch = fullContent.match(/^---\n([\s\S]*?)\n---\n/);
     if (frontmatterMatch) {
       result.frontmatter = frontmatterMatch[1];
-      result.body = content.slice(frontmatterMatch[0].length);
+      result.body = content;
     } else {
       result.body = content;
     }
   }
 
-  // When include_metadata is true, parse and attach full frontmatter
+  // When include_metadata is true, parse full file for frontmatter
   if (include_metadata) {
     try {
-      const { data } = matter(content);
+      const { data } = matter(fullContent);
       if (data && Object.keys(data).length > 0) {
         result.metadata = data;
       }
