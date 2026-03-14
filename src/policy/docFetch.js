@@ -173,7 +173,11 @@ function computeHash(content) {
  * @returns {{ content: string, matched: string, warning?: string } | null}
  */
 function extractSection(content, sectionName) {
-  const headings = extractHeadings(content);
+  // Strip YAML frontmatter so YAML comments (# ...) aren't parsed as headings
+  const fmMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+  const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+
+  const headings = extractHeadings(body);
   if (headings.length === 0) return null;
 
   const needle = sectionName.toLowerCase();
@@ -196,7 +200,7 @@ function extractSection(content, sectionName) {
   }
 
   // Find end of section: next heading at same or higher (lower number) level
-  const lines = content.split("\n");
+  const lines = body.split("\n");
   const targetIdx = headings.indexOf(target);
   let endLine = lines.length - 1;
   for (let i = targetIdx + 1; i < headings.length; i++) {
@@ -326,7 +330,9 @@ export async function getDocByUri(uri, options = {}) {
     const frontmatterMatch = fullContent.match(/^---\n([\s\S]*?)\n---\n/);
     if (frontmatterMatch) {
       result.frontmatter = frontmatterMatch[1];
-      result.body = content;
+      result.body = content.startsWith(frontmatterMatch[0])
+        ? content.slice(frontmatterMatch[0].length)
+        : content;
     } else {
       result.body = content;
     }
