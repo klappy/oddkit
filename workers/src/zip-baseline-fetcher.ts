@@ -3,7 +3,8 @@
  *
  * Architecture:
  * - Resolves current commit SHA via lightweight GitHub API call
- * - Uses SHA as cache key — if SHA matches, content is truthful by identity
+ * - Uses SHA + INDEX_VERSION as cache key — content is truthful by identity,
+ *   and code changes to the indexing pipeline invalidate stale indexes
  * - Fetches entire repo as ZIP from GitHub when SHA changes
  * - Extracts files lazily using fflate
  * - Caches in R2 keyed to SHA for fast subsequent access
@@ -12,6 +13,12 @@
  */
 
 import { unzipSync } from "fflate";
+
+// Index schema version — included in KV cache key so that code changes
+// to the indexing pipeline (filters, fields, scoring) invalidate stale indexes.
+// Bump when indexing logic changes. Without this, a cached index built by
+// old code persists until the repo's commit SHA changes.
+const INDEX_VERSION = "2.1"; // 2.1: version-keyed cache invalidation
 
 export interface Env {
   BASELINE_URL: string;
@@ -65,8 +72,9 @@ interface FrontmatterResult {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Content-addressed caching: No TTLs. All storage is keyed to commit SHA.
-// When the SHA changes, old content is ignored and fresh content is fetched.
+// Content-addressed caching: No TTLs. All storage is keyed to commit SHA +
+// INDEX_VERSION. When the SHA changes OR the indexing code changes (version
+// bump), old content is ignored and fresh content is fetched.
 // No staleness window. No manual flush for correctness.
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -553,9 +561,11 @@ export class ZipBaselineFetcher {
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
     const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
 
-    // Step 2: Content-addressed lookup — SHA is the cache key
+    // Step 2: Content-addressed lookup — SHA + version is the cache key.
+    // Including INDEX_VERSION ensures code changes invalidate stale indexes
+    // even when the repo SHA hasn't changed.
     const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
-    const cacheKey = `index/${getCacheKey(canonUrl || "default")}_${shaKey}`;
+    const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(canonUrl || "default")}_${shaKey}`;
 
     if (this.env.BASELINE_CACHE) {
       const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
@@ -586,7 +596,7 @@ export class ZipBaselineFetcher {
     const allEntries = this.arbitrateEntries(canonEntries, baselineEntries);
 
     const index: BaselineIndex = {
-      version: "2.0",
+      version: INDEX_VERSION,
       generated_at: new Date().toISOString(),
       canon_url: canonUrl,
       baseline_url: baselineUrl,
