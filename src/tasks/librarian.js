@@ -677,7 +677,9 @@ export async function runLibrarian(options) {
 
   if (!index) {
     // Build fresh index - only include baseline if available
-    index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
+    index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null, {
+      baselineStructureAgnostic: !!baselineOverride,
+    });
     saveIndex(index, repoRoot);
   }
 

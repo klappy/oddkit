@@ -162,7 +162,7 @@ export function buildEncodeResponse(taskResult) {
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state, include_metadata } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata, section } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
@@ -277,7 +277,9 @@ export async function handleAction(params) {
           else if (baselineSha && indexSha && baselineSha !== indexSha) index = null;
         }
         if (!index) {
-          index = await buildIndex(repoRoot, baselineAvailable ? baselineResult.root : null);
+          index = await buildIndex(repoRoot, baselineAvailable ? baselineResult.root : null, {
+            baselineStructureAgnostic: !!baseline,
+          });
           index.baselineCommitSha = baselineSha;
           saveIndex(index, repoRoot);
         }
@@ -363,7 +365,7 @@ export async function handleAction(params) {
         const format = "markdown";
         const uri = input;
         try {
-          const result = await getDocByUri(uri, { format, baseline, include_metadata });
+          const result = await getDocByUri(uri, { format, baseline, include_metadata, section });
           const updatedState = state ? addCanonRefs(initState(state), [uri]) : undefined;
           return {
             action: "get",

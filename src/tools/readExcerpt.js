@@ -3,37 +3,7 @@ import { join } from "path";
 import matter from "gray-matter";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
 import { countWords } from "../utils/slicing.js";
-
-/**
- * Extract headings with line numbers from content
- */
-function extractHeadings(content) {
-  const lines = content.split("\n");
-  const headings = [];
-  let currentHeading = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
-
-    if (match) {
-      // Close previous heading's region
-      if (currentHeading) {
-        currentHeading.endLine = i - 1;
-      }
-
-      currentHeading = {
-        level: match[1].length,
-        text: match[2].trim(),
-        startLine: i,
-        endLine: lines.length - 1, // Will be updated when next heading found
-      };
-      headings.push(currentHeading);
-    }
-  }
-
-  return headings;
-}
+import { extractHeadings } from "../utils/extractHeadings.js";
 
 /**
  * Strip fenced code blocks from content

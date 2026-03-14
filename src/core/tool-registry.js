@@ -57,6 +57,10 @@ Use when:
         type: "boolean",
         description: "When true, search/get responses include a metadata object with full parsed frontmatter. Default: false.",
       },
+      section: {
+        type: "string",
+        description: "Optional: for action=\"get\", extract a single section by heading text (case-insensitive, partial match). Returns full file with warning if not found.",
+      },
       state: {
         type: "object",
         description: "Optional client-side conversation state, passed back and forth.",
@@ -180,12 +184,14 @@ export const TOOLS = [
         input: { type: "string", description: "Canonical URI (e.g., klappy://canon/values/orientation)." },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
         include_metadata: { type: "boolean", description: "When true, response includes a metadata object with full parsed frontmatter. Default: false." },
+        section: { type: "string", description: "Optional: heading text to extract a single section (e.g., \"Chapter 5\"). Case-insensitive, supports partial matches. Returns full file with warning if not found." },
       },
       required: ["input"],
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     cliFlags: {
       input: { flag: "-i, --input <text>", description: "Canonical URI (e.g., klappy://canon/values/orientation)", required: true },
+      section: { flag: "-s, --section <heading>", description: "Extract a single section by heading text (case-insensitive, partial match supported)" },
     },
   },
   {

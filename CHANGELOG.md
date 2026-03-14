@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Frontmatter-driven indexing for supplementary repos** — `search` with `canon_url` now indexes all `.md` files that declare a `title` in YAML frontmatter, regardless of directory structure. Satisfies `meaning-must-not-depend-on-path` — inclusion is determined by what the file declares about itself, not where it lives. Baseline repo retains directory whitelist as defense-in-depth.
+
+- **`exposure: noindex` frontmatter opt-out** — Any `.md` file with `exposure: noindex` in its frontmatter is excluded from the search index, for both baseline and supplementary repos.
+
+- **Section-level extraction on `get`** — New `section` parameter on `get` action (both unified `oddkit` tool and `oddkit_get` individual tool) extracts content between `## {section}` headers. Returns only the requested slice to prevent context overflow on large files. On miss, returns available `##` headers so the agent can self-correct.
+
+### Changed
+
+- **Index version bumped to 1.3.0** — Reflects frontmatter-driven inclusion gate and `exposure` field in index pipeline.
+- **Supplementary repo URI scheme** — Uses `klappy://` consistently (from frontmatter `uri` when present, falling back to path-derived `klappy://` URI). Repos should declare `uri` in frontmatter for stable identity.
+
 ## [0.14.1] - 2026-02-19
 
 ### Fixed
