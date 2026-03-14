@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Index version bumped to 1.3.0** — Reflects frontmatter-driven inclusion gate and `exposure` field in index pipeline.
 - **Supplementary repo URI scheme** — Uses `klappy://` consistently (from frontmatter `uri` when present, falling back to path-derived `klappy://` URI). Repos should declare `uri` in frontmatter for stable identity.
 
+## [0.15.1] - 2026-03-14
+
+### Fixed
+
+- **Local `kb://` handler resolves compound file suffixes** — `findDocPath` in `docFetch.js` now scans for files with compound extensions (`.surface.md`, `.full.md`, etc.) when the exact `.md` path is not found. Previously, `kb://` URIs returned from search could not be resolved by `get` on the local/CLI path because `uriToPath` always appended `.md`, missing files with non-standard suffixes. The worker path already handled this via index lookup; the local path now uses a directory scan as equivalent fallback.
+
 ## [0.14.1] - 2026-02-19
 
 ### Fixed
