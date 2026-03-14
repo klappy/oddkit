@@ -152,19 +152,30 @@ export interface SectionResult {
 export function extractSection(content: string, section: string): SectionResult {
   // Escape regex special chars in section title
   const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const headerPattern = new RegExp(`^## ${escaped}\\s*$`, "m");
+  const headerPattern = new RegExp(`^## ${escaped}\\s*$`, "mi");
   const startMatch = content.match(headerPattern);
 
   if (startMatch && startMatch.index !== undefined) {
     const rest = content.slice(startMatch.index);
-    // Find the next ## header (but not the current one)
     const nextHeader = rest.indexOf("\n## ");
     const sectionContent = nextHeader > 0 ? rest.slice(0, nextHeader) : rest;
     return { found: true, content: sectionContent, section };
   }
 
+  // Fall back to partial match (case-insensitive)
+  const allHeaders = [...content.matchAll(/^## (.+)$/gm)];
+  const needle = section.toLowerCase();
+  const partials = allHeaders.filter((m) => m[1].toLowerCase().includes(needle));
+
+  if (partials.length > 0 && partials[0].index !== undefined) {
+    const rest = content.slice(partials[0].index!);
+    const nextHeader = rest.indexOf("\n## ");
+    const sectionContent = nextHeader > 0 ? rest.slice(0, nextHeader) : rest;
+    return { found: true, content: sectionContent, section: partials[0][1] };
+  }
+
   // Section not found — return available headers
-  const available = [...content.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  const available = allHeaders.map((m) => m[1]);
   return {
     found: false,
     error: `Section not found: "${section}"`,
