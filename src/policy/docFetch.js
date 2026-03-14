@@ -163,7 +163,7 @@ function findDocPath(baseRoot, basePath) {
   const dirPath = join(baseRoot, dir);
   if (existsSync(dirPath)) {
     try {
-      const match = readdirSync(dirPath).find(
+      const match = readdirSync(dirPath).sort().find(
         (f) => f.startsWith(baseName + ".") && f.endsWith(".md") && f !== filename,
       );
       if (match) {
