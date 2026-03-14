@@ -325,14 +325,21 @@ export async function getDocByUri(uri, options = {}) {
 
   // Section extraction: if requested, extract a single section by heading
   let sectionWarning = null;
+  let availableSections = null;
   if (section) {
     const extracted = extractSection(content, section);
     if (extracted) {
       content = extracted.content;
       if (extracted.warning) sectionWarning = extracted.warning;
     } else {
-      // Section not found — return full file with warning
-      sectionWarning = `Section "${section}" not found. Returning full file.`;
+      // Section not found — return available ## headers for self-correction
+      // instead of the full file (prevents context overflow on large docs).
+      const fmMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+      const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+      const headings = extractHeadings(body);
+      availableSections = headings.filter((h) => h.level === 2).map((h) => h.text);
+      sectionWarning = `Section "${section}" not found.`;
+      content = null;
     }
   }
 
@@ -348,9 +355,12 @@ export async function getDocByUri(uri, options = {}) {
   if (section) {
     result.section = section;
     if (sectionWarning) result.section_warning = sectionWarning;
+    if (availableSections) result.available_sections = availableSections;
   }
 
-  if (format === "markdown") {
+  if (content === null) {
+    // Section miss — no content to return (available_sections already set above)
+  } else if (format === "markdown") {
     result.content = content;
   } else if (format === "json") {
     // For JSON format, try to extract frontmatter from full file content
