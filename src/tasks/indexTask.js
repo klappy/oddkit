@@ -12,7 +12,9 @@ export async function runIndex(options) {
   const baselineRef = getBaselineRef();
 
   // Build index
-  const index = await buildIndex(repoRoot, baseline.root);
+  const index = await buildIndex(repoRoot, baseline.root, {
+    baselineStructureAgnostic: !!options.baseline,
+  });
 
   // Save local index
   const localIndexPath = saveIndex(index, repoRoot);

@@ -17,9 +17,12 @@ function computeContentHash(content) {
 
 // Schema version — bump when the shape of indexed documents changes.
 // A version mismatch triggers a full rebuild so stale fields don't linger.
-export const INDEX_VERSION = "1.3.0"; // 1.3.0: frontmatter-driven inclusion, exposure:noindex opt-out
+export const INDEX_VERSION = "1.4.0"; // 1.4.0: structure-agnostic indexing for canon_url repos
 
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
+
+// Structure-agnostic pattern: index all markdown files, let frontmatter drive exclusion
+const STRUCTURE_AGNOSTIC_PATTERNS = ["**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -77,13 +80,19 @@ function extractHeadings(content) {
 
 /**
  * Build index for a single root directory
+ * @param {string} rootPath - Root directory to index
+ * @param {string} origin - "local" or "baseline"
+ * @param {Object} [options]
+ * @param {boolean} [options.structureAgnostic=false] - When true, index all markdown files
+ *   instead of hardcoded directory patterns. Used for canon_url repos with unknown structure.
  * @returns {{ docs: Array, excludedByNoindex: number }}
  */
-async function indexRoot(rootPath, origin) {
+async function indexRoot(rootPath, origin, { structureAgnostic = false } = {}) {
   const docs = [];
   let excludedByNoindex = 0;
 
-  const files = await fg(INCLUDE_PATTERNS, {
+  const patterns = structureAgnostic ? STRUCTURE_AGNOSTIC_PATTERNS : INCLUDE_PATTERNS;
+  const files = await fg(patterns, {
     cwd: rootPath,
     ignore: EXCLUDE_PATTERNS,
     absolute: false,
@@ -209,8 +218,14 @@ function inferAuthorityBand(filePath, frontmatter) {
 
 /**
  * Build complete index for local repo + baseline
+ * @param {string} repoRoot - Local repository root
+ * @param {string|null} baselineRoot - Baseline repository root
+ * @param {Object} [options]
+ * @param {boolean} [options.baselineStructureAgnostic=false] - When true, index all markdown
+ *   files in the baseline repo instead of hardcoded directory patterns. Set to true for
+ *   canon_url repos with unknown directory structure.
  */
-export async function buildIndex(repoRoot, baselineRoot = null) {
+export async function buildIndex(repoRoot, baselineRoot = null, { baselineStructureAgnostic = false } = {}) {
   const localResult = await indexRoot(repoRoot, "local");
   const localDocs = localResult.docs;
   const localExcluded = localResult.excludedByNoindex;
@@ -218,7 +233,7 @@ export async function buildIndex(repoRoot, baselineRoot = null) {
   let baselineDocs = [];
   let baselineExcluded = 0;
   if (baselineRoot) {
-    const baselineResult = await indexRoot(baselineRoot, "baseline");
+    const baselineResult = await indexRoot(baselineRoot, "baseline", { structureAgnostic: baselineStructureAgnostic });
     baselineDocs = baselineResult.docs;
     baselineExcluded = baselineResult.excludedByNoindex;
   }

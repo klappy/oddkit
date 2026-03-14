@@ -255,7 +255,9 @@ export async function runGate(options) {
 
   let index = loadIndex(repoRoot);
   if (!index) {
-    index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null);
+    index = await buildIndex(repoRoot, baselineAvailable ? baseline.root : null, {
+      baselineStructureAgnostic: !!baselineOverride,
+    });
     saveIndex(index, repoRoot);
   }
 

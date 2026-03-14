@@ -160,6 +160,80 @@ function computeHash(content) {
 }
 
 /**
+ * Extract headings with line numbers from markdown content.
+ */
+function extractHeadings(content) {
+  const lines = content.split("\n");
+  const headings = [];
+  let currentHeading = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      if (currentHeading) {
+        currentHeading.endLine = i - 1;
+      }
+      currentHeading = {
+        level: match[1].length,
+        text: match[2].trim(),
+        startLine: i,
+        endLine: lines.length - 1,
+      };
+      headings.push(currentHeading);
+    }
+  }
+  return headings;
+}
+
+/**
+ * Extract a section from markdown content by heading text.
+ * Returns content from the matching heading through the line before
+ * the next heading at the same or higher level.
+ *
+ * Matching: exact match first (case-insensitive), then partial.
+ * If multiple partial matches, returns first with a warning listing alternatives.
+ *
+ * @param {string} content - Full markdown content
+ * @param {string} sectionName - Heading text to match
+ * @returns {{ content: string, matched: string, warning?: string } | null}
+ */
+function extractSection(content, sectionName) {
+  const headings = extractHeadings(content);
+  if (headings.length === 0) return null;
+
+  const needle = sectionName.toLowerCase();
+
+  // Try exact match first (case-insensitive)
+  let target = headings.find((h) => h.text.toLowerCase() === needle);
+  let partialWarning = null;
+
+  // Fall back to partial match
+  if (!target) {
+    const partials = headings.filter((h) => h.text.toLowerCase().includes(needle));
+    if (partials.length === 0) return null;
+    target = partials[0];
+    if (partials.length > 1) {
+      partialWarning = `Multiple partial matches found. Returning first match. Alternatives: ${partials.slice(1).map((h) => h.text).join(", ")}`;
+    }
+  }
+
+  // Find end of section: next heading at same or higher (lower number) level
+  const targetIdx = headings.indexOf(target);
+  let endLine = target.endLine;
+  for (let i = targetIdx + 1; i < headings.length; i++) {
+    if (headings[i].level <= target.level) {
+      endLine = headings[i].startLine - 1;
+      break;
+    }
+  }
+
+  const lines = content.split("\n");
+  const result = { content: lines.slice(target.startLine, endLine + 1).join("\n"), matched: target.text };
+  if (partialWarning) result.warning = partialWarning;
+  return result;
+}
+
+/**
  * Fetch a document by klappy:// URI.
  *
  * @param {string} uri - Canonical URI (e.g., klappy://canon/agents/odd-epistemic-guide)
@@ -169,7 +243,7 @@ function computeHash(content) {
  * @returns {Promise<Object>} Document result
  */
 export async function getDocByUri(uri, options = {}) {
-  const { format = "markdown", baseline = null, include_metadata = false } = options;
+  const { format = "markdown", baseline = null, include_metadata = false, section = null } = options;
 
   // Resolve canon target
   const canonTarget = await resolveCanonTarget(baseline);
@@ -229,8 +303,21 @@ export async function getDocByUri(uri, options = {}) {
     };
   }
 
-  // Compute hash
+  // Compute hash of full file (before section extraction)
   const contentHash = computeHash(content);
+
+  // Section extraction: if requested, extract a single section by heading
+  let sectionWarning = null;
+  if (section) {
+    const extracted = extractSection(content, section);
+    if (extracted) {
+      content = extracted.content;
+      if (extracted.warning) sectionWarning = extracted.warning;
+    } else {
+      // Section not found — return full file with warning
+      sectionWarning = `Section "${section}" not found. Returning full file.`;
+    }
+  }
 
   // Return result
   const result = {
@@ -240,6 +327,11 @@ export async function getDocByUri(uri, options = {}) {
     content_hash: contentHash,
     format,
   };
+
+  if (section) {
+    result.section = section;
+    if (sectionWarning) result.section_warning = sectionWarning;
+  }
 
   if (format === "markdown") {
     result.content = content;
