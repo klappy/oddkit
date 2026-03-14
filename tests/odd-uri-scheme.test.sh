@@ -149,6 +149,76 @@ else
   exit 1
 fi
 
+# ──────────────────────────────────────────────────────────────────────────────
+# kb:// URI scheme tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Create fixture with kb:// resolvable doc
+mkdir -p "$FIXTURE_DIR/sources"
+cat > "$FIXTURE_DIR/sources/stringer-widening-the-table.surface.md" << 'EOF'
+---
+uri: kb://sources/stringer-widening-the-table
+title: "Stringer: Widening the Table"
+---
+# Stringer: Widening the Table
+Test content for kb:// URI resolution.
+EOF
+
+cat > "$FIXTURE_DIR/sources/example-topic.md" << 'EOF'
+---
+uri: kb://sources/example-topic
+title: "Example Topic"
+---
+# Example Topic
+Simple kb:// document.
+EOF
+
+# Test 6: getDocByUri resolves kb:// URIs
+echo ""
+echo "Test 6: getDocByUri resolves kb:// URIs"
+RESULT6=$(node --input-type=module -e "
+import { getDocByUri } from 'file://$PROJECT_ROOT/src/policy/docFetch.js';
+const doc = await getDocByUri('kb://sources/example-topic', { baseline: '$FIXTURE_DIR' });
+if (doc?.content?.includes('Simple kb:// document')) {
+  console.log('PASS');
+} else if (doc?.error) {
+  console.log('ERROR: ' + JSON.stringify(doc.error));
+} else {
+  console.log('FAIL: content not found');
+}
+" 2>&1)
+
+if [ "$RESULT6" = "PASS" ]; then
+  echo "PASS: getDocByUri resolves kb:// to correct content"
+else
+  echo "FAIL: getDocByUri kb:// resolution: $RESULT6"
+  exit 1
+fi
+
+# Test 7: kb:// path traversal rejected
+echo ""
+echo "Test 7: kb:// path traversal rejected"
+RESULT7=$(node --input-type=module -e "
+import { getDocByUri } from 'file://$PROJECT_ROOT/src/policy/docFetch.js';
+try {
+  await getDocByUri('kb://../../../etc/passwd', { baseline: '$FIXTURE_DIR' });
+  console.log('UNEXPECTED_PASS');
+} catch (e) {
+  if (e.message.includes('traversal')) {
+    console.log('EXPECTED_ERROR');
+  } else {
+    console.log('WRONG_ERROR: ' + e.message);
+  }
+}
+" 2>&1)
+
+if [ "$RESULT7" = "EXPECTED_ERROR" ]; then
+  echo "PASS: kb:// rejects traversal"
+else
+  echo "FAIL: kb:// traversal check: $RESULT7"
+  exit 1
+fi
+
 echo ""
 echo "=================================="
-echo "All odd:// URI scheme tests passed!"
+echo "All URI scheme tests passed!"

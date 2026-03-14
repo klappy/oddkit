@@ -93,9 +93,19 @@ function uriToPath(uri) {
     return safeSubpath("odd", p);
   }
 
+  // Handle kb:// URIs (canon override repos with custom URI schemes)
+  // Treated identically to klappy:// — strip scheme, resolve as path
+  if (uri.startsWith("kb://")) {
+    let p = uri.slice("kb://".length);
+    if (!p.endsWith(".md") && !p.endsWith(".json")) {
+      p = p + ".md";
+    }
+    return safeSubpath("", p);
+  }
+
   // Handle klappy:// URIs (instance-level docs)
   if (!uri.startsWith("klappy://")) {
-    throw new Error(`Invalid URI: must start with klappy:// or odd:// (got: ${uri})`);
+    throw new Error(`Invalid URI: must start with klappy://, kb://, or odd:// (got: ${uri})`);
   }
 
   let p = uri.slice("klappy://".length);
