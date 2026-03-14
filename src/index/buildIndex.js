@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { createHash } from "crypto";
 import fg from "fast-glob";
 import matter from "gray-matter";
+import { extractHeadings } from "../utils/extractHeadings.js";
 
 /**
  * Compute content hash for identity dedup (non-URI fallback)
@@ -17,9 +18,12 @@ function computeContentHash(content) {
 
 // Schema version — bump when the shape of indexed documents changes.
 // A version mismatch triggers a full rebuild so stale fields don't linger.
-export const INDEX_VERSION = "1.3.0"; // 1.3.0: frontmatter-driven inclusion, exposure:noindex opt-out
+export const INDEX_VERSION = "1.4.0"; // 1.4.0: structure-agnostic indexing for canon_url repos
 
 const INCLUDE_PATTERNS = ["canon/**/*.md", "odd/**/*.md", "docs/**/*.md", "writings/**/*.md"];
+
+// Structure-agnostic pattern: index all markdown files, let frontmatter drive exclusion
+const STRUCTURE_AGNOSTIC_PATTERNS = ["**/*.md"];
 
 // Default exclude patterns
 const EXCLUDE_PATTERNS = ["**/node_modules/**", "**/public/**", "**/.git/**", "**/.oddkit/**"];
@@ -45,45 +49,20 @@ function isExcludedByNoindex(relFilePath, rootPath) {
 }
 
 /**
- * Extract headings with line numbers from content
- */
-function extractHeadings(content) {
-  const lines = content.split("\n");
-  const headings = [];
-  let currentHeading = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
-
-    if (match) {
-      // Close previous heading's region
-      if (currentHeading) {
-        currentHeading.endLine = i - 1;
-      }
-
-      currentHeading = {
-        level: match[1].length,
-        text: match[2].trim(),
-        startLine: i,
-        endLine: lines.length - 1, // Will be updated when next heading found
-      };
-      headings.push(currentHeading);
-    }
-  }
-
-  return headings;
-}
-
-/**
  * Build index for a single root directory
+ * @param {string} rootPath - Root directory to index
+ * @param {string} origin - "local" or "baseline"
+ * @param {Object} [options]
+ * @param {boolean} [options.structureAgnostic=false] - When true, index all markdown files
+ *   instead of hardcoded directory patterns. Used for canon_url repos with unknown structure.
  * @returns {{ docs: Array, excludedByNoindex: number }}
  */
-async function indexRoot(rootPath, origin) {
+async function indexRoot(rootPath, origin, { structureAgnostic = false } = {}) {
   const docs = [];
   let excludedByNoindex = 0;
 
-  const files = await fg(INCLUDE_PATTERNS, {
+  const patterns = structureAgnostic ? STRUCTURE_AGNOSTIC_PATTERNS : INCLUDE_PATTERNS;
+  const files = await fg(patterns, {
     cwd: rootPath,
     ignore: EXCLUDE_PATTERNS,
     absolute: false,
@@ -127,7 +106,8 @@ async function indexRoot(rootPath, origin) {
         evidence: frontmatter.evidence || "none", // none | weak | medium | strong
         // Start here metadata (for catalog ordering)
         start_here: frontmatter.start_here === true,
-        start_here_order: typeof frontmatter.start_here_order === "number" ? frontmatter.start_here_order : null,
+        start_here_order:
+          typeof frontmatter.start_here_order === "number" ? frontmatter.start_here_order : null,
         start_here_label: frontmatter.start_here_label || null,
         // Identity for dedup (per user critique: path-only is unsafe across repos)
         content_hash: computeContentHash(content), // 8-char SHA-256 of normalized content
@@ -198,7 +178,11 @@ function inferAuthorityBand(filePath, frontmatter) {
   }
 
   // Path-based inference
-  if (filePath.startsWith("canon/") || filePath.startsWith("odd/") || filePath.startsWith("writings/")) {
+  if (
+    filePath.startsWith("canon/") ||
+    filePath.startsWith("odd/") ||
+    filePath.startsWith("writings/")
+  ) {
     return "governing";
   }
   if (filePath.startsWith("docs/")) {
@@ -209,8 +193,18 @@ function inferAuthorityBand(filePath, frontmatter) {
 
 /**
  * Build complete index for local repo + baseline
+ * @param {string} repoRoot - Local repository root
+ * @param {string|null} baselineRoot - Baseline repository root
+ * @param {Object} [options]
+ * @param {boolean} [options.baselineStructureAgnostic=false] - When true, index all markdown
+ *   files in the baseline repo instead of hardcoded directory patterns. Set to true for
+ *   canon_url repos with unknown directory structure.
  */
-export async function buildIndex(repoRoot, baselineRoot = null) {
+export async function buildIndex(
+  repoRoot,
+  baselineRoot = null,
+  { baselineStructureAgnostic = false } = {},
+) {
   const localResult = await indexRoot(repoRoot, "local");
   const localDocs = localResult.docs;
   const localExcluded = localResult.excludedByNoindex;
@@ -218,7 +212,9 @@ export async function buildIndex(repoRoot, baselineRoot = null) {
   let baselineDocs = [];
   let baselineExcluded = 0;
   if (baselineRoot) {
-    const baselineResult = await indexRoot(baselineRoot, "baseline");
+    const baselineResult = await indexRoot(baselineRoot, "baseline", {
+      structureAgnostic: baselineStructureAgnostic,
+    });
     baselineDocs = baselineResult.docs;
     baselineExcluded = baselineResult.excludedByNoindex;
   }
@@ -302,13 +298,7 @@ export function loadIndex(repoRoot) {
  */
 export function loadBaselineIndex(ref, commitSha = null) {
   const key = commitSha || ref.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const indexPath = join(
-    homedir(),
-    ".oddkit",
-    "cache",
-    "indexes",
-    `klappy.dev-${key}.json`,
-  );
+  const indexPath = join(homedir(), ".oddkit", "cache", "indexes", `klappy.dev-${key}.json`);
 
   if (!existsSync(indexPath)) {
     return null;

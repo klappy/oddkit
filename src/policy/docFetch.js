@@ -12,6 +12,7 @@ import path from "path";
 import matter from "gray-matter";
 import { resolveCanonTarget } from "./canonTarget.js";
 import { ensureBaselineRepo } from "../baseline/ensureBaselineRepo.js";
+import { extractHeadings } from "../utils/extractHeadings.js";
 
 /**
  * Security: reject null bytes in URI paths
@@ -160,6 +161,63 @@ function computeHash(content) {
 }
 
 /**
+ * Extract a section from markdown content by heading text.
+ * Returns content from the matching heading through the line before
+ * the next heading at the same or higher level.
+ *
+ * Matching: exact match first (case-insensitive), then partial.
+ * If multiple partial matches, returns first with a warning listing alternatives.
+ *
+ * @param {string} content - Full markdown content
+ * @param {string} sectionName - Heading text to match
+ * @returns {{ content: string, matched: string, warning?: string } | null}
+ */
+function extractSection(content, sectionName) {
+  // Strip YAML frontmatter so YAML comments (# ...) aren't parsed as headings
+  const fmMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+  const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+
+  const headings = extractHeadings(body);
+  if (headings.length === 0) return null;
+
+  const needle = sectionName.toLowerCase();
+
+  // Try exact match first (case-insensitive)
+  let target = headings.find((h) => h.text.toLowerCase() === needle);
+  let partialWarning = null;
+
+  // Fall back to partial match
+  if (!target) {
+    const partials = headings.filter((h) => h.text.toLowerCase().includes(needle));
+    if (partials.length === 0) return null;
+    target = partials[0];
+    if (partials.length > 1) {
+      partialWarning = `Multiple partial matches found. Returning first match. Alternatives: ${partials
+        .slice(1)
+        .map((h) => h.text)
+        .join(", ")}`;
+    }
+  }
+
+  // Find end of section: next heading at same or higher (lower number) level
+  const lines = body.split("\n");
+  const targetIdx = headings.indexOf(target);
+  let endLine = lines.length - 1;
+  for (let i = targetIdx + 1; i < headings.length; i++) {
+    if (headings[i].level <= target.level) {
+      endLine = headings[i].startLine - 1;
+      break;
+    }
+  }
+  const result = {
+    content: lines.slice(target.startLine, endLine + 1).join("\n"),
+    matched: target.text,
+  };
+  if (partialWarning) result.warning = partialWarning;
+  return result;
+}
+
+/**
  * Fetch a document by klappy:// URI.
  *
  * @param {string} uri - Canonical URI (e.g., klappy://canon/agents/odd-epistemic-guide)
@@ -169,7 +227,12 @@ function computeHash(content) {
  * @returns {Promise<Object>} Document result
  */
 export async function getDocByUri(uri, options = {}) {
-  const { format = "markdown", baseline = null, include_metadata = false } = options;
+  const {
+    format = "markdown",
+    baseline = null,
+    include_metadata = false,
+    section = null,
+  } = options;
 
   // Resolve canon target
   const canonTarget = await resolveCanonTarget(baseline);
@@ -229,8 +292,22 @@ export async function getDocByUri(uri, options = {}) {
     };
   }
 
-  // Compute hash
+  // Compute hash of full file (before section extraction)
   const contentHash = computeHash(content);
+  const fullContent = content;
+
+  // Section extraction: if requested, extract a single section by heading
+  let sectionWarning = null;
+  if (section) {
+    const extracted = extractSection(content, section);
+    if (extracted) {
+      content = extracted.content;
+      if (extracted.warning) sectionWarning = extracted.warning;
+    } else {
+      // Section not found — return full file with warning
+      sectionWarning = `Section "${section}" not found. Returning full file.`;
+    }
+  }
 
   // Return result
   const result = {
@@ -241,23 +318,30 @@ export async function getDocByUri(uri, options = {}) {
     format,
   };
 
+  if (section) {
+    result.section = section;
+    if (sectionWarning) result.section_warning = sectionWarning;
+  }
+
   if (format === "markdown") {
     result.content = content;
   } else if (format === "json") {
-    // For JSON format, try to extract frontmatter
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+    // For JSON format, try to extract frontmatter from full file content
+    const frontmatterMatch = fullContent.match(/^---\n([\s\S]*?)\n---\n/);
     if (frontmatterMatch) {
       result.frontmatter = frontmatterMatch[1];
-      result.body = content.slice(frontmatterMatch[0].length);
+      result.body = content.startsWith(frontmatterMatch[0])
+        ? content.slice(frontmatterMatch[0].length)
+        : content;
     } else {
       result.body = content;
     }
   }
 
-  // When include_metadata is true, parse and attach full frontmatter
+  // When include_metadata is true, parse full file for frontmatter
   if (include_metadata) {
     try {
-      const { data } = matter(content);
+      const { data } = matter(fullContent);
       if (data && Object.keys(data).length > 0) {
         result.metadata = data;
       }
