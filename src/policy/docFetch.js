@@ -6,7 +6,7 @@
  */
 
 import { createHash } from "crypto";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import path from "path";
 import matter from "gray-matter";
@@ -93,9 +93,19 @@ function uriToPath(uri) {
     return safeSubpath("odd", p);
   }
 
+  // Handle kb:// URIs (canon override repos with custom URI schemes)
+  // Treated identically to klappy:// — strip scheme, resolve as path
+  if (uri.startsWith("kb://")) {
+    let p = uri.slice("kb://".length);
+    if (!p.endsWith(".md") && !p.endsWith(".json")) {
+      p = p + ".md";
+    }
+    return safeSubpath("", p);
+  }
+
   // Handle klappy:// URIs (instance-level docs)
   if (!uri.startsWith("klappy://")) {
-    throw new Error(`Invalid URI: must start with klappy:// or odd:// (got: ${uri})`);
+    throw new Error(`Invalid URI: must start with klappy://, kb://, or odd:// (got: ${uri})`);
   }
 
   let p = uri.slice("klappy://".length);
@@ -144,6 +154,23 @@ function findDocPath(baseRoot, basePath) {
     const oddPrefixed = join(baseRoot, dir, `odd-${filename.replace(".md", "")}.md`);
     if (existsSync(oddPrefixed)) {
       return oddPrefixed;
+    }
+  }
+
+  // Try compound suffixes (e.g., .surface.md, .full.md) — kb:// URIs may
+  // reference files whose real suffix can't be derived from the URI alone.
+  const baseName = filename.replace(/\.md$/, "");
+  const dirPath = join(baseRoot, dir);
+  if (existsSync(dirPath)) {
+    try {
+      const match = readdirSync(dirPath).sort().find(
+        (f) => f.startsWith(baseName + ".") && f.endsWith(".md") && f !== filename,
+      );
+      if (match) {
+        return join(dirPath, match);
+      }
+    } catch {
+      // Directory unreadable — fall through
     }
   }
 
@@ -298,14 +325,21 @@ export async function getDocByUri(uri, options = {}) {
 
   // Section extraction: if requested, extract a single section by heading
   let sectionWarning = null;
+  let availableSections = null;
   if (section) {
     const extracted = extractSection(content, section);
     if (extracted) {
       content = extracted.content;
       if (extracted.warning) sectionWarning = extracted.warning;
     } else {
-      // Section not found — return full file with warning
-      sectionWarning = `Section "${section}" not found. Returning full file.`;
+      // Section not found — return available ## headers for self-correction
+      // instead of the full file (prevents context overflow on large docs).
+      const fmMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+      const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+      const headings = extractHeadings(body);
+      availableSections = headings.filter((h) => h.level === 2).map((h) => h.text);
+      sectionWarning = `Section "${section}" not found.`;
+      content = null;
     }
   }
 
@@ -321,9 +355,12 @@ export async function getDocByUri(uri, options = {}) {
   if (section) {
     result.section = section;
     if (sectionWarning) result.section_warning = sectionWarning;
+    if (availableSections) result.available_sections = availableSections;
   }
 
-  if (format === "markdown") {
+  if (content === null) {
+    // Section miss — no content to return (available_sections already set above)
+  } else if (format === "markdown") {
     result.content = content;
   } else if (format === "json") {
     // For JSON format, try to extract frontmatter from full file content

@@ -84,6 +84,12 @@ async function indexRoot(rootPath, origin, { structureAgnostic = false } = {}) {
       const raw = readFileSync(absolutePath, "utf-8");
       const { data: frontmatter, content } = matter(raw);
 
+      // Frontmatter-driven inclusion: for structure-agnostic repos (supplementary
+      // repos via canon_url), only index files that declare a title in YAML
+      // frontmatter. This is the sole inclusion gate — mirrors the Worker at
+      // zip-baseline-fetcher.ts:478.
+      if (structureAgnostic && !frontmatter.title) continue;
+
       // Explicit opt-out via frontmatter
       if (frontmatter.exposure === "noindex") continue;
 
