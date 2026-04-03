@@ -665,7 +665,7 @@ async function runCatalog(
     // Server-side epoch filter — deterministic, cheap, correct
     if (filter_epoch) {
       candidates = candidates.filter(
-        (e) => e.frontmatter && (e.frontmatter as Record<string, unknown>).epoch === filter_epoch,
+        (e) => e.frontmatter && String((e.frontmatter as Record<string, unknown>).epoch) === filter_epoch,
       );
     }
 
