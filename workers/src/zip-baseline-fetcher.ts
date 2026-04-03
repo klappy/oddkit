@@ -38,6 +38,7 @@ export interface IndexEntry {
   excerpt?: string;
   content_hash?: string;
   source: "canon" | "baseline";
+  frontmatter?: Record<string, unknown>;
 }
 
 export interface BaselineIndex {
@@ -69,6 +70,7 @@ interface FrontmatterResult {
   tags?: string[];
   uri?: string;
   exposure?: string;
+  [key: string]: unknown; // Full frontmatter passthrough for metadata exposure
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -88,26 +90,47 @@ function parseFrontmatter(content: string): FrontmatterResult {
   const yaml = match[1];
   const result: FrontmatterResult = {};
 
-  // Simple YAML parsing for common fields
-  const titleMatch = yaml.match(/^title:\s*["']?(.+?)["']?\s*$/m);
-  if (titleMatch) result.title = titleMatch[1];
+  // Parse all top-level YAML key-value pairs generically
+  for (const line of yaml.split("\n")) {
+    // Skip empty lines, comments, and continuation lines
+    if (!line.trim() || line.trim().startsWith("#") || line.startsWith("  ") || line.startsWith("\t")) continue;
 
-  const intentMatch = yaml.match(/^intent:\s*["']?(.+?)["']?\s*$/m);
-  if (intentMatch) result.intent = intentMatch[1];
+    const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)/);
+    if (!kvMatch) continue;
 
-  const bandMatch = yaml.match(/^authority_band:\s*["']?(.+?)["']?\s*$/m);
-  if (bandMatch) result.authority_band = bandMatch[1];
+    const key = kvMatch[1];
+    let value = kvMatch[2].trim();
 
-  const uriMatch = yaml.match(/^uri:\s*["']?(.+?)["']?\s*$/m);
-  if (uriMatch) result.uri = uriMatch[1];
+    // Inline array: tags: ["a", "b", "c"]
+    if (value.startsWith("[") && value.endsWith("]")) {
+      result[key] = value
+        .slice(1, -1)
+        .split(",")
+        .map((t) => t.trim().replace(/["']/g, ""))
+        .filter(Boolean);
+      continue;
+    }
 
-  const tagsMatch = yaml.match(/^tags:\s*\[(.+?)\]/m);
-  if (tagsMatch) {
-    result.tags = tagsMatch[1].split(",").map((t) => t.trim().replace(/["']/g, ""));
+    // Boolean
+    if (value === "true") { result[key] = true; continue; }
+    if (value === "false") { result[key] = false; continue; }
+
+    // Numeric (integers and simple decimals)
+    if (/^-?\d+(\.\d+)?$/.test(value)) {
+      result[key] = Number(value);
+      continue;
+    }
+
+    // Null
+    if (value === "null" || value === "~" || value === "") { continue; }
+
+    // String — strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    result[key] = value;
   }
-
-  const exposureMatch = yaml.match(/^exposure:\s*["']?(.+?)["']?\s*$/m);
-  if (exposureMatch) result.exposure = exposureMatch[1];
 
   return result;
 }
@@ -501,6 +524,7 @@ export class ZipBaselineFetcher {
           excerpt: extractExcerpt(content),
           content_hash: hashContent(content),
           source,
+          frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
         };
 
         entries.push(entry);

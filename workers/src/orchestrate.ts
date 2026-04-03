@@ -57,6 +57,9 @@ export interface UnifiedParams {
   canon_url?: string;
   include_metadata?: boolean;
   section?: string;
+  sort_by?: string;
+  limit?: number;
+  filter_epoch?: string;
   state?: OddkitState;
   env: Env;
 }
@@ -862,9 +865,12 @@ async function runCatalog(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
+  options?: { sort_by?: string; limit?: number; filter_epoch?: string },
 ): Promise<OddkitEnvelope> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(canonUrl);
+  const { sort_by, limit: rawLimit, filter_epoch } = options || {};
+  const effectiveLimit = Math.min(Math.max(rawLimit || 10, 1), 100);
 
   const byTag: Record<string, IndexEntry[]> = {};
   for (const entry of index.entries) {
@@ -889,7 +895,35 @@ async function runCatalog(
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 5);
 
-  const assistantText = [
+  // Build articles list when sort_by is provided
+  let articles: Array<{ path: string; uri: string; metadata: Record<string, unknown> }> | undefined;
+  if (sort_by === "date") {
+    let candidates = index.entries.filter((e) => e.frontmatter);
+
+    // Server-side epoch filter — deterministic, cheap, correct
+    if (filter_epoch) {
+      candidates = candidates.filter(
+        (e) => e.frontmatter && (e.frontmatter as Record<string, unknown>).epoch === filter_epoch,
+      );
+    }
+
+    // Server-side date sort — deterministic, cheap, correct
+    candidates.sort((a, b) => {
+      const da = ((a.frontmatter as Record<string, unknown>)?.date as string) || "";
+      const db = ((b.frontmatter as Record<string, unknown>)?.date as string) || "";
+      if (db && !da) return 1; // docs without dates sort last
+      if (da && !db) return -1;
+      return db.localeCompare(da); // newest first
+    });
+
+    articles = candidates.slice(0, effectiveLimit).map((e) => ({
+      path: e.path,
+      uri: e.uri,
+      metadata: (e.frontmatter as Record<string, unknown>) || {},
+    }));
+  }
+
+  const assistantTextParts = [
     `ODD Documentation Catalog`,
     ``,
     `Total: ${index.stats.total} docs (${index.stats.canon} canon, ${index.stats.baseline} baseline)`,
@@ -907,20 +941,38 @@ async function runCatalog(
           .map((e) => e.title)
           .join(", ")}`,
     ),
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .trim();
+  ];
+
+  // Append articles listing to assistant_text when present
+  if (articles && articles.length > 0) {
+    assistantTextParts.push(
+      ``,
+      `Recent articles${filter_epoch ? ` (${filter_epoch})` : ""}:`,
+      ...articles.map((a) => {
+        const date = (a.metadata.date as string) || "no date";
+        return `- \`${a.path}\` — ${a.metadata.title || "Untitled"} (${date})`;
+      }),
+    );
+  }
+
+  const assistantText = assistantTextParts.filter(Boolean).join("\n").trim();
+
+  const result: Record<string, unknown> = {
+    total: index.stats.total,
+    canon: index.stats.canon,
+    baseline: index.stats.baseline,
+    categories: Object.keys(byTag),
+    start_here: startHere.map((e) => e.path),
+  };
+
+  // Include articles array only when sort_by is provided
+  if (articles) {
+    result.articles = articles;
+  }
 
   return {
     action: "catalog",
-    result: {
-      total: index.stats.total,
-      canon: index.stats.canon,
-      baseline: index.stats.baseline,
-      categories: Object.keys(byTag),
-      start_here: startHere.map((e) => e.path),
-    },
+    result,
     state: state ? initState(state) : undefined,
     assistant_text: assistantText,
     debug: {
@@ -1100,6 +1152,7 @@ async function runOrientAction(
     lines.push("");
   }
   lines.push(`Orientation: ${mode} mode (${confidence} confidence)`, "");
+  lines.push("Proactive posture: Track OLDC+H continuously throughout this session. Encode what the user shares and what you do at every exchange. Resurface the creed when confidence outpaces evidence. Persist to project storage at natural breakpoints.", "");
   if (assumptions.length > 0) {
     lines.push("Assumptions detected:");
     for (const a of assumptions.slice(0, 3)) lines.push(`  - ${a}`);
@@ -1492,6 +1545,8 @@ async function runEncodeAction(
       status: "ENCODED",
       artifact,
       quality: { level: qualityLevel, score, max_score: 5, gaps, suggestions },
+      persist_required: true,
+      next_action: "Save this artifact to the project's storage (project journal, file, database). Encode does NOT persist.",
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
@@ -1518,7 +1573,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, canon_url, include_metadata, section, state, env } = params;
+  const { action, input, context, mode, canon_url, include_metadata, section, sort_by, limit, filter_epoch, state, env } = params;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -1546,7 +1601,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
       case "get":
         return await runGet(input, fetcher, canon_url, state, include_metadata, section);
       case "catalog":
-        return await runCatalog(fetcher, canon_url, state);
+        return await runCatalog(fetcher, canon_url, state, { sort_by, limit, filter_epoch });
       case "validate":
         return await runValidate(input, state);
       case "preflight":

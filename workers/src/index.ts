@@ -145,6 +145,9 @@ Use when:
       canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
       include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
       section: z.string().optional().describe("For action='get': extract only the named ## section from the document. Returns section content or available sections if not found."),
+      sort_by: z.enum(["date"]).optional().describe("For action='catalog': sort articles by frontmatter field. 'date' returns newest first with full metadata."),
+      limit: z.number().min(1).max(100).optional().describe("For action='catalog': max articles to return when sort_by is provided. Default: 10."),
+      filter_epoch: z.string().optional().describe("For action='catalog': filter to articles with this epoch value in frontmatter (e.g. 'E0007')."),
       state: z.record(z.string(), z.unknown()).optional().describe("Optional client-side conversation state, passed back and forth."),
     },
     {
@@ -162,6 +165,9 @@ Use when:
         canon_url: args.canon_url,
         include_metadata: args.include_metadata,
         section: args.section,
+        sort_by: args.sort_by,
+        limit: args.limit,
+        filter_epoch: args.filter_epoch,
         state: args.state as any,
         env,
       });
@@ -180,7 +186,7 @@ Use when:
   }> = [
     {
       name: "oddkit_orient",
-      description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions.",
+      description: "Assess a goal, idea, or situation against epistemic modes (exploration/planning/execution). Surfaces unresolved items, assumptions, and questions. Call proactively whenever context shifts, not just at session start.",
       action: "orient",
       schema: {
         input: z.string().describe("A goal, idea, or situation description to orient against."),
@@ -190,7 +196,7 @@ Use when:
     },
     {
       name: "oddkit_challenge",
-      description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions.",
+      description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions. Challenge proactively before encoding consequential decisions.",
       action: "challenge",
       schema: {
         input: z.string().describe("A claim, assumption, or proposal to challenge."),
@@ -201,7 +207,7 @@ Use when:
     },
     {
       name: "oddkit_gate",
-      description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence.",
+      description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence. Gate at every implicit mode transition, not just formal ones.",
       action: "gate",
       schema: {
         input: z.string().describe("The proposed transition (e.g., 'ready to build', 'moving to planning')."),
@@ -212,7 +218,7 @@ Use when:
     },
     {
       name: "oddkit_encode",
-      description: "Structure a decision, insight, or boundary as a durable record. Assesses quality and suggests improvements.",
+      description: "Structure a decision, insight, or boundary as a durable record. IMPORTANT: This tool returns the structured artifact in the response — it does NOT persist or save it. The caller must save the output to storage. Standard artifact types: Observations (O), Learnings (L), Decisions (D), Constraints (C), Handoffs (H) — OLDC+H. Track OLDC+H continuously — encode what the user shared, encode what you did. Persist at natural breakpoints.",
       action: "encode",
       schema: {
         input: z.string().describe("A decision, insight, or boundary to capture."),
@@ -223,7 +229,7 @@ Use when:
     },
     {
       name: "oddkit_search",
-      description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts.",
+      description: "Search canon and baseline docs by natural language query or tags. Returns ranked results with citations and excerpts. Search before claiming — not just when asked.",
       action: "search",
       schema: {
         input: z.string().describe("Natural language query or tags to search for."),
@@ -246,16 +252,19 @@ Use when:
     },
     {
       name: "oddkit_catalog",
-      description: "Lists available documentation with categories, counts, and start-here suggestions.",
+      description: "Lists available documentation with categories, counts, and start-here suggestions. Supports temporal discovery: use sort_by='date' to get recent articles with full frontmatter metadata.",
       action: "catalog",
       schema: {
         canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        sort_by: z.enum(["date"]).optional().describe("Sort articles by frontmatter field. 'date' returns newest first with full metadata."),
+        limit: z.number().min(1).max(100).optional().describe("Max articles to return when sort_by is provided. Default: 10."),
+        filter_epoch: z.string().optional().describe("Filter to articles with this epoch value in frontmatter (e.g. 'E0007')."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: "oddkit_validate",
-      description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS.",
+      description: "Validates completion claims against required artifacts. Returns VERIFIED or NEEDS_ARTIFACTS. Validate proactively before claiming any task complete.",
       action: "validate",
       schema: {
         input: z.string().describe("The completion claim with artifact references."),
@@ -264,7 +273,7 @@ Use when:
     },
     {
       name: "oddkit_preflight",
-      description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls.",
+      description: "Pre-implementation check. Returns relevant docs, constraints, definition of done, and pitfalls. Preflight before any execution that produces an artifact.",
       action: "preflight",
       schema: {
         input: z.string().describe("Description of what you're about to implement."),
@@ -307,6 +316,9 @@ Use when:
           canon_url: args.canon_url as string | undefined,
           include_metadata: args.include_metadata as boolean | undefined,
           section: args.section as string | undefined,
+          sort_by: args.sort_by as string | undefined,
+          limit: args.limit as number | undefined,
+          filter_epoch: args.filter_epoch as string | undefined,
           env,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
