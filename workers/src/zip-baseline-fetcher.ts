@@ -132,6 +132,10 @@ function parseFrontmatter(content: string): FrontmatterResult {
     result[key] = value;
   }
 
+  if (typeof result.tags === "string") {
+    result.tags = [result.tags];
+  }
+
   return result;
 }
 
