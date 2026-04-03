@@ -266,6 +266,8 @@ function parseFrontmatter(content: string): FrontmatterResult {
     result.tags = [result.tags];
   } else if (Array.isArray(result.tags)) {
     result.tags = result.tags.map((t) => String(t));
+  } else if (result.tags != null) {
+    result.tags = undefined;
   }
 
   return result;
