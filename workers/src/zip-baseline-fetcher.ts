@@ -230,16 +230,20 @@ function hashContent(content: string): string {
 function getZipUrl(repoUrl: string, ref: string = "main"): string {
   // Handle various URL formats
   // https://github.com/owner/repo -> https://github.com/owner/repo/archive/main.zip
-  // https://raw.githubusercontent.com/owner/repo/main -> https://github.com/owner/repo/archive/main.zip
+  // https://raw.githubusercontent.com/owner/repo/branch -> https://github.com/owner/repo/archive/branch.zip
 
   let cleanUrl = repoUrl
     .replace(/\.git$/, "")
     .replace(/\/$/, "");
 
   if (cleanUrl.includes("raw.githubusercontent.com")) {
-    // Convert raw URL to repo URL
+    // Convert raw URL to repo URL, extracting branch ref if present
     const parts = cleanUrl.replace("https://raw.githubusercontent.com/", "").split("/");
     cleanUrl = `https://github.com/${parts[0]}/${parts[1]}`;
+    // parts[2] is the branch ref (e.g., "e0007-proactive-posture" or "main")
+    if (parts[2]) {
+      ref = parts[2];
+    }
   }
 
   return `${cleanUrl}/archive/${ref}.zip`;
