@@ -190,7 +190,7 @@ fi
 # Test 4c: GET /mcp with SSE Accept header returns stream
 echo ""
 echo "Test 4c: GET /mcp with SSE Accept returns text/event-stream"
-CONTENT_TYPE=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X GET \
+CONTENT_TYPE=$(curl -sf --max-time 5 "$WORKER_URL/mcp" -X GET \
   -H "Accept: text/event-stream" \
   -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
 if echo "$CONTENT_TYPE" | grep -qi "text/event-stream"; then
