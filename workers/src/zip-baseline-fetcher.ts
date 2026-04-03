@@ -18,7 +18,7 @@ import { unzipSync } from "fflate";
 // to the indexing pipeline (filters, fields, scoring) invalidate stale indexes.
 // Bump when indexing logic changes. Without this, a cached index built by
 // old code persists until the repo's commit SHA changes.
-const INDEX_VERSION = "2.1"; // 2.1: version-keyed cache invalidation
+const INDEX_VERSION = "2.3"; // 2.3: branch ref extraction fix + full frontmatter (E0007)
 
 export interface Env {
   BASELINE_URL: string;
@@ -38,6 +38,7 @@ export interface IndexEntry {
   excerpt?: string;
   content_hash?: string;
   source: "canon" | "baseline";
+  frontmatter?: Record<string, unknown>;
 }
 
 export interface BaselineIndex {
@@ -69,6 +70,7 @@ interface FrontmatterResult {
   tags?: string[];
   uri?: string;
   exposure?: string;
+  [key: string]: unknown; // Full frontmatter passthrough for metadata exposure
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -78,36 +80,193 @@ interface FrontmatterResult {
 // No staleness window. No manual flush for correctness.
 // ──────────────────────────────────────────────────────────────────────────────
 
-/**
- * Parse YAML frontmatter from markdown content
- */
-function parseFrontmatter(content: string): FrontmatterResult {
+// ──────────────────────────────────────────────────────────────────────────────
+// Shared YAML frontmatter parser — used at index time AND request time so that
+// metadata is consistent across all APIs (catalog, search, get).
+// ──────────────────────────────────────────────────────────────────────────────
+
+function fmParseScalarValue(raw: string): unknown {
+  if (!raw) return "";
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1);
+  }
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null" || raw === "~") return null;
+  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+  if (/^-?\d+\.\d+$/.test(raw)) return parseFloat(raw);
+  return raw;
+}
+
+function fmParseInlineArray(raw: string): unknown[] {
+  const inner = raw.slice(1, raw.lastIndexOf("]")).trim();
+  if (!inner) return [];
+  return inner.split(",").map((item) => fmParseScalarValue(item.trim()));
+}
+
+function fmParseYamlList(lines: string[]): unknown[] {
+  const items: unknown[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    if (!trimmed.startsWith("- ")) { i++; continue; }
+    const value = trimmed.slice(2).trim();
+    const objectProps: string[] = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const nextLine = lines[j];
+      const nextTrimmed = nextLine.trim();
+      if (!nextTrimmed || nextTrimmed.startsWith("- ")) break;
+      const itemIndent = lines[i].search(/\S/);
+      const nextIndent = nextLine.search(/\S/);
+      if (nextIndent <= itemIndent) break;
+      objectProps.push(nextTrimmed);
+      j++;
+    }
+    if (objectProps.length > 0) {
+      const obj: Record<string, unknown> = {};
+      const firstColonIdx = value.indexOf(":");
+      if (firstColonIdx !== -1) {
+        const k = value.slice(0, firstColonIdx).trim();
+        const v = value.slice(firstColonIdx + 1).trim();
+        if (k) obj[k] = fmParseScalarValue(v);
+      }
+      for (const prop of objectProps) {
+        const propColonIdx = prop.indexOf(":");
+        if (propColonIdx !== -1) {
+          const k = prop.slice(0, propColonIdx).trim();
+          const v = prop.slice(propColonIdx + 1).trim();
+          if (k) obj[k] = fmParseScalarValue(v);
+        }
+      }
+      items.push(obj);
+      i = j;
+    } else {
+      items.push(fmParseScalarValue(value));
+      i++;
+    }
+  }
+  return items;
+}
+
+function fmParseYamlObject(lines: string[]): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+  if (lines.length === 0) return obj;
+  const baseIndent = lines[0].search(/\S/);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) { i++; continue; }
+    const currentIndent = line.search(/\S/);
+    if (currentIndent > baseIndent) { i++; continue; }
+    if (currentIndent < baseIndent) break;
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) { i++; continue; }
+    const key = trimmed.slice(0, colonIdx).trim();
+    const rawValue = trimmed.slice(colonIdx + 1).trim();
+    if (!key) { i++; continue; }
+    if (!rawValue) {
+      i++;
+      const nested: string[] = [];
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const nextTrimmed = nextLine.trim();
+        if (!nextTrimmed) { i++; continue; }
+        const nextIndent = nextLine.search(/\S/);
+        if (nextIndent <= baseIndent) break;
+        if (nextTrimmed.startsWith("#")) { i++; continue; }
+        nested.push(nextLine);
+        i++;
+      }
+      if (nested.length > 0) {
+        if (nested[0].trim().startsWith("- ")) {
+          obj[key] = fmParseYamlList(nested);
+        } else {
+          obj[key] = fmParseYamlObject(nested);
+        }
+      }
+    } else if (rawValue.startsWith("[")) {
+      obj[key] = fmParseInlineArray(rawValue);
+      i++;
+    } else {
+      obj[key] = fmParseScalarValue(rawValue);
+      i++;
+    }
+  }
+  return obj;
+}
+
+export function parseFullFrontmatter(content: string): Record<string, unknown> | null {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
+  if (!match) return null;
 
   const yaml = match[1];
-  const result: FrontmatterResult = {};
+  const result: Record<string, unknown> = {};
+  const lines = yaml.split("\n");
+  let i = 0;
 
-  // Simple YAML parsing for common fields
-  const titleMatch = yaml.match(/^title:\s*["']?(.+?)["']?\s*$/m);
-  if (titleMatch) result.title = titleMatch[1];
-
-  const intentMatch = yaml.match(/^intent:\s*["']?(.+?)["']?\s*$/m);
-  if (intentMatch) result.intent = intentMatch[1];
-
-  const bandMatch = yaml.match(/^authority_band:\s*["']?(.+?)["']?\s*$/m);
-  if (bandMatch) result.authority_band = bandMatch[1];
-
-  const uriMatch = yaml.match(/^uri:\s*["']?(.+?)["']?\s*$/m);
-  if (uriMatch) result.uri = uriMatch[1];
-
-  const tagsMatch = yaml.match(/^tags:\s*\[(.+?)\]/m);
-  if (tagsMatch) {
-    result.tags = tagsMatch[1].split(",").map((t) => t.trim().replace(/["']/g, ""));
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) { i++; continue; }
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) { i++; continue; }
+    const key = trimmed.slice(0, colonIdx).trim();
+    const rawValue = trimmed.slice(colonIdx + 1).trim();
+    if (!key) { i++; continue; }
+    if (!rawValue) {
+      i++;
+      const items: string[] = [];
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const nextTrimmed = nextLine.trim();
+        if (!nextTrimmed) { i++; continue; }
+        if (!nextLine.startsWith("  ") && !nextLine.startsWith("\t")) break;
+        if (nextTrimmed.startsWith("#")) { i++; continue; }
+        items.push(nextLine);
+        i++;
+      }
+      if (items.length > 0) {
+        if (items[0].trim().startsWith("- ")) {
+          result[key] = fmParseYamlList(items);
+        } else {
+          result[key] = fmParseYamlObject(items);
+        }
+      }
+    } else if (rawValue.startsWith("[")) {
+      result[key] = fmParseInlineArray(rawValue);
+      i++;
+    } else {
+      result[key] = fmParseScalarValue(rawValue);
+      i++;
+    }
   }
 
-  const exposureMatch = yaml.match(/^exposure:\s*["']?(.+?)["']?\s*$/m);
-  if (exposureMatch) result.exposure = exposureMatch[1];
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * Parse YAML frontmatter for index-time use, returning FrontmatterResult.
+ * Delegates to the full parser for consistency across all APIs.
+ */
+function parseFrontmatter(content: string): FrontmatterResult {
+  const full = parseFullFrontmatter(content);
+  if (!full) return {};
+
+  const result: FrontmatterResult = { ...full };
+
+  for (const key of ["title", "intent", "authority_band", "uri", "exposure"] as const) {
+    if (result[key] != null && typeof result[key] !== "string") {
+      (result as Record<string, unknown>)[key] = String(result[key]);
+    }
+  }
+
+  if (typeof result.tags === "string") {
+    result.tags = [result.tags];
+  } else if (Array.isArray(result.tags)) {
+    result.tags = result.tags.map((t) => String(t));
+  }
 
   return result;
 }
@@ -198,21 +357,39 @@ function hashContent(content: string): string {
 }
 
 /**
+ * Extract branch ref from a GitHub URL.
+ * raw.githubusercontent.com URLs encode the branch as the third path segment;
+ * all other URLs default to "main".
+ */
+function extractBranchRef(url: string): string {
+  const cleanUrl = url.replace(/\.git$/, "").replace(/\/$/, "");
+  if (cleanUrl.includes("raw.githubusercontent.com")) {
+    const parts = cleanUrl.replace("https://raw.githubusercontent.com/", "").split("/");
+    if (parts[2]) return parts[2];
+  }
+  return "main";
+}
+
+/**
  * Convert GitHub repo URL to ZIP download URL
  */
 function getZipUrl(repoUrl: string, ref: string = "main"): string {
   // Handle various URL formats
   // https://github.com/owner/repo -> https://github.com/owner/repo/archive/main.zip
-  // https://raw.githubusercontent.com/owner/repo/main -> https://github.com/owner/repo/archive/main.zip
+  // https://raw.githubusercontent.com/owner/repo/branch -> https://github.com/owner/repo/archive/branch.zip
 
   let cleanUrl = repoUrl
     .replace(/\.git$/, "")
     .replace(/\/$/, "");
 
   if (cleanUrl.includes("raw.githubusercontent.com")) {
-    // Convert raw URL to repo URL
+    // Convert raw URL to repo URL, extracting branch ref if present
     const parts = cleanUrl.replace("https://raw.githubusercontent.com/", "").split("/");
     cleanUrl = `https://github.com/${parts[0]}/${parts[1]}`;
+    // parts[2] is the branch ref (e.g., "e0007-proactive-posture" or "main")
+    if (parts[2]) {
+      ref = parts[2];
+    }
   }
 
   return `${cleanUrl}/archive/${ref}.zip`;
@@ -501,6 +678,7 @@ export class ZipBaselineFetcher {
           excerpt: extractExcerpt(content),
           content_hash: hashContent(content),
           source,
+          frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
         };
 
         entries.push(entry);
@@ -570,7 +748,8 @@ export class ZipBaselineFetcher {
 
     // Step 1: Resolve current commit SHAs (lightweight)
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
-    const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl) : undefined;
+    const canonRef = canonUrl ? extractBranchRef(canonUrl) : undefined;
+    const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl, canonRef) : undefined;
 
     // Step 2: Content-addressed lookup — SHA + version is the cache key.
     // Including INDEX_VERSION ensures code changes invalidate stale indexes
@@ -654,7 +833,8 @@ export class ZipBaselineFetcher {
     const sources: Array<{ url: string; repoKey: string; sha: string }> = [];
 
     if (canonUrl) {
-      const canonSha = await this.getLatestCommitSha(canonUrl);
+      const canonRef = extractBranchRef(canonUrl);
+      const canonSha = await this.getLatestCommitSha(canonUrl, canonRef);
       sources.push({
         url: canonUrl,
         repoKey: getCacheKey(canonUrl),
