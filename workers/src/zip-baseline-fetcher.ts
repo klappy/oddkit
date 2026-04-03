@@ -18,7 +18,7 @@ import { unzipSync } from "fflate";
 // to the indexing pipeline (filters, fields, scoring) invalidate stale indexes.
 // Bump when indexing logic changes. Without this, a cached index built by
 // old code persists until the repo's commit SHA changes.
-const INDEX_VERSION = "2.1"; // 2.1: version-keyed cache invalidation
+const INDEX_VERSION = "2.2"; // 2.2: full frontmatter indexing for metadata exposure (E0007)
 
 export interface Env {
   BASELINE_URL: string;
