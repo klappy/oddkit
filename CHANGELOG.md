@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Encode persistence warning** — Encode responses now include `persist_required: true` and `next_action` instructing the caller to save the output. Addresses the silent data loss pattern where operators assumed encode persisted.
 
-- **Orient OLDC+H instruction** — Orient responses now include a proactive posture instruction: "Track OLDC+H continuously throughout this session." Includes commit hygiene gate: journal, changelog, version bump at every commit, PR, and merge.
+- **Orient OLDC+H instruction** — Orient responses now include a proactive posture instruction: "Track OLDC+H continuously throughout this session." Includes artifact provenance gate: capture what happened (journal), what changed (summary), and what version — at every milestone, before every review, and before finalizing.
 
-- **Validate commit hygiene gate** — When completion claims mention git lifecycle events (commit, PR, merge, ship, deploy, release), validate checks for journal entry, changelog update, and version bump. Surfaces gaps before merge — the most critical gate.
+- **Validate artifact provenance gate** — When completion claims mention finalizing work (commit, merge, publish, submit, deliver, etc.), validate checks for session capture (OLDC+H), change summary, and version tracking. Domain-agnostic — applies to code, writing, planning, or any domain.
 
 ### Fixed
 

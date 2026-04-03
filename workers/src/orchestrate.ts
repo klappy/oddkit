@@ -837,16 +837,16 @@ async function runValidate(message: string, state?: OddkitState): Promise<Oddkit
   const gaps: string[] = [];
   if (!hasScreenshot && !hasVideo) gaps.push("visual proof (screenshot or recording)");
 
-  // Commit hygiene gate: when completion claims mention git lifecycle events,
-  // check for journal, changelog, and version bump
-  const isGitLifecycle = /\b(commit|pr|pull request|merge|ship|deploy|release)\b/i.test(message);
-  if (isGitLifecycle) {
-    const hasJournal = /\b(journal|ledger|oldc)/i.test(message);
-    const hasChangelog = /\b(changelog|change\s*log)/i.test(message);
-    const hasVersionBump = /\b(version|bump|semver)/i.test(message);
-    if (!hasJournal) gaps.push("project journal entry (OLDC+H for this session)");
-    if (!hasChangelog) gaps.push("changelog update (CHANGELOG.md)");
-    if (!hasVersionBump) gaps.push("version bump (package.json)");
+  // Artifact provenance gate: when completion claims mention finalizing work,
+  // check for session capture, change summary, and version tracking
+  const isFinalization = /\b(commit|pr|pull request|merge|ship|deploy|release|publish|finalize|complete|done|submit|deliver)\b/i.test(message);
+  if (isFinalization) {
+    const hasJournal = /\b(journal|ledger|oldc|session|capture)/i.test(message);
+    const hasChangeSummary = /\b(changelog|change\s*log|summary|what changed|release notes)/i.test(message);
+    const hasVersion = /\b(version|bump|semver|revision)/i.test(message);
+    if (!hasJournal) gaps.push("session capture (OLDC+H — what was observed, learned, decided, constrained)");
+    if (!hasChangeSummary) gaps.push("change summary (what changed and why)");
+    if (!hasVersion) gaps.push("version or revision tracking (if applicable to this project)");
   }
 
   if (gaps.length > 0) {
@@ -1164,7 +1164,7 @@ async function runOrientAction(
     lines.push("");
   }
   lines.push(`Orientation: ${mode} mode (${confidence} confidence)`, "");
-  lines.push("Proactive posture: Track OLDC+H continuously throughout this session. Encode what the user shares and what you do at every exchange. Resurface the creed when confidence outpaces evidence. Persist to project storage at natural breakpoints. COMMIT HYGIENE: At every commit, before every PR, and before every merge — produce journal entry, changelog update, and version bump. Before merge is the most critical gate. Do not wait to be asked.", "");
+  lines.push("Proactive posture: Track OLDC+H continuously throughout this session. Encode what the user shares and what you do at every exchange. Resurface the creed when confidence outpaces evidence. Persist to project storage at natural breakpoints. ARTIFACT PROVENANCE: When work produces durable artifacts, capture what happened (journal), what changed (changelog/summary), and what version (if applicable). Do this at every milestone, before every review, and before finalizing — not at session end. Do not wait to be asked.", "");
   if (assumptions.length > 0) {
     lines.push("Assumptions detected:");
     for (const a of assumptions.slice(0, 3)) lines.push(`  - ${a}`);
