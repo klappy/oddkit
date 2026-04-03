@@ -256,6 +256,12 @@ function parseFrontmatter(content: string): FrontmatterResult {
 
   const result: FrontmatterResult = { ...full };
 
+  for (const key of ["title", "intent", "authority_band", "uri", "exposure"] as const) {
+    if (result[key] != null && typeof result[key] !== "string") {
+      (result as Record<string, unknown>)[key] = String(result[key]);
+    }
+  }
+
   if (typeof result.tags === "string") {
     result.tags = [result.tags];
   } else if (Array.isArray(result.tags)) {

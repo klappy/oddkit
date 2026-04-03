@@ -589,7 +589,7 @@ async function runValidate(message: string, state?: OddkitState): Promise<Oddkit
 
   // Artifact provenance gate: when completion claims mention finalizing work,
   // check for session capture, change summary, and version tracking
-  const isFinalization = /\b(commit|pr|pull request|merge|ship|deploy|release|publish|finalize|complete|done|submit|deliver)\b/i.test(message);
+  const isFinalization = /\b(commit|pr|pull request|merge|ship|deploy|release|publish|finalize|submit|deliver)\b/i.test(message);
   if (isFinalization) {
     const hasJournal = /\b(journal|ledger|oldc|session|capture)/i.test(message);
     const hasChangeSummary = /\b(changelog|change\s*log|summary|what changed|release notes)/i.test(message);
