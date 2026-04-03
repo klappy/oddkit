@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Branch ref extraction from canon_url** — `getZipUrl` was discarding the branch name from `raw.githubusercontent.com` URLs, always fetching `main.zip`. Branch-specific articles never appeared in canon_url overrides. Now correctly extracts `parts[2]` as the branch ref.
 
+- **Cache key mismatch for branch refs** — `getLatestCommitSha` defaulted to `"main"` even when the ZIP was fetched from a branch. Cache key used main's SHA while content had branch content. SHA lookup now respects the extracted branch ref.
+
+- **Unified YAML parser** — Two separate frontmatter parsers (`parseFrontmatter` at index time and `parseFullFrontmatter` at request time) could produce inconsistent metadata. Consolidated into a single shared parser in `zip-baseline-fetcher.ts`.
+
+- **Numeric date sort safety** — `parseFrontmatter` converts bare numeric values to `Number` (e.g., `date: 2026` becomes `2026`). Catalog date sort now uses `String()` coercion to prevent `TypeError` on `localeCompare`.
+
+- **Epoch filter strict equality** — `filter_epoch` comparison now handles numeric frontmatter values correctly.
+
+- **SSE test timeout** — CI test for SSE content-type waited 30 seconds for a long-lived stream to close. Reduced to 5 seconds — only the headers are needed.
+
 ### Changed
 
 - **Index version bumped to 2.3** — Reflects full frontmatter indexing, branch ref fix, and cache invalidation.
