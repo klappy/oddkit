@@ -69,12 +69,12 @@ Once connected, your AI gets access to these tools:
 
 ### Try It Right Now
 
-After connecting, try these prompts:
+After connecting, say "use oddkit" or "ask oddkit" to invoke it:
 
-- *"Orient me on [your current project challenge]"*
-- *"Challenge the assumption that [something you believe]"*
-- *"Search for any decisions about [a topic]"*
-- *"Encode this decision: we chose X because Y"*
+- *"Use oddkit to orient me on whether I should [decision you're facing]"*
+- *"Ask oddkit to challenge my assumption that [something you believe]"*
+- *"Use oddkit to encode this decision: we chose [X] because [Y]"*
+- *"[paste meeting notes] Use oddkit to encode the key decisions from this meeting"*
 
 ---
 
