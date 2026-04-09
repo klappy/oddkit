@@ -1,207 +1,140 @@
 # oddkit
 
-Agent-first CLI for ODD-governed repos. Portable Librarian + Validation with baseline knowledge.
+An open-source MCP server that gives your AI structured memory, epistemic discipline, and the ability to build on what came before.
 
-> **Authoritative:** [docs/oddkit/CHARTER.md](docs/oddkit/CHARTER.md)
->
-> OddKit is epistemic terrain rendering (map), not epistemic authority (compass).
+> **Your AI forgets everything between sessions. It guesses instead of checking. It can't tell a brainstorm from a decision. oddkit fixes that.**
 
-## Deployment Methods
+oddkit reads markdown files from a GitHub repository — decisions, constraints, learnings, governance — and makes them available to your AI through structured tools. It works with any AI tool that supports MCP: Claude, ChatGPT, Gemini, Cursor, Claude Code, Lovable, Replit, ElevenLabs voice agents, and more.
 
-oddkit runs in three ways:
+**Knowledge base repo:** [klappy/klappy.dev](https://github.com/klappy/klappy.dev) — the content oddkit reads from
 
-| Method           | Use Case               | Setup                                       |
-| ---------------- | ---------------------- | ------------------------------------------- |
-| **CLI**          | Terminal usage         | `npx oddkit <command>`                      |
-| **MCP (local)**  | Cursor, Claude Code    | `npx oddkit init --claude`                  |
-| **MCP (remote)** | Claude.ai iOS/iPad/web | Auto-deploys via Cloudflare Git integration |
-
-### Production Deployment
-
-The Cloudflare Worker deploys automatically via Git integration:
-
-- **`main`** branch → staging preview deploy (auto-generated URL)
-- **`prod`** branch → production (`oddkit.klappy.dev`)
-
-To promote staging to production: `./scripts/promote.sh`
-
-See [workers/README.md](workers/README.md) for full deployment details.
-
-## Documentation
-
-| Doc                                                               | What It Covers                  |
-| ----------------------------------------------------------------- | ------------------------------- |
-| [**System Overview**](docs/getting-started/odd-agents-and-mcp.md) | How all the pieces fit together |
-| [**Agents Guide**](docs/getting-started/agents.md)                | Set up Epistemic Guide + Scribe |
-| [**Ledger Guide**](docs/getting-started/ledger.md)                | Learnings and decisions capture |
-| [**QUICKSTART**](docs/QUICKSTART.md)                              | CLI and MCP setup in 60 seconds |
-| [**MCP Reference**](docs/MCP.md)                                  | Full MCP integration details    |
-
-## Quick Start
-
-```bash
-# Install dependencies
-npm install
-
-# Build index (optional, auto-builds on first query)
-oddkit index
-
-# Ask a policy question
-oddkit librarian --query "What is the definition of done?"
-
-# Validate a completion claim
-oddkit validate --message "Done with the UI update. Screenshot: ui.png"
-
-# Explain the last result in human-readable format
-oddkit explain --last
-```
-
-## Commands
-
-### `oddkit index`
-
-Build or rebuild the document index.
-
-```bash
-oddkit index --repo /path/to/repo
-```
-
-### `oddkit librarian`
-
-Ask a policy or lookup question. Returns citations with quotes.
-
-```bash
-oddkit librarian --query "What is the rule about visual proof?" --format json
-```
-
-Options:
-
-- `-q, --query <text>` — The question to ask (required)
-- `-r, --repo <path>` — Repository root (default: current directory)
-- `-f, --format <type>` — Output format: `json` or `md` (default: `json`)
-
-### `oddkit validate`
-
-Validate a completion claim. Returns verdict + evidence gaps.
-
-```bash
-oddkit validate --message "Shipped the new feature" --format json
-```
-
-Options:
-
-- `-m, --message <text>` — The completion claim (required)
-- `-r, --repo <path>` — Repository root (default: current directory)
-- `-a, --artifacts <path>` — Optional JSON file with additional artifacts
-- `-f, --format <type>` — Output format: `json` or `md` (default: `json`)
-
-### `oddkit explain`
-
-Explain the last oddkit result in human-readable format.
-
-```bash
-oddkit explain --last
-oddkit explain --last --format json
-```
-
-Options:
-
-- `--last` — Explain the last result (default: true)
-- `-f, --format <type>` — Output format: `md` or `json` (default: `md`)
-
-The explain command:
-
-- Shows what happened (status/verdict)
-- Explains why it happened (which rules fired)
-- Suggests what to do next
-- Lists evidence used (citations, origin)
-- Includes debug info (baseline ref, timestamp)
-
-## Baseline Knowledge
-
-By default, oddkit loads the [klappy.dev](https://github.com/klappy/klappy.dev) repo as baseline knowledge.
-
-### Resolution Order
-
-1. `--baseline <path-or-git-url>` CLI flag (highest priority)
-2. `ODDKIT_BASELINE` environment variable (path or git URL)
-3. Default: `https://github.com/klappy/klappy.dev`
-
-### Configuration
-
-```bash
-# Override baseline via CLI flag
-oddkit librarian -q "What is done?" --baseline /path/to/local/canon
-oddkit librarian -q "What is done?" --baseline https://github.com/yourorg/your-canon.git
-
-# Override baseline via environment variable
-export ODDKIT_BASELINE="https://github.com/yourorg/your-canon.git"
-oddkit librarian -q "What is done?"
-
-# Pin to a specific branch/tag
-export ODDKIT_BASELINE_REF="v1.0.0"
-oddkit librarian -q "What is done?"
-```
-
-### Cache Location
-
-- Git repos are cloned to `~/.oddkit/cache/<repo-name>/<ref>/`
-- Local paths are used directly (no caching)
-- Local docs can override baseline via `supersedes` frontmatter field
-
-## Supersedes Override
-
-A local doc can override a baseline doc by declaring:
-
-```yaml
 ---
-supersedes: klappy://canon/definition-of-done
----
-```
 
-The baseline doc with that URI will be suppressed from results.
+## Get Started in 30 Seconds
 
-## Output Format
+oddkit is a remote MCP server. You don't install anything — you point your AI tool at a URL.
 
-### Librarian JSON
+### Claude.ai
+
+Settings → Connectors → Add Custom Integration:
+- **Name:** `oddkit`
+- **URL:** `https://oddkit.klappy.dev/mcp`
+
+### ChatGPT
+
+Settings → Developer Mode → Create App → add MCP server URL:
+
+`https://oddkit.klappy.dev/mcp`
+
+### Claude Code / Cursor / Any MCP Client
+
+Add to your `.mcp.json`:
 
 ```json
 {
-  "status": "SUPPORTED",
-  "answer": "Found 3 relevant document(s)...",
-  "evidence": [
-    {
-      "quote": "MUST provide visual proof...",
-      "citation": "canon/visual-proof.md#Operating Constraints",
-      "origin": "baseline"
+  "mcpServers": {
+    "oddkit": {
+      "type": "http",
+      "url": "https://oddkit.klappy.dev/mcp"
     }
-  ],
-  "read_next": [{ "path": "canon/definition-of-done.md#DoD", "reason": "Primary source" }]
+  }
 }
 ```
 
-### Validate JSON
+Or in Claude Code: `claude mcp add --transport http oddkit https://oddkit.klappy.dev/mcp`
 
-```json
-{
-  "verdict": "NEEDS_ARTIFACTS",
-  "claims": ["Done with the UI update"],
-  "required_evidence": ["screenshot", "visual artifact"],
-  "provided_artifacts": [],
-  "gaps": ["screenshot", "visual artifact"]
-}
+### Lovable / Replit / Gemini / ElevenLabs / Others
+
+Any tool that supports MCP can connect. Look for "MCP server" or "custom integration" in your tool's settings and provide the URL:
+
+`https://oddkit.klappy.dev/mcp`
+
+---
+
+## What oddkit Does
+
+Once connected, your AI gets access to these tools:
+
+| Tool | What It Does |
+|------|-------------|
+| **orient** | Assess a situation, surface unresolved questions, identify which mode you're in (exploring, planning, executing) |
+| **search** | Find relevant documents, constraints, and prior decisions by topic |
+| **get** | Fetch a specific document by URI |
+| **challenge** | Pressure-test a claim, assumption, or proposal against existing constraints |
+| **gate** | Check readiness before transitioning between phases |
+| **encode** | Structure a decision, insight, or boundary as a durable record |
+| **preflight** | Pre-implementation check — surfaces constraints, definition of done, and pitfalls |
+| **validate** | Verify completion claims against required artifacts |
+| **catalog** | List available documentation with filtering and sorting |
+
+### Try It Right Now
+
+After connecting, say "use oddkit" or "ask oddkit" to invoke it:
+
+- *"Use oddkit to orient me on whether I should [decision you're facing]"*
+- *"Ask oddkit to challenge my assumption that [something you believe]"*
+- *"Use oddkit to encode this decision: we chose [X] because [Y]"*
+- *"[paste meeting notes] Use oddkit to encode the key decisions from this meeting"*
+
+---
+
+## Bootstrap Your Project
+
+To make oddkit proactive — so the AI uses these tools automatically instead of waiting for you to ask — add a bootstrap prompt to your project instructions. See the [full bootstrap guide](https://klappy.dev/page/docs/oddkit/proactive/proactive-bootstrap) or start with the essentials in [Getting Started with ODD and oddkit](https://klappy.dev/page/writings/getting-started-with-odd-and-oddkit).
+
+---
+
+## Point oddkit at Your Own Knowledge Base
+
+By default, oddkit reads from [klappy.dev](https://github.com/klappy/klappy.dev). You can point it at any GitHub repo using the `canon_url` parameter:
+
+```
+canon_url: "https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main"
 ```
 
-## For Agents
+oddkit reads markdown files with YAML frontmatter. Start with a few files — decisions, constraints, learnings — and grow from there. No schema required.
 
-This CLI is designed to be called by AI agents:
+---
+
+## Architecture
+
+oddkit is a Cloudflare Worker that:
+
+1. Fetches markdown files from a GitHub repository (zip download, cached)
+2. Indexes them with BM25 full-text search
+3. Parses YAML frontmatter for metadata, filtering, and sorting
+4. Exposes structured tools via the MCP protocol
+
+It's stateless, serverless, and framework-agnostic. The knowledge base is your repo. oddkit just makes it searchable and structured.
+
+---
+
+## Development
 
 ```bash
-# Agent asks a question
-oddkit librarian -q "What evidence is required for UI changes?" -f json
-
-# Agent validates completion
-oddkit validate -m "Implemented search with autocomplete. Screenshot: search.png" -f json
+cd workers
+npm install
+npm run dev     # Local development
+npm run deploy  # Deploy to Cloudflare
 ```
 
-JSON output is canonical and machine-parseable.
+**Branches:**
+- `main` → staging preview
+- `prod` → production (`oddkit.klappy.dev`)
+
+Promote staging to production: `./scripts/promote.sh`
+
+---
+
+## Learn More
+
+- **[Getting Started with ODD and oddkit](https://klappy.dev/page/writings/getting-started-with-odd-and-oddkit)** — five-minute quickstart with bootstrap instructions
+- **[The Journey from AI Tasks to AI-Augmented Workflows](https://klappy.dev/page/writings/the-journey-from-ai-tasks-to-ai-augmented-workflows)** — the four-step progression
+- **[From Passive to Proactive](https://klappy.dev/page/writings/from-passive-to-proactive)** — the story behind oddkit's proactive design
+- **[klappy.dev repo](https://github.com/klappy/klappy.dev)** — the knowledge base oddkit reads from
+
+---
+
+## License
+
+MIT
