@@ -760,8 +760,22 @@ export class ZipBaselineFetcher {
     if (this.env.BASELINE_CACHE) {
       const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
       if (cached) {
-        // Content-addressed cache hit: SHA matches, content is truthful
-        return cached;
+        // Cloudflare KV is eventually consistent — two requests seconds apart
+        // can hit different edge nodes and return stale data even when the
+        // cache key looks correct. Cross-check the cached index's embedded
+        // commit SHAs against the SHAs we just resolved from the GitHub API.
+        // If they diverge, the cached entry is stale; discard and rebuild.
+        const baselineShaMatch = !baselineSha || cached.commit_sha === baselineSha;
+        const canonShaMatch = !canonSha || cached.canon_commit_sha === canonSha;
+        if (baselineShaMatch && canonShaMatch) {
+          // Content-addressed cache hit: SHA verified, content is truthful.
+          return cached;
+        }
+        console.warn(
+          `KV cache SHA mismatch — discarding stale index. ` +
+          `cached=${cached.commit_sha}/${cached.canon_commit_sha} ` +
+          `resolved=${baselineSha}/${canonSha ?? "none"}`
+        );
       }
     }
 
