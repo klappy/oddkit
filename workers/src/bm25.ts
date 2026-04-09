@@ -102,7 +102,7 @@ export function searchBM25(
 
   // Pre-compute phrase matching inputs once, outside the per-doc loop.
   const queryLower = query.toLowerCase();
-  const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 1);
+  const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
 
   const scores: Array<{ id: string; score: number }> = [];
 
@@ -131,22 +131,19 @@ export function searchBM25(
       score += idf * tfNorm;
     }
 
-    // Phrase boost: BM25 treats every query token independently, which lets
-    // high-frequency terms dilute rare-but-important ones (e.g. "pattern"
-    // drowning out "vodka" in "Vodka Architecture pattern"). Checking whether
-    // the original query phrase appears verbatim — or as a bigram — in the
-    // document's original text rescues those precise title/tag matches.
-    const docLower = doc.originalText.toLowerCase();
-    if (docLower.includes(queryLower)) {
-      // Full query is a substring of the doc text — strong exact match.
-      score += PHRASE_BOOST_EXACT;
-    } else if (queryWords.length >= 2) {
-      // Scan every consecutive word pair in the query; first hit wins.
-      for (let i = 0; i < queryWords.length - 1; i++) {
-        const bigram = queryWords[i] + " " + queryWords[i + 1];
-        if (docLower.includes(bigram)) {
-          score += PHRASE_BOOST_PARTIAL;
-          break;
+    // Phrase boost: supplement BM25 — never replace it.
+    // Only apply when the document already has genuine BM25 relevance.
+    if (score > 0) {
+      const docLower = doc.originalText.toLowerCase();
+      if (docLower.includes(queryLower)) {
+        score += PHRASE_BOOST_EXACT;
+      } else if (queryWords.length >= 2) {
+        for (let i = 0; i < queryWords.length - 1; i++) {
+          const bigram = queryWords[i] + " " + queryWords[i + 1];
+          if (docLower.includes(bigram)) {
+            score += PHRASE_BOOST_PARTIAL;
+            break;
+          }
         }
       }
     }
