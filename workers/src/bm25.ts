@@ -44,6 +44,8 @@ export interface BM25Doc {
   id: string;
   terms: string[];
   length: number;
+  /** Original (pre-tokenization) text, used for phrase-level scoring. */
+  originalText: string;
 }
 
 export interface BM25Index {
@@ -63,7 +65,7 @@ export function buildBM25Index(
 
   for (const doc of documents) {
     const terms = tokenize(doc.text);
-    docs.push({ id: doc.id, terms, length: terms.length });
+    docs.push({ id: doc.id, terms, length: terms.length, originalText: doc.text });
     totalLength += terms.length;
 
     const seen = new Set<string>();
@@ -83,6 +85,12 @@ export function buildBM25Index(
   };
 }
 
+// Phrase boost constants — supplement BM25, never replace it.
+// Exact: full query string found as substring in doc text.
+// Partial: any consecutive two-word query bigram found in doc text.
+const PHRASE_BOOST_EXACT = 5.0;
+const PHRASE_BOOST_PARTIAL = 2.0;
+
 /** Search BM25 index, return sorted {id, score} pairs */
 export function searchBM25(
   index: BM25Index,
@@ -91,6 +99,10 @@ export function searchBM25(
 ): Array<{ id: string; score: number }> {
   const queryTerms = tokenize(query);
   if (queryTerms.length === 0) return [];
+
+  // Pre-compute phrase matching inputs once, outside the per-doc loop.
+  const queryLower = query.toLowerCase();
+  const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 1);
 
   const scores: Array<{ id: string; score: number }> = [];
 
@@ -117,6 +129,26 @@ export function searchBM25(
         (freq + K1 * (1 - B + (B * doc.length) / index.avgdl));
 
       score += idf * tfNorm;
+    }
+
+    // Phrase boost: BM25 treats every query token independently, which lets
+    // high-frequency terms dilute rare-but-important ones (e.g. "pattern"
+    // drowning out "vodka" in "Vodka Architecture pattern"). Checking whether
+    // the original query phrase appears verbatim — or as a bigram — in the
+    // document's original text rescues those precise title/tag matches.
+    const docLower = doc.originalText.toLowerCase();
+    if (docLower.includes(queryLower)) {
+      // Full query is a substring of the doc text — strong exact match.
+      score += PHRASE_BOOST_EXACT;
+    } else if (queryWords.length >= 2) {
+      // Scan every consecutive word pair in the query; first hit wins.
+      for (let i = 0; i < queryWords.length - 1; i++) {
+        const bigram = queryWords[i] + " " + queryWords[i + 1];
+        if (docLower.includes(bigram)) {
+          score += PHRASE_BOOST_PARTIAL;
+          break;
+        }
+      }
     }
 
     if (score > 0) scores.push({ id: doc.id, score });
