@@ -102,7 +102,7 @@ export function searchBM25(
 
   // Pre-compute phrase matching inputs once, outside the per-doc loop.
   const queryLower = query.toLowerCase();
-  const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+  const queryWords = queryLower.replace(/[^\w\s-]/g, " ").split(/[\s\-_/]+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
 
   const scores: Array<{ id: string; score: number }> = [];
 
