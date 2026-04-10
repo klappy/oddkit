@@ -689,20 +689,11 @@ export default {
     if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
       const startTime = Date.now();
 
-      // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
-      if (env.ODDKIT_TELEMETRY && request.method === "POST") {
-        ctx.waitUntil(
-          (async () => {
-            try {
-              const cloned = request.clone();
-              const { recordTelemetry } = await import("./telemetry");
-              await recordTelemetry(cloned, env, startTime);
-            } catch {
-              // Telemetry must never break MCP requests
-            }
-          })(),
-        );
-      }
+      // Clone before handler consumes the body
+      const telemetryClone =
+        env.ODDKIT_TELEMETRY && request.method === "POST"
+          ? request.clone()
+          : null;
 
       const server = await createServer(env);
       const handler = createMcpHandler(server, {
@@ -714,7 +705,24 @@ export default {
           exposeHeaders: "Mcp-Session-Id",
         },
       });
-      return handler(request, env, ctx);
+      const response = await handler(request, env, ctx);
+
+      // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
+      if (telemetryClone) {
+        const durationMs = Date.now() - startTime;
+        ctx.waitUntil(
+          (async () => {
+            try {
+              const { recordTelemetry } = await import("./telemetry");
+              await recordTelemetry(telemetryClone, env, durationMs);
+            } catch {
+              // Telemetry must never break MCP requests
+            }
+          })(),
+        );
+      }
+
+      return response;
     }
 
     return new Response(renderNotFoundPage(url.pathname, url.origin), {

@@ -13,7 +13,7 @@ export const TELEMETRY_QUERIES = {
     SELECT
       SUM(_sample_interval) as total_events,
       SUM(CASE WHEN blob1 = 'tool_call' THEN _sample_interval ELSE 0 END) as tool_calls,
-      SUM(_sample_interval) as total_requests
+      SUM(CASE WHEN blob1 = 'mcp_request' THEN _sample_interval ELSE 0 END) as total_requests
     FROM oddkit_telemetry
     WHERE timestamp > NOW() - INTERVAL '30' DAY
   `,

@@ -15,7 +15,7 @@
  *   blob7: document_uri   — for get calls, the URI requested
  *   blob8: worker_version — oddkit version string
  *   double1: count        — always 1 (for SUM aggregation)
- *   double2: duration_ms  — request processing time
+ *   double2: duration_ms  — MCP request processing time (measured by caller)
  *   index1: sampling_key  — consumer label (for sampling consistency)
  *
  * See: klappy://canon/constraints/telemetry-governance
@@ -28,12 +28,17 @@ import type { Env } from "./zip-baseline-fetcher";
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Sanitize a consumer label: trim, collapse whitespace, truncate to 128 chars.
+ * Sanitize a consumer label: trim, collapse whitespace, truncate to fit
+ * Analytics Engine's 96-byte index limit.
  * Returns empty string for null/undefined/whitespace-only input.
  */
 function sanitize(raw: string | null | undefined): string {
   if (!raw) return "";
-  const cleaned = raw.trim().replace(/\s+/g, " ").slice(0, 128);
+  let cleaned = raw.trim().replace(/\s+/g, " ").slice(0, 96);
+  const encoder = new TextEncoder();
+  while (cleaned.length > 0 && encoder.encode(cleaned).length > 96) {
+    cleaned = cleaned.slice(0, -1);
+  }
   return cleaned;
 }
 
@@ -169,7 +174,7 @@ export function parseToolCall(payload: unknown): {
 export function recordTelemetry(
   request: Request,
   env: Env,
-  startTime: number,
+  durationMs: number,
 ): Promise<void> {
   if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
 
@@ -206,7 +211,7 @@ export function recordTelemetry(
             documentUri,
             env.ODDKIT_VERSION || "unknown",
           ],
-          doubles: [1, Date.now() - startTime],
+          doubles: [1, durationMs],
           indexes: [consumerLabel],
         });
       }
