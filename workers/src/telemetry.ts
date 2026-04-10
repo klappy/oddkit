@@ -153,7 +153,7 @@ export function parseToolCall(payload: unknown): {
   if (typeof args === "object" && args !== null) {
     const a = args as Record<string, unknown>;
     // Unified oddkit tool uses "input" for URI on get action
-    if (typeof a.input === "string" && a.input.startsWith("klappy://")) {
+    if (typeof a.input === "string" && a.input.includes("://")) {
       documentUri = a.input;
     }
   }
