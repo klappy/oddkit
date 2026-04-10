@@ -24,3 +24,8 @@ id = "6baa38d843404fc9b703f3c9053d8c52"
 [[r2_buckets]]
 binding = "BASELINE"
 bucket_name = "oddkit-baseline"
+
+# Analytics Engine for telemetry (E0008)
+[[analytics_engine_datasets]]
+binding = "ODDKIT_TELEMETRY"
+dataset = "oddkit_telemetry"
