@@ -95,26 +95,26 @@ check_json() {
 echo "--- Health & Connectivity ---"
 echo ""
 
-# Test 1: Root serves chat UI (HTML)
-echo "Test 1: Chat UI (GET /)"
-CONTENT_TYPE_ROOT=$(curl -sf --max-time 10 "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "content-type" | head -1 || true)
-if echo "$CONTENT_TYPE_ROOT" | grep -qi "text/html"; then
-  echo "PASS - Root returns text/html"
+# Test 1: Root redirects to getting started article
+echo "Test 1: Root redirects (GET /)"
+HTTP_STATUS_ROOT=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" "$WORKER_URL/")
+if [ "$HTTP_STATUS_ROOT" = "302" ] || [ "$HTTP_STATUS_ROOT" = "301" ]; then
+  echo "PASS - Root returns $HTTP_STATUS_ROOT redirect"
   PASSED=$((PASSED + 1))
 else
-  echo "FAIL - Root did not return text/html: $CONTENT_TYPE_ROOT"
+  echo "FAIL - Root returned $HTTP_STATUS_ROOT (expected 302)"
   FAILED=$((FAILED + 1))
 fi
 
-# Test 1b: Root includes Link header for MCP discovery
+# Test 1b: Root redirect points to klappy.dev
 echo ""
-echo "Test 1b: Root Link header points to MCP endpoint"
-LINK_HEADER=$(curl -sf --max-time 10 "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "^link:" | head -1 || true)
-if echo "$LINK_HEADER" | grep -qi "mcp"; then
-  echo "PASS - Root has Link header with MCP reference: $LINK_HEADER"
+echo "Test 1b: Root redirect target"
+LOCATION_HEADER=$(curl -s --max-time 10 "$WORKER_URL/" -D - -o /dev/null 2>&1 | grep -i "^location:" | head -1 || true)
+if echo "$LOCATION_HEADER" | grep -qi "klappy.dev"; then
+  echo "PASS - Root redirects to klappy.dev"
   PASSED=$((PASSED + 1))
 else
-  echo "FAIL - Root missing Link header with MCP reference"
+  echo "FAIL - Root redirect not to klappy.dev: $LOCATION_HEADER"
   FAILED=$((FAILED + 1))
 fi
 

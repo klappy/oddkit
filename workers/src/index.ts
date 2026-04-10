@@ -7,8 +7,7 @@
  *
  * Architecture:
  *   /mcp          → createMcpHandler (MCP protocol)
- *   /             → Chat UI
- *   /api/chat     → Chat API
+ *   /             → Redirect to getting started article
  *   /health       → Health check
  *   /.well-known/ → MCP server card
  *   *             → 404
@@ -20,9 +19,7 @@ import { z } from "zod";
 
 import { handleUnifiedAction, type Env } from "./orchestrate";
 import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
-import { renderChatPage } from "./chat-ui";
 import { renderNotFoundPage } from "./not-found-ui";
-import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
 
 export type { Env };
@@ -330,6 +327,112 @@ Use when:
     );
   }
 
+  // ── Telemetry tools (E0008) ──────────────────────────────────────────────
+
+  server.tool(
+    "telemetry_public",
+    "Return public telemetry disclosures and usage leaderboards. Shows consumer, tool, canon URL, and document leaderboards. Same data the maintainer sees — no information asymmetry.",
+    {
+      query_type: z.enum(["summary", "tools", "consumers", "canon_urls", "documents", "daily_trend", "methods"])
+        .optional()
+        .default("summary")
+        .describe("Which leaderboard or metric to return"),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async ({ query_type }) => {
+      if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              action: "telemetry_public",
+              result: { error: "Telemetry queries not configured. CF_ACCOUNT_ID and CF_API_TOKEN required." },
+            }, null, 2),
+          }],
+        };
+      }
+
+      const { queryTelemetry } = await import("./telemetry");
+      const { TELEMETRY_QUERIES } = await import("./telemetry-queries");
+
+      const queryMap: Record<string, string> = {
+        summary: TELEMETRY_QUERIES.summary_30d,
+        tools: TELEMETRY_QUERIES.tools,
+        consumers: TELEMETRY_QUERIES.consumers,
+        canon_urls: TELEMETRY_QUERIES.canon_urls,
+        documents: TELEMETRY_QUERIES.documents,
+        daily_trend: TELEMETRY_QUERIES.daily_trend,
+        methods: TELEMETRY_QUERIES.methods,
+      };
+
+      const sql = queryMap[query_type ?? "summary"] ?? TELEMETRY_QUERIES.summary_30d;
+      const result = await queryTelemetry(env, sql);
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "telemetry_public",
+            result: { query_type, data: result, generated_at: new Date().toISOString() },
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
+  server.tool(
+    "telemetry_policy",
+    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime.",
+    {},
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async () => {
+      // Fetch the governance doc from canon
+      const fetcher = new ZipBaselineFetcher(env);
+      let policyContent = "Governance document not found. See https://github.com/klappy/klappy.dev/blob/main/canon/constraints/telemetry-governance.md";
+
+      try {
+        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md");
+        if (content) policyContent = content;
+      } catch {
+        // Fall through to default message
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "telemetry_policy",
+            result: {
+              policy: policyContent,
+              governance_uri: "klappy://canon/constraints/telemetry-governance",
+              self_report_headers: {
+                "x-oddkit-client": "Your client name (highest priority identifier)",
+                "x-oddkit-client-version": "Your client version",
+                "x-oddkit-agent-name": "The AI agent name",
+                "x-oddkit-agent-version": "The AI agent version",
+                "x-oddkit-surface": "Where this is running (e.g. claude.ai, vscode)",
+                "x-oddkit-contact-url": "URL for your project or org",
+                "x-oddkit-policy-url": "Your privacy/telemetry policy URL",
+                "x-oddkit-capabilities": "Comma-separated capability list",
+              },
+              generated_at: new Date().toISOString(),
+            },
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
   // ── Resources ────────────────────────────────────────────────────────────
 
   server.resource(
@@ -514,21 +617,9 @@ export default {
       return new Response(null, { headers: corsHeaders(origin) });
     }
 
-    // Chat UI at root
+    // Redirect to getting started article
     if (url.pathname === "/" && request.method === "GET") {
-      return new Response(renderChatPage(), {
-        headers: {
-          "Content-Type": "text/html;charset=utf-8",
-          "Cache-Control": "no-cache",
-          Link: `<${url.origin}/mcp>; rel="mcp-server-url", <${url.origin}/.well-known/mcp.json>; rel="mcp-server-card"`,
-          ...corsHeaders(origin),
-        },
-      });
-    }
-
-    // Chat API
-    if (url.pathname === "/api/chat" && request.method === "POST") {
-      return handleChatRequest(request, env);
+      return Response.redirect("https://klappy.dev/page/writings/getting-started-with-odd-and-oddkit", 302);
     }
 
     // MCP server card
@@ -560,8 +651,8 @@ export default {
           ok: true,
           service: "oddkit",
           version: env.ODDKIT_VERSION || BUILD_VERSION,
-          endpoints: { chat: "/", api: "/api/chat", mcp: "/mcp", health: "/health" },
-          capabilities: ["chat", "tools", "resources", "prompts"],
+          endpoints: { mcp: "/mcp", health: "/health" },
+          capabilities: ["tools", "resources", "prompts"],
         }),
         {
           headers: {
@@ -581,6 +672,14 @@ export default {
     //   - CORS for MCP requests
     //   - Error responses in JSON-RPC format
     if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
+      const startTime = Date.now();
+
+      // Clone before handler consumes the body
+      const telemetryClone =
+        env.ODDKIT_TELEMETRY && request.method === "POST"
+          ? request.clone()
+          : null;
+
       const server = await createServer(env);
       const handler = createMcpHandler(server, {
         route: "/mcp",
@@ -591,7 +690,24 @@ export default {
           exposeHeaders: "Mcp-Session-Id",
         },
       });
-      return handler(request, env, ctx);
+      const response = await handler(request, env, ctx);
+
+      // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
+      if (telemetryClone) {
+        const durationMs = Date.now() - startTime;
+        ctx.waitUntil(
+          (async () => {
+            try {
+              const { recordTelemetry } = await import("./telemetry");
+              await recordTelemetry(telemetryClone, env, durationMs);
+            } catch {
+              // Telemetry must never break MCP requests
+            }
+          })(),
+        );
+      }
+
+      return response;
     }
 
     return new Response(renderNotFoundPage(url.pathname, url.origin), {

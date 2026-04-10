@@ -1,8 +1,8 @@
 /**
- * CI script: verify the creed in AGENTS.md and chat-api.ts matches canon.
+ * CI script: verify the creed in AGENTS.md matches canon.
  *
  * Reads canon/values/orientation.md from baseline, extracts the creed,
- * and checks it appears verbatim in both consumer files.
+ * and checks it appears verbatim in AGENTS.md.
  *
  * Exit 0 = fresh, Exit 1 = drift detected.
  */
@@ -56,23 +56,6 @@ async function main() {
       failures++;
     } else {
       console.log("OK: AGENTS.md contains all creed lines");
-    }
-  }
-
-  // 4. Check workers/src/chat-api.ts
-  const chatApiPath = join(REPO_ROOT, "workers", "src", "chat-api.ts");
-  if (!existsSync(chatApiPath)) {
-    console.error("FAIL: workers/src/chat-api.ts not found");
-    failures++;
-  } else {
-    const chatApiContent = readFileSync(chatApiPath, "utf-8");
-    const missing = creed.filter((line) => !chatApiContent.includes(line));
-    if (missing.length > 0) {
-      console.error("FAIL: workers/src/chat-api.ts is missing creed lines:");
-      for (const line of missing) console.error(`  - ${line}`);
-      failures++;
-    } else {
-      console.log("OK: workers/src/chat-api.ts contains all creed lines");
     }
   }
 

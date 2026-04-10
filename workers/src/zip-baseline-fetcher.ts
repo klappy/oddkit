@@ -26,6 +26,10 @@ export interface Env {
   BASELINE_CACHE?: KVNamespace;
   BASELINE?: R2Bucket;
   OPENAI_API_KEY?: string;
+  // Phase 1 telemetry (E0008)
+  ODDKIT_TELEMETRY?: AnalyticsEngineDataset;
+  CF_ACCOUNT_ID?: string;   // For Analytics Engine SQL API queries
+  CF_API_TOKEN?: string;    // For Analytics Engine SQL API queries
 }
 
 export interface IndexEntry {
