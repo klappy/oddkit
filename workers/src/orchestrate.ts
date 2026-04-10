@@ -692,6 +692,7 @@ async function runCatalog(
     articles = candidates.slice(effectiveOffset, effectiveOffset + effectiveLimit).map((e) => ({
       path: e.path,
       uri: e.uri,
+      title: ((e.frontmatter as Record<string, unknown>)?.title as string) || e.title,
       metadata: (e.frontmatter as Record<string, unknown>) || {},
     }));
   }
@@ -723,7 +724,7 @@ async function runCatalog(
       `${sort_by === "path" ? "All documents" : "Recent articles"}${filter_epoch ? ` (${filter_epoch})` : ""}:`,
       ...articles.map((a) => {
         const date = (a.metadata.date as string) || "no date";
-        return `- \`${a.path}\` — ${a.metadata.title || "Untitled"} (${date})`;
+        return `- \`${a.path}\` — ${a.title || "Untitled"} (${date})`;
       }),
     );
   }
