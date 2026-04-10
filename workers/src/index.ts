@@ -145,7 +145,7 @@ Use when:
       canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
       include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
       section: z.string().optional().describe("For action='get': extract only the named ## section from the document. Returns section content or available sections if not found."),
-      sort_by: z.enum(["date"]).optional().describe("For action='catalog': sort articles by frontmatter field. 'date' returns newest first with full metadata."),
+      sort_by: z.enum(["date", "path"]).optional().describe("For action='catalog': sort articles. 'date' returns newest first (requires frontmatter). 'path' returns all docs alphabetically, including undated."),
       limit: z.number().min(1).max(500).optional().describe("For action='catalog': max articles to return when sort_by is provided. Default: 10, max: 500."),
       offset: z.number().min(0).optional().describe("For action='catalog': skip this many articles before returning results. Use with limit for pagination. Default: 0."),
       filter_epoch: z.string().optional().describe("For action='catalog': filter to articles with this epoch value in frontmatter (e.g. 'E0007')."),
@@ -258,7 +258,7 @@ Use when:
       action: "catalog",
       schema: {
         canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
-        sort_by: z.enum(["date"]).optional().describe("Sort articles by frontmatter field. 'date' returns newest first with full metadata."),
+        sort_by: z.enum(["date", "path"]).optional().describe("Sort articles. 'date' returns newest first (requires frontmatter). 'path' returns all docs alphabetically, including undated."),
         limit: z.number().min(1).max(500).optional().describe("Max articles to return when sort_by is provided. Default: 10, max: 500."),
         offset: z.number().min(0).optional().describe("Skip this many articles before returning results. Use with limit for pagination. Default: 0."),
         filter_epoch: z.string().optional().describe("Filter to articles with this epoch value in frontmatter (e.g. 'E0007')."),

@@ -662,8 +662,10 @@ async function runCatalog(
   // Build articles list when sort_by is provided
   let articles: Array<{ path: string; uri: string; metadata: Record<string, unknown> }> | undefined;
   let totalCandidates = 0;
-  if (sort_by === "date") {
-    let candidates = index.entries.filter((e) => e.frontmatter);
+  if (sort_by === "date" || sort_by === "path") {
+    let candidates = sort_by === "date"
+      ? index.entries.filter((e) => e.frontmatter)
+      : [...index.entries]; // "path" includes ALL entries, even without frontmatter
 
     // Server-side epoch filter — deterministic, cheap, correct
     if (filter_epoch) {
@@ -672,14 +674,19 @@ async function runCatalog(
       );
     }
 
-    // Server-side date sort — deterministic, cheap, correct
-    candidates.sort((a, b) => {
-      const da = String((a.frontmatter as Record<string, unknown>)?.date ?? "");
-      const db = String((b.frontmatter as Record<string, unknown>)?.date ?? "");
-      if (db && !da) return 1; // docs without dates sort last
-      if (da && !db) return -1;
-      return db.localeCompare(da); // newest first
-    });
+    if (sort_by === "date") {
+      // Server-side date sort — deterministic, cheap, correct
+      candidates.sort((a, b) => {
+        const da = String((a.frontmatter as Record<string, unknown>)?.date ?? "");
+        const db = String((b.frontmatter as Record<string, unknown>)?.date ?? "");
+        if (db && !da) return 1; // docs without dates sort last
+        if (da && !db) return -1;
+        return db.localeCompare(da); // newest first
+      });
+    } else {
+      // Alphabetical by path
+      candidates.sort((a, b) => (a.path || "").localeCompare(b.path || ""));
+    }
 
     totalCandidates = candidates.length;
     articles = candidates.slice(effectiveOffset, effectiveOffset + effectiveLimit).map((e) => ({
@@ -713,7 +720,7 @@ async function runCatalog(
   if (articles && articles.length > 0) {
     assistantTextParts.push(
       ``,
-      `Recent articles${filter_epoch ? ` (${filter_epoch})` : ""}:`,
+      `${sort_by === "path" ? "All documents" : "Recent articles"}${filter_epoch ? ` (${filter_epoch})` : ""}:`,
       ...articles.map((a) => {
         const date = (a.metadata.date as string) || "no date";
         return `- \`${a.path}\` — ${a.metadata.title || "Untitled"} (${date})`;
