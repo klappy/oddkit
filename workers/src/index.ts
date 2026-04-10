@@ -330,6 +330,112 @@ Use when:
     );
   }
 
+  // ── Telemetry tools (E0008) ──────────────────────────────────────────────
+
+  server.tool(
+    "telemetry_public",
+    "Return public telemetry disclosures and usage leaderboards. Shows consumer, tool, canon URL, and document leaderboards. Same data the maintainer sees — no information asymmetry.",
+    {
+      query_type: z.enum(["summary", "tools", "consumers", "canon_urls", "documents", "daily_trend", "methods"])
+        .optional()
+        .default("summary")
+        .describe("Which leaderboard or metric to return"),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async ({ query_type }) => {
+      if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              action: "telemetry_public",
+              result: { error: "Telemetry queries not configured. CF_ACCOUNT_ID and CF_API_TOKEN required." },
+            }, null, 2),
+          }],
+        };
+      }
+
+      const { queryTelemetry } = await import("./telemetry");
+      const { TELEMETRY_QUERIES } = await import("./telemetry-queries");
+
+      const queryMap: Record<string, string> = {
+        summary: TELEMETRY_QUERIES.summary_30d,
+        tools: TELEMETRY_QUERIES.tools,
+        consumers: TELEMETRY_QUERIES.consumers,
+        canon_urls: TELEMETRY_QUERIES.canon_urls,
+        documents: TELEMETRY_QUERIES.documents,
+        daily_trend: TELEMETRY_QUERIES.daily_trend,
+        methods: TELEMETRY_QUERIES.methods,
+      };
+
+      const sql = queryMap[query_type ?? "summary"] ?? TELEMETRY_QUERIES.summary_30d;
+      const result = await queryTelemetry(env, sql);
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "telemetry_public",
+            result: { query_type, data: result, generated_at: new Date().toISOString() },
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
+  server.tool(
+    "telemetry_policy",
+    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime.",
+    {},
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async () => {
+      // Fetch the governance doc from canon
+      const fetcher = new ZipBaselineFetcher(env);
+      let policyContent = "Governance document not found. See https://github.com/klappy/klappy.dev/blob/main/canon/constraints/telemetry-governance.md";
+
+      try {
+        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md");
+        if (content) policyContent = content;
+      } catch {
+        // Fall through to default message
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "telemetry_policy",
+            result: {
+              policy: policyContent,
+              governance_uri: "klappy://canon/constraints/telemetry-governance",
+              self_report_headers: {
+                "x-oddkit-client": "Your client name (highest priority identifier)",
+                "x-oddkit-client-version": "Your client version",
+                "x-oddkit-agent-name": "The AI agent name",
+                "x-oddkit-agent-version": "The AI agent version",
+                "x-oddkit-surface": "Where this is running (e.g. claude.ai, vscode)",
+                "x-oddkit-contact-url": "URL for your project or org",
+                "x-oddkit-policy-url": "Your privacy/telemetry policy URL",
+                "x-oddkit-capabilities": "Comma-separated capability list",
+              },
+              generated_at: new Date().toISOString(),
+            },
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
   // ── Resources ────────────────────────────────────────────────────────────
 
   server.resource(
@@ -581,6 +687,23 @@ export default {
     //   - CORS for MCP requests
     //   - Error responses in JSON-RPC format
     if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
+      const startTime = Date.now();
+
+      // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
+      if (env.ODDKIT_TELEMETRY && request.method === "POST") {
+        ctx.waitUntil(
+          (async () => {
+            try {
+              const cloned = request.clone();
+              const { recordTelemetry } = await import("./telemetry");
+              recordTelemetry(cloned, env, startTime);
+            } catch {
+              // Telemetry must never break MCP requests
+            }
+          })(),
+        );
+      }
+
       const server = await createServer(env);
       const handler = createMcpHandler(server, {
         route: "/mcp",
