@@ -92,8 +92,6 @@ DON'T GUESS. READ. VERIFY. VALIDATE.
 ## Project Structure
 
 - `workers/` — Cloudflare Worker (MCP + chat UI)
-- `workers/src/chat-ui.ts` — Chat HTML (marked@15 + DOMPurify@3 from CDN)
-- `workers/src/chat-api.ts` — OpenAI streaming proxy with LLM-driven oddkit tool calling
 - `workers/src/index.ts` — Routes: GET / (chat), POST /api/chat, GET /health, POST /mcp
 - `odd/ledger/` — Learnings and decisions (JSONL, append-only)
 - `tests/cloudflare-production.test.sh` — Deployment tests (URL-parameterized, works against any deploy target)
