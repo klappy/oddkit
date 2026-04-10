@@ -62,9 +62,9 @@ jobs:
           EXISTING=$(gh issue list --label creed-drift --state open --json number --jq length)
           if [ "$EXISTING" = "0" ]; then
             gh issue create \
-              --title "Creed drift: AGENTS.md or chat-api.ts out of sync with canon" \
+              --title "Creed drift: AGENTS.md out of sync with canon" \
               --label creed-drift \
-              --body "The weekly creed freshness check failed. The creed in canon/values/orientation.md has changed but AGENTS.md and/or workers/src/chat-api.ts have not been updated. Run \`node scripts/check-creed-freshness.js\` locally to see which lines are stale."
+              --body "The weekly creed freshness check failed. The creed in canon/values/orientation.md has changed but AGENTS.md has not been updated. Run \`node scripts/check-creed-freshness.js\` locally to see which lines are stale."
           fi
 
       - name: Fail if creed drifted

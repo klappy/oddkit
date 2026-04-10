@@ -7,8 +7,7 @@
  *
  * Architecture:
  *   /mcp          → createMcpHandler (MCP protocol)
- *   /             → Chat UI
- *   /api/chat     → Chat API
+ *   /             → Redirect to getting started article
  *   /health       → Health check
  *   /.well-known/ → MCP server card
  *   *             → 404
@@ -20,9 +19,7 @@ import { z } from "zod";
 
 import { handleUnifiedAction, type Env } from "./orchestrate";
 import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
-import { renderChatPage } from "./chat-ui";
 import { renderNotFoundPage } from "./not-found-ui";
-import { handleChatRequest } from "./chat-api";
 import pkg from "../package.json";
 
 export type { Env };
@@ -620,21 +617,9 @@ export default {
       return new Response(null, { headers: corsHeaders(origin) });
     }
 
-    // Chat UI at root
+    // Redirect to getting started article
     if (url.pathname === "/" && request.method === "GET") {
-      return new Response(renderChatPage(), {
-        headers: {
-          "Content-Type": "text/html;charset=utf-8",
-          "Cache-Control": "no-cache",
-          Link: `<${url.origin}/mcp>; rel="mcp-server-url", <${url.origin}/.well-known/mcp.json>; rel="mcp-server-card"`,
-          ...corsHeaders(origin),
-        },
-      });
-    }
-
-    // Chat API
-    if (url.pathname === "/api/chat" && request.method === "POST") {
-      return handleChatRequest(request, env);
+      return Response.redirect("https://klappy.dev/page/writings/getting-started-with-odd-and-oddkit", 302);
     }
 
     // MCP server card
@@ -666,8 +651,8 @@ export default {
           ok: true,
           service: "oddkit",
           version: env.ODDKIT_VERSION || BUILD_VERSION,
-          endpoints: { chat: "/", api: "/api/chat", mcp: "/mcp", health: "/health" },
-          capabilities: ["chat", "tools", "resources", "prompts"],
+          endpoints: { mcp: "/mcp", health: "/health" },
+          capabilities: ["tools", "resources", "prompts"],
         }),
         {
           headers: {
