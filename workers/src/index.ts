@@ -696,7 +696,7 @@ export default {
             try {
               const cloned = request.clone();
               const { recordTelemetry } = await import("./telemetry");
-              recordTelemetry(cloned, env, startTime);
+              await recordTelemetry(cloned, env, startTime);
             } catch {
               // Telemetry must never break MCP requests
             }

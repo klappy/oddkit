@@ -170,11 +170,11 @@ export function recordTelemetry(
   request: Request,
   env: Env,
   startTime: number,
-): void {
-  if (!env.ODDKIT_TELEMETRY) return;
+): Promise<void> {
+  if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
 
   // Parse the request body to extract JSON-RPC details
-  request
+  return request
     .json()
     .then((body: unknown) => {
       // Handle batch requests — process each message

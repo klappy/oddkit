@@ -11,7 +11,7 @@
 export const TELEMETRY_QUERIES = {
   summary_30d: `
     SELECT
-      COUNT(*) as total_events,
+      SUM(_sample_interval) as total_events,
       SUM(CASE WHEN blob1 = 'tool_call' THEN _sample_interval ELSE 0 END) as tool_calls,
       SUM(_sample_interval) as total_requests
     FROM oddkit_telemetry
