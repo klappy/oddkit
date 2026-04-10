@@ -253,5 +253,12 @@ export async function queryTelemetry(
     },
   );
 
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      error: `Cloudflare Analytics API returned ${response.status}: ${body}`,
+    };
+  }
+
   return response.json();
 }
