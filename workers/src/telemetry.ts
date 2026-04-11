@@ -14,6 +14,7 @@
  *   blob6: canon_url      — which repo is being served
  *   blob7: document_uri   — for get calls, the URI requested
  *   blob8: worker_version — oddkit version string
+ *   blob9: cache_tier    — which storage tier served the index (E0008.1)
  *   double1: count        — always 1 (for SUM aggregation)
  *   double2: duration_ms  — MCP request processing time (measured by caller)
  *   index1: sampling_key  — consumer label (for sampling consistency)
@@ -169,7 +170,7 @@ export function parseToolCall(payload: unknown): {
  * no await (fire-and-forget via Analytics Engine).
  * Called with a cloned request to avoid consuming the original body.
  */
-export function recordTelemetry(request: Request, env: Env, durationMs: number): Promise<void> {
+export function recordTelemetry(request: Request, env: Env, durationMs: number, cacheTier?: string): Promise<void> {
   if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
 
   // Parse the request body to extract JSON-RPC details
@@ -206,6 +207,7 @@ export function recordTelemetry(request: Request, env: Env, durationMs: number):
             toolCall?.canonUrl || env.BASELINE_URL || "",
             documentUri,
             env.ODDKIT_VERSION || "unknown",
+            cacheTier || "none", // blob9: E0008.1 x-ray cache tier
           ],
           doubles: [1, durationMs],
           indexes: [consumerLabel],

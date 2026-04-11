@@ -92,7 +92,7 @@ jobs:
             BRANCH="$REF_NAME"
           fi
 
-          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr '.' '-')
           URL="https://${SANITIZED}-oddkit.klappy.workers.dev"
 
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
