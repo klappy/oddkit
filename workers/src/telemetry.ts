@@ -232,9 +232,32 @@ export function recordTelemetry(
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Validate that a SQL query only targets the oddkit_telemetry dataset.
+ * Rejects SHOW, non-SELECT statements, and queries referencing other tables.
+ */
+function validateTelemetryQuery(query: string): string | null {
+  const normalized = query.replace(/\s+/g, " ").trim();
+  if (!/^\s*SELECT\b/i.test(normalized)) {
+    return "Only SELECT queries are allowed";
+  }
+  const fromMatches = normalized.match(/\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi);
+  if (!fromMatches || fromMatches.length === 0) {
+    return "Query must include a FROM clause";
+  }
+  for (const m of fromMatches) {
+    const table = m.replace(/^FROM\s+/i, "").trim();
+    if (table.toLowerCase() !== "oddkit_telemetry") {
+      return `Query may only reference the oddkit_telemetry dataset, found: ${table}`;
+    }
+  }
+  return null;
+}
+
+/**
  * Query Analytics Engine SQL API.
  * Used by telemetry_public tool.
  * Requires CF_ACCOUNT_ID and CF_API_TOKEN env vars.
+ * Only permits SELECT queries against the oddkit_telemetry dataset.
  */
 export async function queryTelemetry(
   env: Env,
@@ -245,6 +268,11 @@ export async function queryTelemetry(
       error:
         "Telemetry queries not configured (missing CF_ACCOUNT_ID or CF_API_TOKEN)",
     };
+  }
+
+  const validationError = validateTelemetryQuery(query);
+  if (validationError) {
+    return { error: validationError };
   }
 
   const response = await fetch(
