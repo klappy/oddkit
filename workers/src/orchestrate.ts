@@ -38,6 +38,7 @@ export interface OddkitState {
 export interface OddkitEnvelope {
   action: string;
   result: unknown;
+  server_time: string; // E0008.2 — UTC ISO 8601, every response, first-class primitive
   state?: OddkitState;
   assistant_text: string;
   debug?: {
@@ -50,6 +51,9 @@ export interface OddkitEnvelope {
     [key: string]: unknown;
   };
 }
+
+/** Internal type — handlers return this, handleUnifiedAction stamps server_time */
+type ActionResult = Omit<OddkitEnvelope, "server_time">;
 
 export interface UnifiedParams {
   action: string;
@@ -306,7 +310,7 @@ async function runSearch(
   canonUrl?: string,
   state?: OddkitState,
   includeMetadata?: boolean,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(canonUrl);
   const bm25 = getBM25Index(index.entries);
@@ -428,7 +432,7 @@ async function runGet(
   state?: OddkitState,
   includeMetadata?: boolean,
   section?: string,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
 
   // Resolve URI to file path. Three cases:
@@ -539,7 +543,7 @@ async function runGet(
   };
 }
 
-function runVersion(env: Env): OddkitEnvelope {
+function runVersion(env: Env): ActionResult {
   return {
     action: "version",
     result: {
@@ -554,7 +558,7 @@ function runVersion(env: Env): OddkitEnvelope {
 async function runCleanupStorage(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   await fetcher.invalidateCache(canonUrl);
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
@@ -577,12 +581,12 @@ async function runLibrarian(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   // Delegate to search (BM25) for better results
   return runSearch(message, fetcher, canonUrl, state);
 }
 
-async function runValidate(message: string, state?: OddkitState): Promise<OddkitEnvelope> {
+async function runValidate(message: string, state?: OddkitState): Promise<ActionResult> {
   const artifactPatterns = /\b(\w+\.(png|jpg|jpeg|gif|mp4|mov|pdf|log|txt))\b/gi;
   const artifacts = [...message.matchAll(artifactPatterns)].map((m) => m[1]);
   const hasScreenshot = artifacts.some((a) => /\.(png|jpg|jpeg|gif)$/i.test(a));
@@ -631,7 +635,7 @@ async function runCatalog(
   canonUrl?: string,
   state?: OddkitState,
   options?: { sort_by?: string; limit?: number; offset?: number; filter_epoch?: string },
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(canonUrl);
   const { sort_by, limit: rawLimit, offset: rawOffset, filter_epoch } = options || {};
@@ -771,7 +775,7 @@ async function runPreflight(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(canonUrl);
   const topic = message.replace(/^preflight:\s*/i, "").trim();
@@ -855,7 +859,7 @@ async function runOrientAction(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const { mode, confidence } = detectMode(input);
   const index = await fetcher.getIndex(canonUrl);
@@ -975,7 +979,7 @@ async function runChallengeAction(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const claimType = detectClaimType(input);
   const index = await fetcher.getIndex(canonUrl);
@@ -1093,7 +1097,7 @@ async function runGateAction(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const transition = detectTransition(input);
   const fullInput = context ? `${input}\n${context}` : input;
@@ -1239,7 +1243,7 @@ async function runEncodeAction(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
   state?: OddkitState,
-): Promise<OddkitEnvelope> {
+): Promise<ActionResult> {
   const startMs = Date.now();
   const fullInput = context ? `${input}\n${context}` : input;
   const encodeType = detectEncodeType(input);
@@ -1361,6 +1365,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
     return {
       action: "error",
       result: { error: `Unknown action: ${action}. Valid: ${VALID_ACTIONS.join(", ")}` },
+      server_time: new Date().toISOString(),
       assistant_text: `Unknown action: ${action}. Valid actions: ${VALID_ACTIONS.join(", ")}`,
       debug: { generated_at: new Date().toISOString() },
     };
@@ -1370,7 +1375,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
 
   try {
     const actionStart = performance.now();
-    let result: OddkitEnvelope;
+    let result: ActionResult;
 
     switch (action) {
       case "orient":
@@ -1419,11 +1424,13 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
       };
     }
 
-    return result;
+    // Put the clock in the room (E0008.2) — one place, every response
+    return { ...result, server_time: new Date().toISOString() };
   } catch (error) {
     return {
       action: "error",
       result: { error: error instanceof Error ? error.message : "Unknown error" },
+      server_time: new Date().toISOString(),
       state: state ? initState(state) : undefined,
       assistant_text: `Error in ${action}: ${error instanceof Error ? error.message : "Unknown error"}`,
       debug: {
