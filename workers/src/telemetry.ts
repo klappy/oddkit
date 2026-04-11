@@ -51,11 +51,7 @@ function sanitize(raw: string | null | undefined): string {
  * Returns null if the payload is not an initialize message or has no clientInfo.
  */
 function parseClientInfoName(payload: unknown): string | null {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("method" in payload)
-  ) {
+  if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
   }
 
@@ -125,12 +121,9 @@ export function parseToolCall(payload: unknown): {
   method: string;
   toolName: string;
   documentUri: string;
+  canonUrl: string;
 } | null {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("method" in payload)
-  ) {
+  if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
   }
 
@@ -141,14 +134,15 @@ export function parseToolCall(payload: unknown): {
 
   const params = msg.params;
   if (typeof params !== "object" || params === null) {
-    return { method, toolName: "", documentUri: "" };
+    return { method, toolName: "", documentUri: "", canonUrl: "" };
   }
 
   const p = params as Record<string, unknown>;
   const toolName = typeof p.name === "string" ? p.name : "";
 
-  // Extract document URI from tool arguments (for get calls)
+  // Extract details from tool arguments
   let documentUri = "";
+  let canonUrl = "";
   const args = p.arguments;
   if (typeof args === "object" && args !== null) {
     const a = args as Record<string, unknown>;
@@ -156,9 +150,13 @@ export function parseToolCall(payload: unknown): {
     if (typeof a.input === "string" && a.input.includes("://")) {
       documentUri = a.input;
     }
+    // Extract canon_url from tool arguments
+    if (typeof a.canon_url === "string" && a.canon_url) {
+      canonUrl = a.canon_url;
+    }
   }
 
-  return { method, toolName, documentUri };
+  return { method, toolName, documentUri, canonUrl };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -171,11 +169,7 @@ export function parseToolCall(payload: unknown): {
  * no await (fire-and-forget via Analytics Engine).
  * Called with a cloned request to avoid consuming the original body.
  */
-export function recordTelemetry(
-  request: Request,
-  env: Env,
-  durationMs: number,
-): Promise<void> {
+export function recordTelemetry(request: Request, env: Env, durationMs: number): Promise<void> {
   if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
 
   // Parse the request body to extract JSON-RPC details
@@ -186,8 +180,10 @@ export function recordTelemetry(
       const messages = Array.isArray(body) ? body : [body];
 
       for (const payload of messages) {
-        const { label: consumerLabel, source: consumerSource } =
-          parseConsumerLabel(request, payload);
+        const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
+          request,
+          payload,
+        );
         const toolCall = parseToolCall(payload);
 
         const msg =
@@ -207,7 +203,7 @@ export function recordTelemetry(
             toolName,
             consumerLabel,
             consumerSource,
-            env.BASELINE_URL || "",
+            toolCall?.canonUrl || env.BASELINE_URL || "",
             documentUri,
             env.ODDKIT_VERSION || "unknown",
           ],
@@ -226,19 +222,61 @@ export function recordTelemetry(
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Validate that a SQL query only targets the oddkit_telemetry dataset.
+ * Rejects SHOW, non-SELECT statements, and queries referencing other tables.
+ */
+function validateTelemetryQuery(query: string): string | null {
+  const normalized = query.replace(/\s+/g, " ").trim();
+  if (!/^\s*SELECT\b/i.test(normalized)) {
+    return "Only SELECT queries are allowed";
+  }
+  if (normalized.includes(";")) {
+    return "Multiple statements are not allowed";
+  }
+  const fromJoinPattern = /\b(?:FROM|JOIN)\s+/gi;
+  const tableIdPattern = /^(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/;
+  const commaTablePattern = /^\s*,\s*(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/;
+  const tables: string[] = [];
+  let fjMatch: RegExpExecArray | null;
+  while ((fjMatch = fromJoinPattern.exec(normalized)) !== null) {
+    let rest = normalized.slice(fjMatch.index + fjMatch[0].length);
+    const first = tableIdPattern.exec(rest);
+    if (!first) continue;
+    tables.push((first[1] ?? first[2] ?? first[3]).toLowerCase());
+    rest = rest.slice(first[0].length);
+    let ct: RegExpExecArray | null;
+    while ((ct = commaTablePattern.exec(rest)) !== null) {
+      tables.push((ct[1] ?? ct[2] ?? ct[3]).toLowerCase());
+      rest = rest.slice(ct[0].length);
+    }
+  }
+  if (tables.length === 0) {
+    return "Query must include a FROM clause";
+  }
+  for (const table of tables) {
+    if (table !== "oddkit_telemetry") {
+      return `Query may only reference the oddkit_telemetry dataset, found: ${table}`;
+    }
+  }
+  return null;
+}
+
+/**
  * Query Analytics Engine SQL API.
  * Used by telemetry_public tool.
  * Requires CF_ACCOUNT_ID and CF_API_TOKEN env vars.
+ * Only permits SELECT queries against the oddkit_telemetry dataset.
  */
-export async function queryTelemetry(
-  env: Env,
-  query: string,
-): Promise<unknown> {
+export async function queryTelemetry(env: Env, query: string): Promise<unknown> {
   if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
     return {
-      error:
-        "Telemetry queries not configured (missing CF_ACCOUNT_ID or CF_API_TOKEN)",
+      error: "Telemetry queries not configured (missing CF_ACCOUNT_ID or CF_API_TOKEN)",
     };
+  }
+
+  const validationError = validateTelemetryQuery(query);
+  if (validationError) {
+    return { error: validationError };
   }
 
   const response = await fetch(
