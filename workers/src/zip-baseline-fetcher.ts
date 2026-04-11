@@ -1109,9 +1109,7 @@ export class ZipBaselineFetcher {
     const key = getCacheKey(repoUrl || "default");
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Clear KV caches: SHA-keyed index entries + SHA tracking
-    // Index keys are now SHA-suffixed (index/${base}_${shaKey}), so we
-    // must list-then-delete by prefix to find all SHA variants.
+    // Clear KV caches (legacy — retained for cleanup of old data)
     if (this.env.BASELINE_CACHE) {
       await this.deleteKvByPrefix(`index/${key}`);
       await this.deleteKvByPrefix(`sha/`);
@@ -1137,9 +1135,16 @@ export class ZipBaselineFetcher {
       }
     }
 
-    // Clear memory cache
+    // Clear instance-level memory caches
     this.zipCache.clear();
     this.unzippedCache.clear();
     this.commitCache.clear();
+
+    // Clear module-level caches (E0008.1)
+    cachedIndex = null;
+    cachedIndexKey = null;
+    indexCachedAt = 0;
+    shaCache.clear();
+    fileCache.clear();
   }
 }
