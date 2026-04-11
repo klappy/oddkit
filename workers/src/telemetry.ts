@@ -233,7 +233,7 @@ function validateTelemetryQuery(query: string): string | null {
   if (normalized.includes(";")) {
     return "Multiple statements are not allowed";
   }
-  const fromPattern = /\bFROM\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/gi;
+  const fromPattern = /\b(?:FROM|JOIN)\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/gi;
   const tables: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = fromPattern.exec(normalized)) !== null) {
