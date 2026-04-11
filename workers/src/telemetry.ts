@@ -233,11 +233,22 @@ function validateTelemetryQuery(query: string): string | null {
   if (normalized.includes(";")) {
     return "Multiple statements are not allowed";
   }
-  const fromPattern = /\b(?:FROM|JOIN)\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/gi;
+  const fromJoinPattern = /\b(?:FROM|JOIN)\s+/gi;
+  const tableIdPattern = /^(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/;
+  const commaTablePattern = /^\s*,\s*(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/;
   const tables: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = fromPattern.exec(normalized)) !== null) {
-    tables.push((match[1] ?? match[2] ?? match[3]).toLowerCase());
+  let fjMatch: RegExpExecArray | null;
+  while ((fjMatch = fromJoinPattern.exec(normalized)) !== null) {
+    let rest = normalized.slice(fjMatch.index + fjMatch[0].length);
+    const first = tableIdPattern.exec(rest);
+    if (!first) continue;
+    tables.push((first[1] ?? first[2] ?? first[3]).toLowerCase());
+    rest = rest.slice(first[0].length);
+    let ct: RegExpExecArray | null;
+    while ((ct = commaTablePattern.exec(rest)) !== null) {
+      tables.push((ct[1] ?? ct[2] ?? ct[3]).toLowerCase());
+      rest = rest.slice(ct[0].length);
+    }
   }
   if (tables.length === 0) {
     return "Query must include a FROM clause";
