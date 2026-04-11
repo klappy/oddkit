@@ -125,6 +125,7 @@ export function parseToolCall(payload: unknown): {
   method: string;
   toolName: string;
   documentUri: string;
+  canonUrl: string;
 } | null {
   if (
     typeof payload !== "object" ||
@@ -141,14 +142,15 @@ export function parseToolCall(payload: unknown): {
 
   const params = msg.params;
   if (typeof params !== "object" || params === null) {
-    return { method, toolName: "", documentUri: "" };
+    return { method, toolName: "", documentUri: "", canonUrl: "" };
   }
 
   const p = params as Record<string, unknown>;
   const toolName = typeof p.name === "string" ? p.name : "";
 
-  // Extract document URI from tool arguments (for get calls)
+  // Extract details from tool arguments
   let documentUri = "";
+  let canonUrl = "";
   const args = p.arguments;
   if (typeof args === "object" && args !== null) {
     const a = args as Record<string, unknown>;
@@ -156,9 +158,13 @@ export function parseToolCall(payload: unknown): {
     if (typeof a.input === "string" && a.input.includes("://")) {
       documentUri = a.input;
     }
+    // Extract canon_url from tool arguments
+    if (typeof a.canon_url === "string" && a.canon_url) {
+      canonUrl = a.canon_url;
+    }
   }
 
-  return { method, toolName, documentUri };
+  return { method, toolName, documentUri, canonUrl };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -207,7 +213,7 @@ export function recordTelemetry(
             toolName,
             consumerLabel,
             consumerSource,
-            env.BASELINE_URL || "",
+            toolCall?.canonUrl || env.BASELINE_URL || "",
             documentUri,
             env.ODDKIT_VERSION || "unknown",
           ],

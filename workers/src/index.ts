@@ -331,12 +331,26 @@ Use when:
 
   server.tool(
     "telemetry_public",
-    "Return public telemetry disclosures and usage leaderboards. Shows consumer, tool, canon URL, and document leaderboards. Same data the maintainer sees — no information asymmetry.",
+    `Return public telemetry disclosures and usage leaderboards. Shows consumer, tool, canon URL, and document leaderboards. Same data the maintainer sees — no information asymmetry.
+
+Dataset: oddkit_telemetry (Cloudflare Analytics Engine)
+Schema:
+  blob1  — event_type      "mcp_request" | "tool_call"
+  blob2  — method          JSON-RPC method (e.g. "tools/call")
+  blob3  — tool_name       oddkit action (e.g. "orient", "search")
+  blob4  — consumer_label  best-effort caller identity
+  blob5  — consumer_source how label was resolved (e.g. "user-agent")
+  blob6  — canon_url       which repo baseline is being served
+  blob7  — document_uri    for get calls, the klappy:// URI requested
+  blob8  — worker_version  oddkit version string
+  double1 — count          always 1
+  double2 — duration_ms    request processing time
+  index1 — sampling_key    consumer label
+
+Use SUM(_sample_interval) instead of COUNT(*) to account for Analytics Engine sampling.
+Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
     {
-      query_type: z.enum(["summary", "tools", "consumers", "canon_urls", "documents", "daily_trend", "methods"])
-        .optional()
-        .default("summary")
-        .describe("Which leaderboard or metric to return"),
+      sql: z.string().describe("Analytics Engine SQL query against the oddkit_telemetry dataset."),
     },
     {
       readOnlyHint: true,
@@ -344,7 +358,7 @@ Use when:
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ query_type }) => {
+    async ({ sql }) => {
       if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
         return {
           content: [{
@@ -358,19 +372,6 @@ Use when:
       }
 
       const { queryTelemetry } = await import("./telemetry");
-      const { TELEMETRY_QUERIES } = await import("./telemetry-queries");
-
-      const queryMap: Record<string, string> = {
-        summary: TELEMETRY_QUERIES.summary_30d,
-        tools: TELEMETRY_QUERIES.tools,
-        consumers: TELEMETRY_QUERIES.consumers,
-        canon_urls: TELEMETRY_QUERIES.canon_urls,
-        documents: TELEMETRY_QUERIES.documents,
-        daily_trend: TELEMETRY_QUERIES.daily_trend,
-        methods: TELEMETRY_QUERIES.methods,
-      };
-
-      const sql = queryMap[query_type ?? "summary"] ?? TELEMETRY_QUERIES.summary_30d;
       const result = await queryTelemetry(env, sql);
 
       return {
@@ -378,7 +379,7 @@ Use when:
           type: "text" as const,
           text: JSON.stringify({
             action: "telemetry_public",
-            result: { query_type, data: result, generated_at: new Date().toISOString() },
+            result: { data: result, generated_at: new Date().toISOString() },
           }, null, 2),
         }],
       };
