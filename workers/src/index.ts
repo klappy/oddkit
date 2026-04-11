@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { handleUnifiedAction, type Env } from "./orchestrate";
 import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
+import { RequestTracer } from "./tracing";
 import { renderNotFoundPage } from "./not-found-ui";
 import pkg from "../package.json";
 
@@ -103,7 +104,7 @@ async function fetchPromptContent(env: Env, path: string): Promise<string | null
  * (R2-cached) with module-level caching (5-minute TTL). Prompt content
  * is fetched lazily on prompts/get via the same R2 pipeline.
  */
-async function createServer(env: Env): Promise<McpServer> {
+async function createServer(env: Env, tracer?: RequestTracer): Promise<McpServer> {
   const server = new McpServer(
     {
       name: "oddkit",
@@ -169,6 +170,7 @@ Use when:
         filter_epoch: args.filter_epoch,
         state: args.state as any,
         env,
+        tracer,
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
@@ -321,6 +323,7 @@ Use when:
           offset: args.offset as number | undefined,
           filter_epoch: args.filter_epoch as string | undefined,
           env,
+          tracer,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       },
@@ -692,6 +695,7 @@ export default {
     //   - Error responses in JSON-RPC format
     if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
       const startTime = Date.now();
+      const tracer = new RequestTracer();
 
       // Clone before handler consumes the body
       const telemetryClone =
@@ -699,7 +703,7 @@ export default {
           ? request.clone()
           : null;
 
-      const server = await createServer(env);
+      const server = await createServer(env, tracer);
       const handler = createMcpHandler(server, {
         route: "/mcp",
         corsOptions: {
@@ -712,13 +716,15 @@ export default {
       const response = await handler(request, env, ctx);
 
       // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
+      // Phase 1.5: cache_tier from tracer feeds blob9 (E0008.1)
       if (telemetryClone) {
         const durationMs = Date.now() - startTime;
+        const cacheTier = tracer.indexSource;
         ctx.waitUntil(
           (async () => {
             try {
               const { recordTelemetry } = await import("./telemetry");
-              await recordTelemetry(telemetryClone, env, durationMs);
+              await recordTelemetry(telemetryClone, env, durationMs, cacheTier);
             } catch {
               // Telemetry must never break MCP requests
             }

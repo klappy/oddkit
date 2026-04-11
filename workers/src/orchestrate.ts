@@ -18,6 +18,7 @@ import {
   type SectionResult,
 } from "./zip-baseline-fetcher";
 import { buildBM25Index, searchBM25, type BM25Index } from "./bm25";
+import type { RequestTracer } from "./tracing";
 import pkg from "../package.json";
 
 export type { Env };
@@ -64,6 +65,7 @@ export interface UnifiedParams {
   filter_epoch?: string;
   state?: OddkitState;
   env: Env;
+  tracer?: RequestTracer;
 }
 
 // Keep backward-compat type for existing callers
@@ -1353,7 +1355,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, canon_url, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env } = params;
+  const { action, input, context, mode, canon_url, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -1364,36 +1366,60 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
     };
   }
 
-  const fetcher = new ZipBaselineFetcher(env);
+  const fetcher = new ZipBaselineFetcher(env, tracer);
 
   try {
+    const actionStart = performance.now();
+    let result: OddkitEnvelope;
+
     switch (action) {
       case "orient":
-        return await runOrientAction(input, fetcher, canon_url, state);
+        result = await runOrientAction(input, fetcher, canon_url, state);
+        break;
       case "challenge":
-        return await runChallengeAction(input, mode, fetcher, canon_url, state);
+        result = await runChallengeAction(input, mode, fetcher, canon_url, state);
+        break;
       case "gate":
-        return await runGateAction(input, context, fetcher, canon_url, state);
+        result = await runGateAction(input, context, fetcher, canon_url, state);
+        break;
       case "encode":
-        return await runEncodeAction(input, context, fetcher, canon_url, state);
+        result = await runEncodeAction(input, context, fetcher, canon_url, state);
+        break;
       case "search":
-        return await runSearch(input, fetcher, canon_url, state, include_metadata);
+        result = await runSearch(input, fetcher, canon_url, state, include_metadata);
+        break;
       case "get":
-        return await runGet(input, fetcher, canon_url, state, include_metadata, section);
+        result = await runGet(input, fetcher, canon_url, state, include_metadata, section);
+        break;
       case "catalog":
-        return await runCatalog(fetcher, canon_url, state, { sort_by, limit, offset, filter_epoch });
+        result = await runCatalog(fetcher, canon_url, state, { sort_by, limit, offset, filter_epoch });
+        break;
       case "validate":
-        return await runValidate(input, state);
+        result = await runValidate(input, state);
+        break;
       case "preflight":
-        return await runPreflight(input, fetcher, canon_url, state);
+        result = await runPreflight(input, fetcher, canon_url, state);
+        break;
       case "version":
-        return runVersion(env);
+        result = runVersion(env);
+        break;
       case "cleanup_storage":
-        return await runCleanupStorage(fetcher, canon_url);
+        result = await runCleanupStorage(fetcher, canon_url);
+        break;
       default:
-        // Shouldn't reach here due to VALID_ACTIONS check above
-        return await runSearch(input, fetcher, canon_url, state);
+        result = await runSearch(input, fetcher, canon_url, state);
     }
+
+    // Inject trace into debug envelope (E0008.1)
+    if (tracer) {
+      tracer.addSpan(`action:${action}`, performance.now() - actionStart);
+      result.debug = {
+        ...result.debug,
+        trace: tracer.toJSON(),
+      };
+    }
+
+    return result;
   } catch (error) {
     return {
       action: "error",
@@ -1404,6 +1430,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         canon_url,
         baseline_url: env.BASELINE_URL,
         generated_at: new Date().toISOString(),
+        ...(tracer ? { trace: tracer.toJSON() } : {}),
       },
     };
   }
