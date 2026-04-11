@@ -36,8 +36,8 @@ export class RequestTracer {
       ...(detail ? { detail } : {}),
     });
 
-    // Track the index source for telemetry (first span labeled "index")
-    if (label === "index" && source && !this._indexSource) {
+    // Track the index source for telemetry (first span matching an index tier)
+    if ((label === "index" || label === "index-build") && source && !this._indexSource) {
       this._indexSource = source;
     }
   }

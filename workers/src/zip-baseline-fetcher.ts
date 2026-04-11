@@ -630,22 +630,22 @@ export class ZipBaselineFetcher {
       return { changed: true, error: "Cannot parse repo URL" };
     }
 
-    // Get current SHA from GitHub API
+    // Capture previously cached SHA *before* getLatestCommitSha overwrites it
+    const cacheKey = `${parsed.owner}/${parsed.repo}/${ref}`;
+    const previouslyCached = shaCache.get(cacheKey);
+
+    // Get current SHA from GitHub API (this updates shaCache)
     const currentSha = await this.getLatestCommitSha(repoUrl, ref);
     if (!currentSha) {
       return { changed: true, error: "Could not fetch current commit SHA" };
     }
 
-    // Check module-level SHA cache
-    const cacheKey = `${parsed.owner}/${parsed.repo}/${ref}`;
-    const moduleCached = shaCache.get(cacheKey);
-
-    if (!moduleCached) {
+    if (!previouslyCached) {
       return { changed: true, current_sha: currentSha };
     }
 
-    const changed = currentSha !== moduleCached.sha;
-    return { changed, current_sha: currentSha, cached_sha: moduleCached.sha };
+    const changed = currentSha !== previouslyCached.sha;
+    return { changed, current_sha: currentSha, cached_sha: previouslyCached.sha };
   }
 
   /**
@@ -865,6 +865,7 @@ export class ZipBaselineFetcher {
       const baselineShaMatch = !baselineSha || cacheHit.commit_sha === baselineSha;
       const canonShaMatch = !canonSha || cacheHit.canon_commit_sha === canonSha;
       if (baselineShaMatch && canonShaMatch) {
+        this.tracer?.addSpan("index", performance.now() - cacheStart, "cache");
         // Populate module cache
         cachedIndex = cacheHit;
         cachedIndexKey = expectedKey;
@@ -1115,7 +1116,7 @@ export class ZipBaselineFetcher {
       await this.deleteKvByPrefix(`sha/`);
     }
 
-    // Clear R2 caches: ZIP + individual files (including SHA-keyed paths)
+    // Clear R2 caches: ZIP + individual files + index entries
     if (this.env.BASELINE) {
       // Delete ZIP caches
       const baselineZipKey = `zip/${getCacheKey(getZipUrl(baselineRepoUrl))}`;
@@ -1133,6 +1134,27 @@ export class ZipBaselineFetcher {
         const canonFilePrefix = `file/${getCacheKey(repoUrl)}/`;
         await this.deleteObjectsByPrefix(canonFilePrefix);
       }
+
+      // Delete R2 index entries
+      await this.deleteObjectsByPrefix(`index/v${INDEX_VERSION}/${key}`);
+    }
+
+    // Clear Cache API index entries (best-effort — requires exact URL match)
+    const c = this.cacheApi;
+    if (c) {
+      const baselineParsed = parseGitHubUrl(baselineRepoUrl);
+      const baselineShaEntry = baselineParsed
+        ? shaCache.get(`${baselineParsed.owner}/${baselineParsed.repo}/main`)
+        : undefined;
+      const canonParsed = repoUrl ? parseGitHubUrl(repoUrl) : undefined;
+      const canonRef = repoUrl ? extractBranchRef(repoUrl) : undefined;
+      const canonShaEntry = canonParsed
+        ? shaCache.get(`${canonParsed.owner}/${canonParsed.repo}/${canonRef || "main"}`)
+        : undefined;
+      const shaKey = `${baselineShaEntry?.sha || "unknown"}_${canonShaEntry?.sha || "none"}`;
+      try {
+        await c.delete(this.cacheRequest(`index/v${INDEX_VERSION}/${key}_${shaKey}`));
+      } catch { /* Cache API delete failure is non-fatal */ }
     }
 
     // Clear instance-level memory caches
