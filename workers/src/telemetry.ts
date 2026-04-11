@@ -51,11 +51,7 @@ function sanitize(raw: string | null | undefined): string {
  * Returns null if the payload is not an initialize message or has no clientInfo.
  */
 function parseClientInfoName(payload: unknown): string | null {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("method" in payload)
-  ) {
+  if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
   }
 
@@ -127,11 +123,7 @@ export function parseToolCall(payload: unknown): {
   documentUri: string;
   canonUrl: string;
 } | null {
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("method" in payload)
-  ) {
+  if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
   }
 
@@ -177,11 +169,7 @@ export function parseToolCall(payload: unknown): {
  * no await (fire-and-forget via Analytics Engine).
  * Called with a cloned request to avoid consuming the original body.
  */
-export function recordTelemetry(
-  request: Request,
-  env: Env,
-  durationMs: number,
-): Promise<void> {
+export function recordTelemetry(request: Request, env: Env, durationMs: number): Promise<void> {
   if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
 
   // Parse the request body to extract JSON-RPC details
@@ -192,8 +180,10 @@ export function recordTelemetry(
       const messages = Array.isArray(body) ? body : [body];
 
       for (const payload of messages) {
-        const { label: consumerLabel, source: consumerSource } =
-          parseConsumerLabel(request, payload);
+        const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
+          request,
+          payload,
+        );
         const toolCall = parseToolCall(payload);
 
         const msg =
@@ -240,13 +230,20 @@ function validateTelemetryQuery(query: string): string | null {
   if (!/^\s*SELECT\b/i.test(normalized)) {
     return "Only SELECT queries are allowed";
   }
-  const fromMatches = normalized.match(/\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi);
-  if (!fromMatches || fromMatches.length === 0) {
+  if (normalized.includes(";")) {
+    return "Multiple statements are not allowed";
+  }
+  const fromPattern = /\bFROM\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_][a-zA-Z0-9_]*))/gi;
+  const tables: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = fromPattern.exec(normalized)) !== null) {
+    tables.push((match[1] ?? match[2] ?? match[3]).toLowerCase());
+  }
+  if (tables.length === 0) {
     return "Query must include a FROM clause";
   }
-  for (const m of fromMatches) {
-    const table = m.replace(/^FROM\s+/i, "").trim();
-    if (table.toLowerCase() !== "oddkit_telemetry") {
+  for (const table of tables) {
+    if (table !== "oddkit_telemetry") {
       return `Query may only reference the oddkit_telemetry dataset, found: ${table}`;
     }
   }
@@ -259,14 +256,10 @@ function validateTelemetryQuery(query: string): string | null {
  * Requires CF_ACCOUNT_ID and CF_API_TOKEN env vars.
  * Only permits SELECT queries against the oddkit_telemetry dataset.
  */
-export async function queryTelemetry(
-  env: Env,
-  query: string,
-): Promise<unknown> {
+export async function queryTelemetry(env: Env, query: string): Promise<unknown> {
   if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
     return {
-      error:
-        "Telemetry queries not configured (missing CF_ACCOUNT_ID or CF_API_TOKEN)",
+      error: "Telemetry queries not configured (missing CF_ACCOUNT_ID or CF_API_TOKEN)",
     };
   }
 
