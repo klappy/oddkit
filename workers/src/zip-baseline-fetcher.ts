@@ -1,29 +1,38 @@
 /**
  * ZipBaselineFetcher - Content-addressed caching for baseline repos
  *
- * Architecture:
+ * Architecture (E0008 — observability + performance):
+ *   Three-tier storage: Module Memory → Cache API → R2
+ *   - Module-level caches eliminate subrequests on warm isolates (0ms)
+ *   - Cache API provides ~1ms edge reads on cold isolates
+ *   - R2 stores ZIP files and extracted content durably
+ *   - KV eliminated from hot path (aquifer-mcp L44/L47: each KV read
+ *     costs 300-1,000ms in Cloudflare envoy overhead)
+ *
+ * Content-addressed caching:
  * - Resolves current commit SHA via lightweight GitHub API call
- * - Uses SHA + INDEX_VERSION as cache key — content is truthful by identity,
- *   and code changes to the indexing pipeline invalidate stale indexes
- * - Fetches entire repo as ZIP from GitHub when SHA changes
- * - Extracts files lazily using fflate
- * - Caches in R2 keyed to SHA for fast subsequent access
- * - Supports canon repo overrides with klappy.dev fallback
- * - No TTL. No staleness window. No manual flush for correctness.
+ * - Uses SHA + INDEX_VERSION as cache key — content is truthful by identity
+ * - No TTL on content. Module-level caches use 5-min TTL for freshness.
+ *
+ * X-ray tracing:
+ * - Optional RequestTracer threads through all I/O
+ * - Every subrequest (GitHub API, Cache API, R2) recorded with timing + source
+ * - Trace included in tool response debug envelope
  */
 
 import { unzipSync } from "fflate";
+import { RequestTracer, shortKey } from "./tracing";
 
-// Index schema version — included in KV cache key so that code changes
+// Index schema version — included in cache key so that code changes
 // to the indexing pipeline (filters, fields, scoring) invalidate stale indexes.
 // Bump when indexing logic changes. Without this, a cached index built by
 // old code persists until the repo's commit SHA changes.
-const INDEX_VERSION = "2.3"; // 2.3: branch ref extraction fix + full frontmatter (E0007)
+const INDEX_VERSION = "2.4"; // 2.4: Cache API migration, KV removal, x-ray tracing (E0008)
 
 export interface Env {
   BASELINE_URL: string;
   ODDKIT_VERSION: string;
-  BASELINE_CACHE?: KVNamespace;
+  BASELINE_CACHE?: KVNamespace; // Legacy — no longer used on hot path
   BASELINE?: R2Bucket;
   OPENAI_API_KEY?: string;
   // Phase 1 telemetry (E0008)
@@ -31,6 +40,26 @@ export interface Env {
   CF_ACCOUNT_ID?: string;   // For Analytics Engine SQL API queries
   CF_API_TOKEN?: string;    // For Analytics Engine SQL API queries
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Module-level caches — survive across requests within the same isolate.
+// This is the single biggest performance lever (aquifer-mcp L48):
+// memory reads = 0ms vs any subrequest = 300-1,000ms.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const MODULE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Cached deserialized BaselineIndex — the primary hot-path optimization. */
+let cachedIndex: BaselineIndex | null = null;
+let cachedIndexKey: string | null = null;
+let indexCachedAt = 0;
+
+/** Cached commit SHAs — eliminates GitHub API calls on warm isolates. */
+const shaCache = new Map<string, { sha: string; cachedAt: number }>();
+
+/** Cached file content — eliminates R2 reads for recently-accessed files. */
+const fileCache = new Map<string, { content: string; cachedAt: number }>();
+const MAX_FILE_CACHE_ENTRIES = 50;
 
 export interface IndexEntry {
   path: string;
@@ -437,12 +466,64 @@ function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
 
 export class ZipBaselineFetcher {
   private env: Env;
+  private tracer?: RequestTracer;
   private zipCache: Map<string, Uint8Array> = new Map();
   private unzippedCache: Map<string, Record<string, Uint8Array>> = new Map();
   private commitCache: Map<string, string> = new Map();
 
-  constructor(env: Env) {
+  constructor(env: Env, tracer?: RequestTracer) {
     this.env = env;
+    this.tracer = tracer;
+  }
+
+  // ── Cache API helpers ────────────────────────────────────────────────────
+  // Replaces KV on the hot path. Cache API reads cost ~1ms at the edge
+  // vs KV's 300-1,000ms envoy overhead (aquifer-mcp O81, L44).
+
+  private cacheRequest(key: string): Request {
+    return new Request(`https://oddkit-cache.local/v${INDEX_VERSION}/${key}`);
+  }
+
+  private get cacheApi(): Cache | null {
+    try {
+      return (globalThis as unknown as { caches?: CacheStorage }).caches?.default ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async cacheGet<T>(key: string): Promise<T | null> {
+    const c = this.cacheApi;
+    if (!c) return null;
+    const start = performance.now();
+    try {
+      const hit = await c.match(this.cacheRequest(key));
+      if (hit) {
+        const text = await hit.text();
+        this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "cache");
+        return JSON.parse(text) as T;
+      }
+      this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "miss");
+    } catch {
+      this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "miss", "error");
+    }
+    return null;
+  }
+
+  private async cachePut(key: string, data: unknown, maxAge: number = 604800): Promise<void> {
+    const c = this.cacheApi;
+    if (!c) return;
+    try {
+      await c.put(
+        this.cacheRequest(key),
+        new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": `public, max-age=${maxAge}`,
+          },
+        }),
+      );
+    } catch { /* cache write is best-effort */ }
   }
 
   /**
@@ -474,7 +555,7 @@ export class ZipBaselineFetcher {
 
   /**
    * Get latest commit SHA from GitHub API (lightweight ~100 bytes)
-   * Uses Accept header to get just the SHA, not full commit object
+   * Three-tier: module cache → instance cache → GitHub API
    */
   private async getLatestCommitSha(
     repoUrl: string,
@@ -489,13 +570,22 @@ export class ZipBaselineFetcher {
     const { owner, repo } = parsed;
     const cacheKey = `${owner}/${repo}/${ref}`;
 
-    // Check memory cache (very short-lived, per-request dedup)
+    // Tier 0: Module-level SHA cache (survives across requests, 5-min TTL)
+    const moduleCached = shaCache.get(cacheKey);
+    if (moduleCached && Date.now() - moduleCached.cachedAt < MODULE_CACHE_TTL_MS) {
+      this.tracer?.addSpan(`sha:${repo}`, 0, "memory");
+      return moduleCached.sha;
+    }
+
+    // Tier 1: Instance cache (per-request dedup)
     if (this.commitCache.has(cacheKey)) {
+      this.tracer?.addSpan(`sha:${repo}`, 0, "memory", "instance");
       return this.commitCache.get(cacheKey)!;
     }
 
+    const start = performance.now();
     try {
-      // Use GitHub API with Accept header for just SHA (minimal response)
+      // GitHub API with Accept header for just SHA (minimal response)
       const response = await fetch(
         `https://api.github.com/repos/${owner}/${repo}/commits/${ref}`,
         {
@@ -508,21 +598,28 @@ export class ZipBaselineFetcher {
 
       if (!response.ok) {
         console.warn(`GitHub API error: ${response.status} for ${owner}/${repo}`);
+        this.tracer?.addSpan(`sha:${repo}`, performance.now() - start, "github", `${response.status}`);
         return null;
       }
 
       const sha = await response.text();
+      this.tracer?.addSpan(`sha:${repo}`, performance.now() - start, "github");
+
+      // Populate both caches
       this.commitCache.set(cacheKey, sha);
+      shaCache.set(cacheKey, { sha, cachedAt: Date.now() });
+
       return sha;
     } catch (error) {
       console.error(`Error fetching commit SHA: ${error}`);
+      this.tracer?.addSpan(`sha:${repo}`, performance.now() - start, "github", "error");
       return null;
     }
   }
 
   /**
-   * Check if a repo has changed since last cache
-   * Returns { changed, current_sha, cached_sha } for observability
+   * Check if a repo has changed since last cache.
+   * Uses module-level SHA cache instead of KV.
    */
   async checkForChanges(
     repoUrl: string,
@@ -536,62 +633,49 @@ export class ZipBaselineFetcher {
     // Get current SHA from GitHub API
     const currentSha = await this.getLatestCommitSha(repoUrl, ref);
     if (!currentSha) {
-      // Can't check, assume changed to be safe
       return { changed: true, error: "Could not fetch current commit SHA" };
     }
 
-    // Get cached SHA from KV
-    const cacheKey = `sha/${getCacheKey(repoUrl)}`;
-    let cachedSha: string | null = null;
+    // Check module-level SHA cache
+    const cacheKey = `${parsed.owner}/${parsed.repo}/${ref}`;
+    const moduleCached = shaCache.get(cacheKey);
 
-    if (this.env.BASELINE_CACHE) {
-      cachedSha = await this.env.BASELINE_CACHE.get(cacheKey);
-    }
-
-    if (!cachedSha) {
-      // No cached SHA, first time or expired
+    if (!moduleCached) {
       return { changed: true, current_sha: currentSha };
     }
 
-    const changed = currentSha !== cachedSha;
-    return { changed, current_sha: currentSha, cached_sha: cachedSha };
+    const changed = currentSha !== moduleCached.sha;
+    return { changed, current_sha: currentSha, cached_sha: moduleCached.sha };
   }
 
   /**
-   * Store commit SHA in cache (no TTL — content-addressed).
-   * The SHA itself is the identity; it doesn't expire.
-   */
-  private async cacheCommitSha(repoUrl: string, sha: string): Promise<void> {
-    const cacheKey = `sha/${getCacheKey(repoUrl)}`;
-    if (this.env.BASELINE_CACHE) {
-      await this.env.BASELINE_CACHE.put(cacheKey, sha);
-    }
-  }
-
-  /**
-   * Fetch and cache a ZIP file
-   * @param url - GitHub ZIP URL
-   * @param skipCache - If true, bypass R2 cache and fetch fresh (used when changes detected)
+   * Fetch and cache a ZIP file.
+   * Memory → R2 → GitHub.
    */
   private async fetchZip(url: string, skipCache: boolean = false): Promise<Uint8Array | null> {
     const cacheKey = `zip/${getCacheKey(url)}`;
 
     // Check memory cache first (unless skipping cache)
     if (!skipCache && this.zipCache.has(cacheKey)) {
+      this.tracer?.addSpan("zip", 0, "memory");
       return this.zipCache.get(cacheKey)!;
     }
 
     // Check R2 cache (unless skipping cache)
     if (!skipCache && this.env.BASELINE) {
+      const r2Start = performance.now();
       const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
         const data = new Uint8Array(await r2Object.arrayBuffer());
+        this.tracer?.addSpan("zip", performance.now() - r2Start, "r2");
         this.zipCache.set(cacheKey, data);
         return data;
       }
+      this.tracer?.addSpan("zip-r2", performance.now() - r2Start, "miss");
     }
 
     // Fetch from GitHub
+    const ghStart = performance.now();
     try {
       const response = await fetch(url, {
         headers: { "User-Agent": "oddkit-mcp" },
@@ -599,10 +683,13 @@ export class ZipBaselineFetcher {
 
       if (!response.ok) {
         console.error(`Failed to fetch ZIP: ${response.status} ${url}`);
+        this.tracer?.addSpan("zip", performance.now() - ghStart, "github", `${response.status}`);
         return null;
       }
 
       const data = new Uint8Array(await response.arrayBuffer());
+      this.tracer?.addSpan("zip", performance.now() - ghStart, "github",
+        `${(data.length / 1024).toFixed(0)}KB`);
 
       // Cache in R2 (no TTL — content-addressed by SHA at the index/file layer)
       if (this.env.BASELINE) {
@@ -740,50 +827,79 @@ export class ZipBaselineFetcher {
   /**
    * Get or build the combined index.
    *
-   * Content-addressed caching:
-   * 1. Resolve the current commit SHA (lightweight GitHub API call)
-   * 2. Use SHA as the KV cache key
-   * 3. If an index exists for this exact SHA, serve it — truthful by identity
-   * 4. If not, build fresh and store keyed to the SHA
-   * No TTL. No staleness window.
+   * Four-tier caching (aquifer-mcp L48 pattern):
+   * 1. Module-level memory (0ms — survives across requests in same isolate)
+   * 2. Cache API (~1ms — edge-local, versioned by INDEX_VERSION)
+   * 3. R2 (durable — content-addressed by SHA)
+   * 4. Build fresh from ZIP (cold start only)
+   *
+   * KV eliminated from hot path (aquifer-mcp L47: 15x speedup from
+   * removing one KV read). Content-addressed by SHA — no TTL needed
+   * for correctness. Module cache uses 5-min TTL for freshness.
    */
   async getIndex(canonUrl?: string): Promise<BaselineIndex> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
-    // Step 1: Resolve current commit SHAs (lightweight)
+    // Step 0: Module-level memory cache (0ms, 5-min TTL)
+    const expectedKey = `v${INDEX_VERSION}/${getCacheKey(canonUrl || "default")}`;
+    if (cachedIndex && cachedIndexKey === expectedKey && Date.now() - indexCachedAt < MODULE_CACHE_TTL_MS) {
+      this.tracer?.addSpan("index", 0, "memory");
+      return cachedIndex;
+    }
+
+    // Step 1: Resolve current commit SHAs
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
     const canonRef = canonUrl ? extractBranchRef(canonUrl) : undefined;
     const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl, canonRef) : undefined;
 
-    // Step 2: Content-addressed lookup — SHA + version is the cache key.
-    // Including INDEX_VERSION ensures code changes invalidate stale indexes
-    // even when the repo SHA hasn't changed.
+    // Content-addressed cache key: SHA + version
     const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
     const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(canonUrl || "default")}_${shaKey}`;
 
-    if (this.env.BASELINE_CACHE) {
-      const cached = await this.env.BASELINE_CACHE.get(cacheKey, "json") as BaselineIndex | null;
-      if (cached) {
-        // Cloudflare KV is eventually consistent — two requests seconds apart
-        // can hit different edge nodes and return stale data even when the
-        // cache key looks correct. Cross-check the cached index's embedded
-        // commit SHAs against the SHAs we just resolved from the GitHub API.
-        // If they diverge, the cached entry is stale; discard and rebuild.
-        const baselineShaMatch = !baselineSha || cached.commit_sha === baselineSha;
-        const canonShaMatch = !canonSha || cached.canon_commit_sha === canonSha;
-        if (baselineShaMatch && canonShaMatch) {
-          // Content-addressed cache hit: SHA verified, content is truthful.
-          return cached;
-        }
-        console.warn(
-          `KV cache SHA mismatch — discarding stale index. ` +
-          `cached=${cached.commit_sha}/${cached.canon_commit_sha} ` +
-          `resolved=${baselineSha}/${canonSha ?? "none"}`
-        );
+    // Step 2: Cache API (~1ms edge read)
+    const cacheStart = performance.now();
+    const cacheHit = await this.cacheGet<BaselineIndex>(cacheKey);
+    if (cacheHit) {
+      // Verify SHAs match (Cache API doesn't have KV's eventual consistency issue,
+      // but defense-in-depth is free)
+      const baselineShaMatch = !baselineSha || cacheHit.commit_sha === baselineSha;
+      const canonShaMatch = !canonSha || cacheHit.canon_commit_sha === canonSha;
+      if (baselineShaMatch && canonShaMatch) {
+        // Populate module cache
+        cachedIndex = cacheHit;
+        cachedIndexKey = expectedKey;
+        indexCachedAt = Date.now();
+        return cacheHit;
       }
     }
 
-    // Step 3: No cache for this SHA — build fresh
+    // Step 3: R2 — check for stored index
+    if (this.env.BASELINE) {
+      const r2Start = performance.now();
+      const r2Object = await this.env.BASELINE.get(cacheKey);
+      if (r2Object) {
+        try {
+          const text = await r2Object.text();
+          const r2Index = JSON.parse(text) as BaselineIndex;
+          this.tracer?.addSpan("index", performance.now() - r2Start, "r2");
+
+          // Populate upstream caches
+          cachedIndex = r2Index;
+          cachedIndexKey = expectedKey;
+          indexCachedAt = Date.now();
+          await this.cachePut(cacheKey, r2Index);
+
+          return r2Index;
+        } catch {
+          this.tracer?.addSpan("index", performance.now() - r2Start, "r2", "parse-error");
+        }
+      } else {
+        this.tracer?.addSpan("index-r2", performance.now() - r2Start, "miss");
+      }
+    }
+
+    // Step 4: Build fresh from ZIP
+    const buildStart = performance.now();
     const baselineUrl = this.env.BASELINE_URL;
     const skipCache = true; // Always fetch fresh ZIP when building new index
 
@@ -818,18 +934,28 @@ export class ZipBaselineFetcher {
       canon_commit_sha: canonSha || undefined,
     };
 
-    // Store keyed to SHA (no TTL — content-addressed)
-    if (this.env.BASELINE_CACHE) {
-      await this.env.BASELINE_CACHE.put(cacheKey, JSON.stringify(index));
-    }
+    this.tracer?.addSpan("index-build", performance.now() - buildStart, "build",
+      `${allEntries.length} entries`);
 
-    // Store commit SHAs for observability
-    if (baselineSha) {
-      await this.cacheCommitSha(baselineRepoUrl, baselineSha);
+    // Persist to R2 + Cache API (no KV)
+    if (this.env.BASELINE) {
+      try {
+        await this.env.BASELINE.put(cacheKey, JSON.stringify(index), {
+          httpMetadata: { contentType: "application/json" },
+          customMetadata: {
+            commitSha: baselineSha || "unknown",
+            generatedAt: new Date().toISOString(),
+            indexVersion: INDEX_VERSION,
+          },
+        });
+      } catch { /* R2 write failure is non-fatal */ }
     }
-    if (canonUrl && canonSha) {
-      await this.cacheCommitSha(canonUrl, canonSha);
-    }
+    await this.cachePut(cacheKey, index);
+
+    // Populate module cache
+    cachedIndex = index;
+    cachedIndexKey = expectedKey;
+    indexCachedAt = Date.now();
 
     return index;
   }
@@ -837,9 +963,7 @@ export class ZipBaselineFetcher {
   /**
    * Get a specific file from the baseline or canon.
    * Content-addressed: file cache is keyed to each repo's own commit SHA.
-   * When canonUrl is provided, canon is tried first with the canon SHA,
-   * then baseline is tried with the baseline SHA. Each repo's cache is
-   * independent — a baseline file is never cached under a canon SHA.
+   * Three-tier: module memory → R2 → ZIP extraction.
    */
   async getFile(path: string, canonUrl?: string): Promise<string | null> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
@@ -872,15 +996,32 @@ export class ZipBaselineFetcher {
       // Content-addressed cache key: repo identity + repo SHA + file path
       const cacheKey = `file/${source.repoKey}/${source.sha}/${getCacheKey(path)}`;
 
-      // Check R2 cache (content-addressed — if SHA matches, content is truthful)
-      if (this.env.BASELINE) {
-        const r2Object = await this.env.BASELINE.get(cacheKey);
-        if (r2Object) {
-          return await r2Object.text();
-        }
+      // Tier 0: Module-level file cache (0ms)
+      const moduleCached = fileCache.get(cacheKey);
+      if (moduleCached && Date.now() - moduleCached.cachedAt < MODULE_CACHE_TTL_MS) {
+        this.tracer?.addSpan(`file:${path}`, 0, "memory");
+        return moduleCached.content;
       }
 
-      // No cache for this repo+SHA+path — fetch fresh
+      // Tier 1: R2 cache (content-addressed — if SHA matches, content is truthful)
+      if (this.env.BASELINE) {
+        const r2Start = performance.now();
+        const r2Object = await this.env.BASELINE.get(cacheKey);
+        if (r2Object) {
+          const content = await r2Object.text();
+          this.tracer?.addSpan(`file:${path}`, performance.now() - r2Start, "r2");
+
+          // Populate module cache
+          if (fileCache.size < MAX_FILE_CACHE_ENTRIES) {
+            fileCache.set(cacheKey, { content, cachedAt: Date.now() });
+          }
+          return content;
+        }
+        this.tracer?.addSpan(`file-r2:${path}`, performance.now() - r2Start, "miss");
+      }
+
+      // Tier 2: Extract from ZIP
+      const zipStart = performance.now();
       const zipUrl = getZipUrl(source.url);
       const zipData = await this.fetchZip(zipUrl, true);
 
@@ -896,13 +1037,19 @@ export class ZipBaselineFetcher {
 
           if (repoPath === path) {
             const content = new TextDecoder().decode(fileData);
+            this.tracer?.addSpan(`file:${path}`, performance.now() - zipStart, "build", "zip-extract");
 
-            // Store keyed to this repo's SHA (no TTL — content-addressed)
+            // Persist to R2 (no TTL — content-addressed)
             if (this.env.BASELINE) {
               await this.env.BASELINE.put(cacheKey, content, {
                 httpMetadata: { contentType: "text/markdown" },
                 customMetadata: { commitSha: source.sha, fetchedAt: new Date().toISOString() },
               });
+            }
+
+            // Populate module cache
+            if (fileCache.size < MAX_FILE_CACHE_ENTRIES) {
+              fileCache.set(cacheKey, { content, cachedAt: Date.now() });
             }
 
             return content;
