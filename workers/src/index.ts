@@ -371,8 +371,38 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
         };
       }
 
+      // Guard 1: Dataset allowlist — reject cross-dataset queries
+      const sqlLower = sql.toLowerCase().replace(/\s+/g, ' ');
+      const fromMatch = sqlLower.match(/from\s+([a-z_][a-z0-9_]*)/g);
+      if (fromMatch) {
+        const tables = fromMatch.map(m => m.replace(/from\s+/, '').trim());
+        const disallowed = tables.filter(t => t !== 'oddkit_telemetry');
+        if (disallowed.length > 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            action: "telemetry_public",
+            result: { error: `Query rejected: only oddkit_telemetry dataset is accessible. Found: ${disallowed.join(', ')}` },
+          }, null, 2) }] };
+        }
+      }
+
+      // Guard 2: Rate limiting — deferred to Phase 2 (requires consumer identification for per-consumer limits).
+      // Current guard: Analytics Engine 10k queries/day quota.
+
+      // Guard 3: Error sanitization — never leak raw CF API responses
       const { queryTelemetry } = await import("./telemetry");
-      const result = await queryTelemetry(env, sql);
+      let result: unknown;
+      try {
+        result = await queryTelemetry(env, sql);
+        // Check for CF API error responses
+        if (typeof result === 'object' && result !== null && 'success' in result) {
+          const r = result as Record<string, unknown>;
+          if (r.success === false) {
+            result = { error: "Query failed. Check SQL syntax against the schema in the tool description." };
+          }
+        }
+      } catch {
+        result = { error: "Query execution failed." };
+      }
 
       return {
         content: [{
