@@ -61,6 +61,16 @@ const shaCache = new Map<string, { sha: string; cachedAt: number }>();
 const fileCache = new Map<string, { content: string; cachedAt: number }>();
 const MAX_FILE_CACHE_ENTRIES = 50;
 
+/** Evict expired entries from the file cache to free slots for new SHAs. */
+function evictExpiredFileCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of fileCache) {
+    if (now - entry.cachedAt >= MODULE_CACHE_TTL_MS) {
+      fileCache.delete(key);
+    }
+  }
+}
+
 export interface IndexEntry {
   path: string;
   uri: string;
@@ -1013,6 +1023,7 @@ export class ZipBaselineFetcher {
           this.tracer?.addSpan(`file:${path}`, performance.now() - r2Start, "r2");
 
           // Populate module cache
+          if (fileCache.size >= MAX_FILE_CACHE_ENTRIES) evictExpiredFileCache();
           if (fileCache.size < MAX_FILE_CACHE_ENTRIES) {
             fileCache.set(cacheKey, { content, cachedAt: Date.now() });
           }
@@ -1049,6 +1060,7 @@ export class ZipBaselineFetcher {
             }
 
             // Populate module cache
+            if (fileCache.size >= MAX_FILE_CACHE_ENTRIES) evictExpiredFileCache();
             if (fileCache.size < MAX_FILE_CACHE_ENTRIES) {
               fileCache.set(cacheKey, { content, cachedAt: Date.now() });
             }
