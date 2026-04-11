@@ -226,7 +226,11 @@ export function recordTelemetry(request: Request, env: Env, durationMs: number):
  * Rejects SHOW, non-SELECT statements, and queries referencing other tables.
  */
 function validateTelemetryQuery(query: string): string | null {
-  const normalized = query.replace(/\s+/g, " ").trim();
+  const normalized = query
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!/^\s*SELECT\b/i.test(normalized)) {
     return "Only SELECT queries are allowed";
   }
