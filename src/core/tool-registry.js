@@ -274,6 +274,7 @@ export const TOOLS = [
   {
     name: "time",
     mcpName: "oddkit_time",
+    standalone: true,
     description: "Stateless time utility. Returns current UTC time, elapsed time since a reference timestamp, or the delta between two timestamps.",
     inputSchema: {
       type: "object",
@@ -298,8 +299,11 @@ export const TOOLS = [
 /** Canonical list of action names, derived from TOOLS. */
 export const ACTION_NAMES = TOOLS.map((t) => t.name);
 
+/** Actions routed through the orchestrator (excludes standalone tools like time). */
+const ORCHESTRATOR_ACTION_NAMES = TOOLS.filter((t) => !t.standalone).map((t) => t.name);
+
 /** Orchestrator tool definition with action enum derived from TOOLS. */
-export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ACTION_NAMES);
+export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ORCHESTRATOR_ACTION_NAMES);
 
 /** Map from MCP tool name → action name */
 export const MCP_NAME_TO_ACTION = Object.fromEntries(
