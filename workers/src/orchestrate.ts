@@ -666,7 +666,7 @@ async function runCatalog(
     .slice(0, 5);
 
   // Build articles list when sort_by is provided
-  let articles: Array<{ path: string; uri: string; metadata: Record<string, unknown> }> | undefined;
+  let articles: Array<{ path: string; uri: string; title: string; metadata: Record<string, unknown> }> | undefined;
   let totalCandidates = 0;
   if (sort_by === "date" || sort_by === "path") {
     let candidates = sort_by === "date"
