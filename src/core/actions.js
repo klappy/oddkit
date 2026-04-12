@@ -495,18 +495,28 @@ export async function handleAction(params) {
           };
         }
 
-        if (reference !== undefined) {
-          const refDate = parseTimestamp(reference);
-          if (compare !== undefined) {
-            const cmpDate = parseTimestamp(compare);
-            const deltaMs = cmpDate.getTime() - refDate.getTime();
-            result.delta = { text: formatDuration(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
-            assistantText = `Delta: ${formatDuration(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
-          } else {
-            const elapsedMs = now.getTime() - refDate.getTime();
-            result.elapsed = { text: formatDuration(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
-            assistantText = `Elapsed: ${formatDuration(elapsedMs)} since ${refDate.toISOString()}`;
+        try {
+          if (reference !== undefined) {
+            const refDate = parseTimestamp(reference);
+            if (compare !== undefined) {
+              const cmpDate = parseTimestamp(compare);
+              const deltaMs = cmpDate.getTime() - refDate.getTime();
+              result.delta = { text: formatDuration(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
+              assistantText = `Delta: ${formatDuration(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
+            } else {
+              const elapsedMs = now.getTime() - refDate.getTime();
+              result.elapsed = { text: formatDuration(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
+              assistantText = `Elapsed: ${formatDuration(elapsedMs)} since ${refDate.toISOString()}`;
+            }
           }
+        } catch (err) {
+          const message = err.message || "Invalid timestamp";
+          return {
+            action: "time",
+            result: { error: message, now: now.toISOString() },
+            assistant_text: `Error: ${message}`,
+            debug: makeDebug(),
+          };
         }
 
         return {
