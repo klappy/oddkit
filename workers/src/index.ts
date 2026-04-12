@@ -44,38 +44,11 @@ interface PromptRegistry {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Time utility helpers (E0008.2) — pure functions, no env dependency
+// Time utility helpers (E0008.2) — shared with local server (src/core/time-utils.js)
 // ──────────────────────────────────────────────────────────────────────────────
 
-function parseTimestamp(input: string | number): Date {
-  if (typeof input === "string" && /^\d+(\.\d+)?$/.test(input)) {
-    input = Number(input);
-  }
-  if (typeof input === "number") {
-    const ms = input > 1e12 ? input : input * 1000;
-    const d = new Date(ms);
-    if (isNaN(d.getTime())) throw new Error(`Invalid numeric timestamp: ${input}`);
-    return d;
-  }
-  const d = new Date(input);
-  if (isNaN(d.getTime())) throw new Error(`Invalid timestamp string: "${input}"`);
-  return d;
-}
-
-function formatDuration(ms: number): string {
-  const neg = ms < 0;
-  let rem = Math.abs(ms);
-  const d = Math.floor(rem / 86400000); rem %= 86400000;
-  const h = Math.floor(rem / 3600000); rem %= 3600000;
-  const m = Math.floor(rem / 60000); rem %= 60000;
-  const s = Math.floor(rem / 1000);
-  const parts: string[] = [];
-  if (d) parts.push(`${d}d`);
-  if (h) parts.push(`${h}h`);
-  if (m) parts.push(`${m}m`);
-  if (s || parts.length === 0) parts.push(`${s}s`);
-  return (neg ? "-" : "") + parts.join(" ");
-}
+// @ts-ignore — JS module, no .d.ts; pure functions with no env dependency
+import { parseTimestamp, formatDuration } from "../../src/core/time-utils.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Prompt registry helpers — ZipBaselineFetcher with module-level cache
@@ -509,6 +482,21 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       const now = new Date();
       const result: Record<string, unknown> = { now: now.toISOString() };
       let assistantText = `Current UTC time: ${now.toISOString()}`;
+
+      if (compare !== undefined && reference === undefined) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              action: "time",
+              result: { error: "\"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.", now: now.toISOString() },
+              server_time: new Date().toISOString(),
+              assistant_text: "Error: \"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.",
+              debug: { duration_ms: Date.now() - startTime },
+            }, null, 2),
+          }],
+        };
+      }
 
       try {
         if (reference !== undefined) {

@@ -19,6 +19,7 @@ import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
+import { parseTimestamp, formatDuration } from "./time-utils.js";
 import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
 import matter from "gray-matter";
@@ -485,46 +486,26 @@ export async function handleAction(params) {
         const result = { now: now.toISOString() };
         let assistantText = `Current UTC time: ${now.toISOString()}`;
 
-        if (reference !== undefined) {
-          const parseTs = (v) => {
-            if (typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) {
-              v = Number(v);
-            }
-            if (typeof v === "number") {
-              const ms = v > 1e12 ? v : v * 1000;
-              const d = new Date(ms);
-              if (isNaN(d.getTime())) throw new Error(`Invalid numeric timestamp: ${v}`);
-              return d;
-            }
-            const d = new Date(v);
-            if (isNaN(d.getTime())) throw new Error(`Invalid timestamp string: "${v}"`);
-            return d;
+        if (compare !== undefined && reference === undefined) {
+          return {
+            action: "time",
+            result: { error: "\"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.", now: now.toISOString() },
+            assistant_text: "Error: \"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.",
+            debug: makeDebug(),
           };
-          const fmtDur = (ms) => {
-            const neg = ms < 0;
-            let rem = Math.abs(ms);
-            const d = Math.floor(rem / 86400000); rem %= 86400000;
-            const h = Math.floor(rem / 3600000); rem %= 3600000;
-            const m = Math.floor(rem / 60000); rem %= 60000;
-            const s = Math.floor(rem / 1000);
-            const parts = [];
-            if (d) parts.push(`${d}d`);
-            if (h) parts.push(`${h}h`);
-            if (m) parts.push(`${m}m`);
-            if (s || parts.length === 0) parts.push(`${s}s`);
-            return (neg ? "-" : "") + parts.join(" ");
-          };
+        }
 
-          const refDate = parseTs(reference);
+        if (reference !== undefined) {
+          const refDate = parseTimestamp(reference);
           if (compare !== undefined) {
-            const cmpDate = parseTs(compare);
+            const cmpDate = parseTimestamp(compare);
             const deltaMs = cmpDate.getTime() - refDate.getTime();
-            result.delta = { text: fmtDur(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
-            assistantText = `Delta: ${fmtDur(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
+            result.delta = { text: formatDuration(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
+            assistantText = `Delta: ${formatDuration(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
           } else {
             const elapsedMs = now.getTime() - refDate.getTime();
-            result.elapsed = { text: fmtDur(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
-            assistantText = `Elapsed: ${fmtDur(elapsedMs)} since ${refDate.toISOString()}`;
+            result.elapsed = { text: formatDuration(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
+            assistantText = `Elapsed: ${formatDuration(elapsedMs)} since ${refDate.toISOString()}`;
           }
         }
 
