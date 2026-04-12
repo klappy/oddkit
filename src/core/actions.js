@@ -19,6 +19,7 @@ import { buildBM25Index, searchBM25 } from "../search/bm25.js";
 import { buildIndex, loadIndex, saveIndex, INDEX_VERSION } from "../index/buildIndex.js";
 import { ensureBaselineRepo, getSessionSha } from "../baseline/ensureBaselineRepo.js";
 import { ACTION_NAMES } from "./tool-registry.js";
+import { parseTimestamp, formatDuration } from "./time-utils.js";
 import { readFileSync, existsSync } from "fs";
 import { createRequire } from "module";
 import matter from "gray-matter";
@@ -162,7 +163,7 @@ export function buildEncodeResponse(taskResult) {
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state, include_metadata, section } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata, section, reference, compare } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
@@ -476,6 +477,42 @@ export async function handleAction(params) {
           assistant_text: "In-memory caches cleared. Note: this is storage hygiene only. " +
             "Content-addressed caching ensures correct content is served automatically " +
             "when the baseline changes — no manual cleanup is required for correctness.",
+          debug: makeDebug(),
+        };
+      }
+
+      case "time": {
+        const now = new Date();
+        const result = { now: now.toISOString() };
+        let assistantText = `Current UTC time: ${now.toISOString()}`;
+
+        if (compare !== undefined && reference === undefined) {
+          return {
+            action: "time",
+            result: { error: "\"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.", now: now.toISOString() },
+            assistant_text: "Error: \"compare\" requires \"reference\". Provide both timestamps for a delta, or just \"reference\" for elapsed time since now.",
+            debug: makeDebug(),
+          };
+        }
+
+        if (reference !== undefined) {
+          const refDate = parseTimestamp(reference);
+          if (compare !== undefined) {
+            const cmpDate = parseTimestamp(compare);
+            const deltaMs = cmpDate.getTime() - refDate.getTime();
+            result.delta = { text: formatDuration(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
+            assistantText = `Delta: ${formatDuration(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
+          } else {
+            const elapsedMs = now.getTime() - refDate.getTime();
+            result.elapsed = { text: formatDuration(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
+            assistantText = `Elapsed: ${formatDuration(elapsedMs)} since ${refDate.toISOString()}`;
+          }
+        }
+
+        return {
+          action: "time",
+          result,
+          assistant_text: assistantText,
           debug: makeDebug(),
         };
       }

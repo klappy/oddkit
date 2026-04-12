@@ -211,6 +211,8 @@ async function main() {
         baseline: args.canon_url,
         include_metadata: args.include_metadata,
         section: args.section,
+        reference: args.reference,
+        compare: args.compare,
         // No state for individual tools
       });
       return {

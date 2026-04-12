@@ -271,6 +271,25 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     cliFlags: {},
   },
+  {
+    name: "time",
+    mcpName: "oddkit_time",
+    standalone: true,
+    description: "Stateless time utility. Returns current UTC time, elapsed time since a reference timestamp, or the delta between two timestamps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reference: { type: ["string", "number"], description: "Reference timestamp (ISO 8601 string or Unix epoch in ms or seconds). When provided alone, returns elapsed time from reference to now." },
+        compare: { type: ["string", "number"], description: "Second timestamp for delta calculation. Used with reference to compute the difference between two arbitrary timestamps." },
+      },
+      required: [],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    cliFlags: {
+      reference: { flag: "-R, --reference <timestamp>", description: "Reference timestamp (ISO 8601 or Unix epoch)" },
+      compare: { flag: "-c, --compare <timestamp>", description: "Second timestamp for delta calculation" },
+    },
+  },
 ];
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -280,8 +299,11 @@ export const TOOLS = [
 /** Canonical list of action names, derived from TOOLS. */
 export const ACTION_NAMES = TOOLS.map((t) => t.name);
 
+/** Actions routed through the orchestrator (excludes standalone tools like time). */
+const ORCHESTRATOR_ACTION_NAMES = TOOLS.filter((t) => !t.standalone).map((t) => t.name);
+
 /** Orchestrator tool definition with action enum derived from TOOLS. */
-export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ACTION_NAMES);
+export const ORCHESTRATOR_TOOL = buildOrchestratorTool(ORCHESTRATOR_ACTION_NAMES);
 
 /** Map from MCP tool name → action name */
 export const MCP_NAME_TO_ACTION = Object.fromEntries(

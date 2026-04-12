@@ -218,6 +218,8 @@ export function run() {
           baseline: options.baseline,
           repoRoot: options.repo,
           section: options.section,
+          reference: options.reference,
+          compare: options.compare,
         });
 
         outputActionResult(tool.name, result, format, quiet);
@@ -545,6 +547,8 @@ export function run() {
           baseline: options.baseline,
           repoRoot: options.repo,
           section: options.section,
+          reference: options.reference,
+          compare: options.compare,
         });
         const ok = !isActionError(result);
         console.log(JSON.stringify(wrapToolJson(tool.name, result, ok)));
