@@ -487,6 +487,9 @@ export async function handleAction(params) {
 
         if (reference !== undefined) {
           const parseTs = (v) => {
+            if (typeof v === "string" && /^\d+(\.\d+)?$/.test(v)) {
+              v = Number(v);
+            }
             if (typeof v === "number") {
               const ms = v > 1e12 ? v : v * 1000;
               const d = new Date(ms);

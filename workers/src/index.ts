@@ -48,6 +48,9 @@ interface PromptRegistry {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function parseTimestamp(input: string | number): Date {
+  if (typeof input === "string" && /^\d+(\.\d+)?$/.test(input)) {
+    input = Number(input);
+  }
   if (typeof input === "number") {
     const ms = input > 1e12 ? input : input * 1000;
     const d = new Date(ms);

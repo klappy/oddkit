@@ -285,7 +285,7 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     cliFlags: {
-      reference: { flag: "-r, --reference <timestamp>", description: "Reference timestamp (ISO 8601 or Unix epoch)" },
+      reference: { flag: "-R, --reference <timestamp>", description: "Reference timestamp (ISO 8601 or Unix epoch)" },
       compare: { flag: "-c, --compare <timestamp>", description: "Second timestamp for delta calculation" },
     },
   },
