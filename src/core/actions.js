@@ -162,7 +162,7 @@ export function buildEncodeResponse(taskResult) {
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state, include_metadata, section } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata, section, reference, compare } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
@@ -476,6 +476,59 @@ export async function handleAction(params) {
           assistant_text: "In-memory caches cleared. Note: this is storage hygiene only. " +
             "Content-addressed caching ensures correct content is served automatically " +
             "when the baseline changes — no manual cleanup is required for correctness.",
+          debug: makeDebug(),
+        };
+      }
+
+      case "time": {
+        const now = new Date();
+        const result = { now: now.toISOString() };
+        let assistantText = `Current UTC time: ${now.toISOString()}`;
+
+        if (reference !== undefined) {
+          const parseTs = (v) => {
+            if (typeof v === "number") {
+              const ms = v > 1e12 ? v : v * 1000;
+              const d = new Date(ms);
+              if (isNaN(d.getTime())) throw new Error(`Invalid numeric timestamp: ${v}`);
+              return d;
+            }
+            const d = new Date(v);
+            if (isNaN(d.getTime())) throw new Error(`Invalid timestamp string: "${v}"`);
+            return d;
+          };
+          const fmtDur = (ms) => {
+            const neg = ms < 0;
+            let rem = Math.abs(ms);
+            const d = Math.floor(rem / 86400000); rem %= 86400000;
+            const h = Math.floor(rem / 3600000); rem %= 3600000;
+            const m = Math.floor(rem / 60000); rem %= 60000;
+            const s = Math.floor(rem / 1000);
+            const parts = [];
+            if (d) parts.push(`${d}d`);
+            if (h) parts.push(`${h}h`);
+            if (m) parts.push(`${m}m`);
+            if (s || parts.length === 0) parts.push(`${s}s`);
+            return (neg ? "-" : "") + parts.join(" ");
+          };
+
+          const refDate = parseTs(reference);
+          if (compare !== undefined) {
+            const cmpDate = parseTs(compare);
+            const deltaMs = cmpDate.getTime() - refDate.getTime();
+            result.delta = { text: fmtDur(deltaMs), ms: deltaMs, start: refDate.toISOString(), end: cmpDate.toISOString() };
+            assistantText = `Delta: ${fmtDur(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
+          } else {
+            const elapsedMs = now.getTime() - refDate.getTime();
+            result.elapsed = { text: fmtDur(elapsedMs), ms: elapsedMs, reference: refDate.toISOString() };
+            assistantText = `Elapsed: ${fmtDur(elapsedMs)} since ${refDate.toISOString()}`;
+          }
+        }
+
+        return {
+          action: "time",
+          result,
+          assistant_text: assistantText,
           debug: makeDebug(),
         };
       }

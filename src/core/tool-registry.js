@@ -271,6 +271,24 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     cliFlags: {},
   },
+  {
+    name: "time",
+    mcpName: "oddkit_time",
+    description: "Stateless time utility. Returns current UTC time, elapsed time since a reference timestamp, or the delta between two timestamps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reference: { type: ["string", "number"], description: "Reference timestamp (ISO 8601 string or Unix epoch in ms or seconds). When provided alone, returns elapsed time from reference to now." },
+        compare: { type: ["string", "number"], description: "Second timestamp for delta calculation. Used with reference to compute the difference between two arbitrary timestamps." },
+      },
+      required: [],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    cliFlags: {
+      reference: { flag: "-r, --reference <timestamp>", description: "Reference timestamp (ISO 8601 or Unix epoch)" },
+      compare: { flag: "-c, --compare <timestamp>", description: "Second timestamp for delta calculation" },
+    },
+  },
 ];
 
 // ──────────────────────────────────────────────────────────────────────────────

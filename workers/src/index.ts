@@ -44,6 +44,37 @@ interface PromptRegistry {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Time utility helpers (E0008.2) — pure functions, no env dependency
+// ──────────────────────────────────────────────────────────────────────────────
+
+function parseTimestamp(input: string | number): Date {
+  if (typeof input === "number") {
+    const ms = input > 1e12 ? input : input * 1000;
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) throw new Error(`Invalid numeric timestamp: ${input}`);
+    return d;
+  }
+  const d = new Date(input);
+  if (isNaN(d.getTime())) throw new Error(`Invalid timestamp string: "${input}"`);
+  return d;
+}
+
+function formatDuration(ms: number): string {
+  const neg = ms < 0;
+  let rem = Math.abs(ms);
+  const d = Math.floor(rem / 86400000); rem %= 86400000;
+  const h = Math.floor(rem / 3600000); rem %= 3600000;
+  const m = Math.floor(rem / 60000); rem %= 60000;
+  const s = Math.floor(rem / 1000);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (s || parts.length === 0) parts.push(`${s}s`);
+  return (neg ? "-" : "") + parts.join(" ");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Prompt registry helpers — ZipBaselineFetcher with module-level cache
 //
 // Uses ZipBaselineFetcher (R2/KV content-addressed cache) for both registry
@@ -449,6 +480,81 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
               },
               generated_at: new Date().toISOString(),
             },
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
+  // ── Time utility (E0008.2) ──────────────────────────────────────────────
+
+  server.tool(
+    "oddkit_time",
+    "Stateless time utility. Returns current UTC time, elapsed time since a reference timestamp, or the delta between two timestamps. No params = current time. One timestamp = elapsed. Two timestamps = delta. Accepts ISO 8601 strings or Unix epoch (seconds or milliseconds).",
+    {
+      reference: z.union([z.string(), z.number()]).optional().describe("Reference timestamp (ISO 8601 string or Unix epoch in ms or seconds). When provided alone, returns elapsed time from reference to now."),
+      compare: z.union([z.string(), z.number()]).optional().describe("Second timestamp for delta calculation. Used with reference to compute the difference between two arbitrary timestamps."),
+    },
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ reference, compare }) => {
+      const startTime = Date.now();
+      const now = new Date();
+      const result: Record<string, unknown> = { now: now.toISOString() };
+      let assistantText = `Current UTC time: ${now.toISOString()}`;
+
+      try {
+        if (reference !== undefined) {
+          const refDate = parseTimestamp(reference);
+          if (compare !== undefined) {
+            const cmpDate = parseTimestamp(compare);
+            const deltaMs = cmpDate.getTime() - refDate.getTime();
+            result.delta = {
+              text: formatDuration(deltaMs),
+              ms: deltaMs,
+              start: refDate.toISOString(),
+              end: cmpDate.toISOString(),
+            };
+            assistantText = `Delta: ${formatDuration(deltaMs)} (${deltaMs}ms) between ${refDate.toISOString()} and ${cmpDate.toISOString()}`;
+          } else {
+            const elapsedMs = now.getTime() - refDate.getTime();
+            result.elapsed = {
+              text: formatDuration(elapsedMs),
+              ms: elapsedMs,
+              reference: refDate.toISOString(),
+            };
+            assistantText = `Elapsed: ${formatDuration(elapsedMs)} since ${refDate.toISOString()}`;
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Invalid timestamp";
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              action: "time",
+              result: { error: message, now: now.toISOString() },
+              server_time: new Date().toISOString(),
+              assistant_text: `Error: ${message}`,
+              debug: { duration_ms: Date.now() - startTime },
+            }, null, 2),
+          }],
+        };
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "time",
+            result,
+            server_time: new Date().toISOString(),
+            assistant_text: assistantText,
+            debug: { duration_ms: Date.now() - startTime },
           }, null, 2),
         }],
       };
