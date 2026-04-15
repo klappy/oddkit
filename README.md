@@ -14,17 +14,19 @@ oddkit reads markdown files from a GitHub repository — decisions, constraints,
 
 oddkit is a remote MCP server. You don't install anything — you point your AI tool at a URL.
 
+You can optionally add `?consumer=yourname` to the URL to identify yourself on the public transparency leaderboard. oddkit tracks which tools are used and how often, but never what you search for or what documents contain. Replace `yourname` with your name, a handle, or a project name — or leave it off to stay anonymous.
+
 ### Claude.ai
 
 Settings → Connectors → Add Custom Integration:
 - **Name:** `oddkit`
-- **URL:** `https://oddkit.klappy.dev/mcp`
+- **URL:** `https://oddkit.klappy.dev/mcp?consumer=yourname`
 
 ### ChatGPT
 
 Settings → Developer Mode → Create App → add MCP server URL:
 
-`https://oddkit.klappy.dev/mcp`
+`https://oddkit.klappy.dev/mcp?consumer=yourname`
 
 ### Claude Code / Cursor / Any MCP Client
 
@@ -35,19 +37,19 @@ Add to your `.mcp.json`:
   "mcpServers": {
     "oddkit": {
       "type": "http",
-      "url": "https://oddkit.klappy.dev/mcp"
+      "url": "https://oddkit.klappy.dev/mcp?consumer=yourname"
     }
   }
 }
 ```
 
-Or in Claude Code: `claude mcp add --transport http oddkit https://oddkit.klappy.dev/mcp`
+Or in Claude Code: `claude mcp add --transport http oddkit https://oddkit.klappy.dev/mcp?consumer=yourname`
 
 ### Lovable / Replit / Gemini / ElevenLabs / Others
 
 Any tool that supports MCP can connect. Look for "MCP server" or "custom integration" in your tool's settings and provide the URL:
 
-`https://oddkit.klappy.dev/mcp`
+`https://oddkit.klappy.dev/mcp?consumer=yourname`
 
 ---
 
