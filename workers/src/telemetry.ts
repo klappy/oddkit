@@ -77,27 +77,36 @@ function parseClientInfoName(payload: unknown): string | null {
 
 /**
  * Consumer label resolution chain:
- * 1. x-oddkit-client header (explicit, highest priority)
- * 2. MCP initialize → clientInfo.name (protocol-native)
- * 3. User-Agent header (fallback)
- * 4. "unknown" (default)
+ * 1. ?consumer= query parameter (URL-level, highest priority)
+ * 2. x-oddkit-client header (explicit)
+ * 3. MCP initialize → clientInfo.name (protocol-native)
+ * 4. User-Agent header (fallback)
+ * 5. "unknown" (default)
  */
 export function parseConsumerLabel(
   request: Request,
   payload: unknown,
 ): { label: string; source: string } {
-  // 1. Explicit header
+  // 1. URL query parameter — lets platforms that block custom headers self-identify
+  const url = new URL(request.url);
+  const consumer = url.searchParams.get("consumer");
+  if (consumer) {
+    const label = sanitize(consumer);
+    if (label) return { label, source: "query-param" };
+  }
+
+  // 2. Explicit header
   const explicit = request.headers.get("x-oddkit-client");
   if (explicit) {
     const label = sanitize(explicit);
     if (label) return { label, source: "x-oddkit-client" };
   }
 
-  // 2. MCP initialize clientInfo.name
+  // 3. MCP initialize clientInfo.name
   const fromInit = parseClientInfoName(payload);
   if (fromInit) return { label: fromInit, source: "initialize.clientInfo.name" };
 
-  // 3. User-Agent
+  // 4. User-Agent
   const ua = request.headers.get("user-agent");
   if (ua) {
     const first = ua.split(/\s+/)[0] ?? "";
