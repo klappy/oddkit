@@ -378,12 +378,15 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
   for (const para of paragraphs) {
     let matched = false;
     for (const t of types) {
+      // DESIGN: no break — a paragraph can match multiple types intentionally.
+      // "We must never deploy without tests" is both Decision and Constraint.
+      // Multi-typing at the server level mirrors what the model would do with
+      // separate TSV rows. Do not add a break here.
       if (t.triggerRegex && t.triggerRegex.test(para)) {
         const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
         artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
         matched = true;
-        break;
       }
     }
     if (!matched) {
