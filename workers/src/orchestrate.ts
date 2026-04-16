@@ -402,15 +402,22 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
 function scoreArtifactQuality(
   artifact: ParsedArtifact,
   criteria: Array<{ criterion: string; check: string; gapMessage: string }>,
+  scoringText?: string,
 ): { score: number; maxScore: number; level: string; gaps: string[]; suggestions: string[] } {
   const gaps: string[] = [];
   const suggestions: string[] = [];
   let score = 0;
+  // Governance: context informs quality scoring. When scoringText is provided
+  // (artifact.body + context), criteria check against that combined text so
+  // background information in context (rationale, alternatives, evidence)
+  // counts toward the artifact's quality without becoming separate artifacts.
+  // See: klappy://odd/encoding-types/how-to-write-encoding-types#context-vs-input
+  const text = scoringText ?? artifact.body;
 
   if (criteria.length === 0) {
-    if (artifact.body.split(/\s+/).length >= 10) score++;
+    if (text.split(/\s+/).length >= 10) score++;
     else suggestions.push("Expand — more detail improves quality");
-    if (/because|due to|since/i.test(artifact.body)) score++;
+    if (/because|due to|since/i.test(text)) score++;
     else suggestions.push("Add rationale");
     return { score, maxScore: 2, level: score >= 2 ? "adequate" : "weak", gaps, suggestions };
   }
@@ -418,12 +425,12 @@ function scoreArtifactQuality(
   for (const c of criteria) {
     const ck = c.check.toLowerCase();
     let passed = false;
-    if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || artifact.body.length > 0;
-    else if (ck.includes("10")) passed = artifact.body.split(/\s+/).length >= 10;
-    else if (ck.includes("number") || ck.includes("concrete")) passed = /\d/.test(artifact.body);
-    else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(artifact.body);
-    else if (ck.includes("prohibition") || ck.includes("requirement")) passed = /must|must not|never|always|shall/i.test(artifact.body);
-    else passed = artifact.body.split(/\s+/).length >= 5;
+    if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || text.length > 0;
+    else if (ck.includes("10")) passed = text.split(/\s+/).length >= 10;
+    else if (ck.includes("number") || ck.includes("concrete")) passed = /\d/.test(text);
+    else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(text);
+    else if (ck.includes("prohibition") || ck.includes("requirement")) passed = /must|must not|never|always|shall/i.test(text);
+    else passed = text.split(/\s+/).length >= 5;
     if (passed) score++;
     else { gaps.push(c.gapMessage); suggestions.push(c.gapMessage); }
   }
@@ -1415,19 +1422,26 @@ async function runEncodeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const fullInput = context ? `${input}\n${context}` : input;
+  // Governance: input generates artifacts; context only informs quality scoring.
+  // See: klappy://odd/encoding-types/how-to-write-encoding-types#context-vs-input
+  // Do not pass fullInput to parsers — that would create separate artifacts
+  // for each context paragraph instead of letting context inform scoring.
 
   const types = await discoverEncodingTypes(fetcher, canonUrl);
-  const structured = isStructuredInput(fullInput);
+  const structured = isStructuredInput(input);
   const artifacts = structured
-    ? parseStructuredInput(fullInput, types)
-    : parseUnstructuredInput(fullInput, types);
+    ? parseStructuredInput(input, types)
+    : parseUnstructuredInput(input, types);
 
-  // Score each artifact using its type's quality criteria
+  // Score each artifact using its type's quality criteria.
+  // When context is provided, append it to the artifact's body for scoring
+  // so background information (rationale, alternatives, evidence) counts
+  // toward the artifact's quality without becoming separate artifacts.
   const scoredArtifacts = artifacts.map((a) => {
     const typeDef = types.find((t) => t.letter === a.type);
     const criteria = typeDef ? typeDef.qualityCriteria : [];
-    const quality = scoreArtifactQuality(a, criteria);
+    const scoringText = context ? `${a.body}\n${context}` : undefined;
+    const quality = scoreArtifactQuality(a, criteria, scoringText);
     return { title: a.title, type: a.type, typeName: a.typeName, content: a.body, fields: a.fields, quality };
   });
 
