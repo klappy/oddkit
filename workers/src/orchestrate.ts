@@ -428,8 +428,8 @@ function scoreArtifactQuality(
     if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || text.length > 0;
     else if (ck.includes("10")) passed = text.split(/\s+/).length >= 10;
     else if (ck.includes("number") || ck.includes("concrete")) passed = /\d/.test(text);
-    else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(text);
-    else if (ck.includes("prohibition") || ck.includes("requirement")) passed = /must|must not|never|always|shall/i.test(text);
+    else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(artifact.body);
+    else if (ck.includes("prohibition") || ck.includes("requirement")) passed = /must|must not|never|always|shall/i.test(artifact.body);
     else passed = text.split(/\s+/).length >= 5;
     if (passed) score++;
     else { gaps.push(c.gapMessage); suggestions.push(c.gapMessage); }
