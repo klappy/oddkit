@@ -392,7 +392,8 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
     if (!matched) {
       const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
       const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-      artifacts.push({ type: "D", typeName: "Decision", fields: ["D", title, para.trim()], title, body: para.trim() });
+      const fallback = types[0] || { letter: "D", name: "Decision" };
+      artifacts.push({ type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() });
     }
   }
   return artifacts;
@@ -730,6 +731,8 @@ async function runCleanupStorage(
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
+  cachedEncodingTypes = null;
+  cachedEncodingTypesCanonUrl = undefined;
 
   return {
     action: "cleanup_storage",
@@ -1412,13 +1415,12 @@ async function runEncodeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const fullInput = context ? `${input}\n${context}` : input;
 
   const types = await discoverEncodingTypes(fetcher, canonUrl);
   const structured = isStructuredInput(input);
   const artifacts = structured
     ? parseStructuredInput(input, types)
-    : parseUnstructuredInput(fullInput, types);
+    : parseUnstructuredInput(input, types);
 
   // Score each artifact using its type's quality criteria
   const scoredArtifacts = artifacts.map((a) => {
