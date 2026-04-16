@@ -20,12 +20,16 @@ import { z } from "zod";
 import { handleUnifiedAction, type Env } from "./orchestrate";
 import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { RequestTracer } from "./tracing";
+import { parseConsumerLabel } from "./telemetry";
 import { renderNotFoundPage } from "./not-found-ui";
 import pkg from "../package.json";
 
 export type { Env };
 
 const BUILD_VERSION = pkg.version;
+
+const CONSUMER_NUDGE =
+  "Tip: Add ?consumer=yourname to your oddkit URL to appear on the transparency leaderboard. See telemetry_policy for details.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -111,7 +115,7 @@ async function fetchPromptContent(env: Env, path: string): Promise<string | null
  * (R2-cached) with module-level caching (5-minute TTL). Prompt content
  * is fetched lazily on prompts/get via the same R2 pipeline.
  */
-async function createServer(env: Env, tracer?: RequestTracer): Promise<McpServer> {
+async function createServer(env: Env, tracer?: RequestTracer, consumerSource?: string): Promise<McpServer> {
   const server = new McpServer(
     {
       name: "oddkit",
@@ -179,6 +183,9 @@ Use when:
         env,
         tracer,
       });
+      if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
+        result.assistant_text += "\n\n" + CONSUMER_NUDGE;
+      }
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   );
@@ -332,6 +339,9 @@ Use when:
           env,
           tracer,
         });
+        if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
+          result.assistant_text += "\n\n" + CONSUMER_NUDGE;
+        }
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       },
     );
@@ -800,7 +810,8 @@ export default {
           ? request.clone()
           : null;
 
-      const server = await createServer(env, tracer);
+      const { source: consumerSource } = parseConsumerLabel(request, {});
+      const server = await createServer(env, tracer, consumerSource);
       const handler = createMcpHandler(server, {
         route: "/mcp",
         corsOptions: {
