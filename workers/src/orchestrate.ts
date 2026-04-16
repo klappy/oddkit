@@ -425,7 +425,7 @@ function scoreArtifactQuality(
   for (const c of criteria) {
     const ck = c.check.toLowerCase();
     let passed = false;
-    if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || text.length > 0;
+    if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || artifact.body.length > 0;
     else if (ck.includes("10")) passed = text.split(/\s+/).length >= 10;
     else if (ck.includes("number") || ck.includes("concrete")) passed = /\d/.test(text);
     else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(artifact.body);
