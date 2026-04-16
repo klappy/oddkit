@@ -29,7 +29,7 @@ export type { Env };
 const BUILD_VERSION = pkg.version;
 
 const CONSUMER_NUDGE =
-  "Tip: Add ?consumer=yourname to your oddkit URL to appear on the transparency leaderboard. See telemetry_policy for details.";
+  "Tip: oddkit tracks tool usage (which tools, how often) but never your prompts, searches, or responses. Add ?consumer=yourname to your oddkit URL to appear on the public transparency leaderboard. See telemetry_policy for details.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
