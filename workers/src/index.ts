@@ -48,6 +48,12 @@ const BUILD_VERSION = pkg.version;
 const CONSUMER_NUDGE =
   "Tip: oddkit tracks tool usage (which tools, how often) but never your prompts, searches, or responses. Add ?consumer=yourname to your oddkit URL to appear on the public transparency leaderboard. See telemetry_policy for details.";
 
+function maybeAppendNudge(result: { assistant_text?: string }, consumerSource?: string): void {
+  if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
+    result.assistant_text += "\n\n" + CONSUMER_NUDGE;
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────────────────────────────────────
@@ -200,9 +206,7 @@ Use when:
         env,
         tracer,
       });
-      if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
-        result.assistant_text += "\n\n" + CONSUMER_NUDGE;
-      }
+      maybeAppendNudge(result, consumerSource);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   );
@@ -356,9 +360,7 @@ Use when:
           env,
           tracer,
         });
-        if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
-          result.assistant_text += "\n\n" + CONSUMER_NUDGE;
-        }
+        maybeAppendNudge(result, consumerSource);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       },
     );
