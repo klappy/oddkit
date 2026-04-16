@@ -20,12 +20,33 @@ import { z } from "zod";
 import { handleUnifiedAction, type Env } from "./orchestrate";
 import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { RequestTracer } from "./tracing";
+import { parseConsumerLabel } from "./telemetry";
 import { renderNotFoundPage } from "./not-found-ui";
 import pkg from "../package.json";
 
 export type { Env };
 
 const BUILD_VERSION = pkg.version;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Consumer identification nudge
+//
+// DO NOT add session caching, sticky identification, or per-session memory.
+// This server is stateless by design (Vodka Architecture). Cloudflare Workers
+// are globally distributed across isolates — module-level Maps don't survive
+// across requests reliably. The query param (?consumer=yourname) is the
+// stateless solution and works on every request, every isolate, every platform.
+//
+// If a consumer identifies via MCP clientInfo.name on initialize but not via
+// query param, they WILL see this nudge on subsequent tools/call requests.
+// That is correct behavior — the nudge tells them exactly how to stop seeing
+// it. Caching would mask the problem instead of solving it.
+//
+// See: canon/principles/vodka-architecture, canon/constraints/telemetry-governance
+// ──────────────────────────────────────────────────────────────────────────────
+
+const CONSUMER_NUDGE =
+  "Tip: oddkit tracks tool usage (which tools, how often) but never your prompts, searches, or responses. Add ?consumer=yourname to your oddkit URL to appear on the public transparency leaderboard. See telemetry_policy for details.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -111,7 +132,7 @@ async function fetchPromptContent(env: Env, path: string): Promise<string | null
  * (R2-cached) with module-level caching (5-minute TTL). Prompt content
  * is fetched lazily on prompts/get via the same R2 pipeline.
  */
-async function createServer(env: Env, tracer?: RequestTracer): Promise<McpServer> {
+async function createServer(env: Env, tracer?: RequestTracer, consumerSource?: string): Promise<McpServer> {
   const server = new McpServer(
     {
       name: "oddkit",
@@ -179,6 +200,9 @@ Use when:
         env,
         tracer,
       });
+      if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
+        result.assistant_text += "\n\n" + CONSUMER_NUDGE;
+      }
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   );
@@ -332,6 +356,9 @@ Use when:
           env,
           tracer,
         });
+        if ((consumerSource === "user-agent" || consumerSource === "unknown") && result.assistant_text) {
+          result.assistant_text += "\n\n" + CONSUMER_NUDGE;
+        }
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       },
     );
@@ -800,7 +827,8 @@ export default {
           ? request.clone()
           : null;
 
-      const server = await createServer(env, tracer);
+      const { source: consumerSource } = parseConsumerLabel(request, {});
+      const server = await createServer(env, tracer, consumerSource);
       const handler = createMcpHandler(server, {
         route: "/mcp",
         corsOptions: {
