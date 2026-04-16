@@ -1415,12 +1415,13 @@ async function runEncodeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
+  const fullInput = context ? `${input}\n${context}` : input;
 
   const types = await discoverEncodingTypes(fetcher, canonUrl);
-  const structured = isStructuredInput(input);
+  const structured = isStructuredInput(fullInput);
   const artifacts = structured
-    ? parseStructuredInput(input, types)
-    : parseUnstructuredInput(input, types);
+    ? parseStructuredInput(fullInput, types)
+    : parseUnstructuredInput(fullInput, types);
 
   // Score each artifact using its type's quality criteria
   const scoredArtifacts = artifacts.map((a) => {
