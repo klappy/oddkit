@@ -28,6 +28,23 @@ export type { Env };
 
 const BUILD_VERSION = pkg.version;
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Consumer identification nudge
+//
+// DO NOT add session caching, sticky identification, or per-session memory.
+// This server is stateless by design (Vodka Architecture). Cloudflare Workers
+// are globally distributed across isolates — module-level Maps don't survive
+// across requests reliably. The query param (?consumer=yourname) is the
+// stateless solution and works on every request, every isolate, every platform.
+//
+// If a consumer identifies via MCP clientInfo.name on initialize but not via
+// query param, they WILL see this nudge on subsequent tools/call requests.
+// That is correct behavior — the nudge tells them exactly how to stop seeing
+// it. Caching would mask the problem instead of solving it.
+//
+// See: canon/principles/vodka-architecture, canon/constraints/telemetry-governance
+// ──────────────────────────────────────────────────────────────────────────────
+
 const CONSUMER_NUDGE =
   "Tip: oddkit tracks tool usage (which tools, how often) but never your prompts, searches, or responses. Add ?consumer=yourname to your oddkit URL to appear on the public transparency leaderboard. See telemetry_policy for details.";
 
