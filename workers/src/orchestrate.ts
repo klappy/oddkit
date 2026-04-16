@@ -73,6 +73,7 @@ interface ParsedArtifact {
 }
 
 let cachedEncodingTypes: EncodingTypeDef[] | null = null;
+let cachedEncodingTypesCanonUrl: string | undefined = undefined;
 
 export interface UnifiedParams {
   action: string;
@@ -277,7 +278,7 @@ async function discoverEncodingTypes(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
 ): Promise<EncodingTypeDef[]> {
-  if (cachedEncodingTypes) return cachedEncodingTypes;
+  if (cachedEncodingTypes && cachedEncodingTypesCanonUrl === canonUrl) return cachedEncodingTypes;
 
   const index = await fetcher.getIndex(canonUrl);
   const typeArticles = index.entries.filter(
@@ -332,7 +333,7 @@ async function discoverEncodingTypes(
   }
 
   if (types.length === 0) {
-    // Fallback DOLCHE defaults when no governance docs in canon
+    // Fallback OLDC+H defaults when no governance docs in canon
     const defaults: Array<[string, string, string[]]> = [
       ["D", "Decision", ["decided", "decision", "chose", "committed to", "going with"]],
       ["O", "Observation", ["observed", "noticed", "found", "measured", "detected"]],
@@ -350,14 +351,8 @@ async function discoverEncodingTypes(
   }
 
   cachedEncodingTypes = types;
+  cachedEncodingTypesCanonUrl = canonUrl;
   return types;
-}
-
-function detectEncodeTypeFromGovernance(input: string, types: EncodingTypeDef[]): string {
-  for (const t of types) {
-    if (t.triggerRegex && t.triggerRegex.test(input)) return t.letter;
-  }
-  return "D";
 }
 
 function isStructuredInput(input: string): boolean {
@@ -388,6 +383,7 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
         artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
         matched = true;
+        break;
       }
     }
     if (!matched) {
@@ -429,7 +425,7 @@ function scoreArtifactQuality(
   }
 
   const mx = criteria.length;
-  const level = score >= mx - 1 ? "strong" : score >= Math.ceil(mx * 0.6) ? "adequate" : score >= Math.ceil(mx * 0.4) ? "weak" : "insufficient";
+  const level = score >= mx ? "strong" : score >= Math.ceil(mx * 0.6) ? "adequate" : score >= Math.ceil(mx * 0.4) ? "weak" : "insufficient";
   return { score, maxScore: mx, level, gaps, suggestions };
 }
 
