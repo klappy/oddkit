@@ -55,6 +55,26 @@ export interface OddkitEnvelope {
 /** Internal type — handlers return this, handleUnifiedAction stamps server_time */
 type ActionResult = Omit<OddkitEnvelope, "server_time">;
 
+// Governance-driven encoding types
+interface EncodingTypeDef {
+  letter: string;
+  name: string;
+  triggerWords: string[];
+  triggerRegex: RegExp | null;
+  qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }>;
+}
+
+interface ParsedArtifact {
+  type: string;
+  typeName: string;
+  fields: string[];
+  title: string;
+  body: string;
+}
+
+let cachedEncodingTypes: EncodingTypeDef[] | null = null;
+let cachedEncodingTypesCanonUrl: string | undefined = undefined;
+
 export interface UnifiedParams {
   action: string;
   input: string;
@@ -253,16 +273,164 @@ function detectTransition(input: string): { from: string; to: string } {
   return { from: "unknown", to: "unknown" };
 }
 
-function detectEncodeType(input: string): string {
-  if (/\b(decided|decision|chose|choosing|selected|committed to|going with)\b/i.test(input))
-    return "decision";
-  if (/\b(learned|insight|realized|discovered|found that|turns out)\b/i.test(input))
-    return "insight";
-  if (/\b(boundary|limit|constraint|rule|prohibition|must not|never)\b/i.test(input))
-    return "boundary";
-  if (/\b(override|exception|despite|even though|notwithstanding)\b/i.test(input))
-    return "override";
-  return "decision";
+// Discover encoding types from canon governance docs
+async function discoverEncodingTypes(
+  fetcher: ZipBaselineFetcher,
+  canonUrl?: string,
+): Promise<EncodingTypeDef[]> {
+  if (cachedEncodingTypes && cachedEncodingTypesCanonUrl === canonUrl) return cachedEncodingTypes;
+
+  const index = await fetcher.getIndex(canonUrl);
+  const typeArticles = index.entries.filter(
+    (entry: IndexEntry) => entry.tags?.includes("encoding-type") && entry.path.includes("encoding-types/"),
+  );
+
+  const types: EncodingTypeDef[] = [];
+  for (const article of typeArticles) {
+    try {
+      const content = await fetcher.getFile(article.path, canonUrl);
+      if (!content) continue;
+
+      const identityMatch = content.match(/\|\s*Letter\s*\|\s*([A-Z])\s*\|/);
+      const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/);
+      if (!identityMatch) continue;
+
+      const letter = identityMatch[1];
+      const name = nameMatch ? nameMatch[1].trim() : letter;
+
+      const triggerSection = content.match(
+        /## Trigger Words[^\n]*\n[\s\S]*?```\n([\s\S]*?)\n```/,
+      );
+      const triggerWords = triggerSection
+        ? triggerSection[1].split(",").map((w: string) => w.trim()).filter((w: string) => w.length > 0)
+        : [];
+      const triggerRegex =
+        triggerWords.length > 0
+          ? new RegExp("\\b(" + triggerWords.map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b", "i")
+          : null;
+
+      const criteriaSection = content.match(
+        /## Quality Criteria[\s\S]*?\| Criterion[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      const qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }> = [];
+      if (criteriaSection) {
+        for (const row of criteriaSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          if (cols.length >= 3) {
+            qualityCriteria.push({
+              criterion: cols[0],
+              check: cols[1],
+              gapMessage: cols[2].replace(/^"|"$/g, ""),
+            });
+          }
+        }
+      }
+
+      types.push({ letter, name, triggerWords, triggerRegex, qualityCriteria });
+    } catch {
+      continue;
+    }
+  }
+
+  if (types.length === 0) {
+    // Fallback OLDC+H defaults when no governance docs in canon
+    const defaults: Array<[string, string, string[]]> = [
+      ["D", "Decision", ["decided", "decision", "chose", "committed to", "going with"]],
+      ["O", "Observation", ["observed", "noticed", "found", "measured", "detected"]],
+      ["L", "Learning", ["learned", "realized", "discovered", "turns out", "insight"]],
+      ["C", "Constraint", ["must", "must not", "never", "always", "constraint", "cannot"]],
+      ["H", "Handoff", ["next session", "next step", "todo", "follow up", "blocked by"]],
+    ];
+    for (const [letter, name, words] of defaults) {
+      types.push({
+        letter, name, triggerWords: words,
+        triggerRegex: new RegExp("\\b(" + words.join("|") + ")\\b", "i"),
+        qualityCriteria: [],
+      });
+    }
+  }
+
+  cachedEncodingTypes = types;
+  cachedEncodingTypesCanonUrl = canonUrl;
+  return types;
+}
+
+function isStructuredInput(input: string): boolean {
+  const lines = input.split("\n").filter((l) => l.trim().length > 0);
+  return lines.length > 0 && lines.every((l) => /^[A-Z]\t/.test(l));
+}
+
+function parseStructuredInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
+  const typeMap = new Map(types.map((t) => [t.letter, t.name]));
+  return input.split("\n").filter((l) => l.trim().length > 0).map((line) => {
+    const fields = line.split("\t");
+    const letter = fields[0]?.trim() || "D";
+    return {
+      type: letter, typeName: typeMap.get(letter) || letter,
+      fields, title: fields[1]?.trim() || "", body: fields[2]?.trim() || "",
+    };
+  });
+}
+
+function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
+  const paragraphs = input.split(/\n\n+/).filter((p) => p.trim().length > 0);
+  const artifacts: ParsedArtifact[] = [];
+  for (const para of paragraphs) {
+    let matched = false;
+    for (const t of types) {
+      // DESIGN: no break — a paragraph can match multiple types intentionally.
+      // "We must never deploy without tests" is both Decision and Constraint.
+      // Multi-typing at the server level mirrors what the model would do with
+      // separate TSV rows. Do not add a break here.
+      if (t.triggerRegex && t.triggerRegex.test(para)) {
+        const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
+        const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
+        artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
+        matched = true;
+      }
+    }
+    if (!matched) {
+      const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
+      const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
+      const fallback = types[0] || { letter: "D", name: "Decision" };
+      artifacts.push({ type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() });
+    }
+  }
+  return artifacts;
+}
+
+function scoreArtifactQuality(
+  artifact: ParsedArtifact,
+  criteria: Array<{ criterion: string; check: string; gapMessage: string }>,
+): { score: number; maxScore: number; level: string; gaps: string[]; suggestions: string[] } {
+  const gaps: string[] = [];
+  const suggestions: string[] = [];
+  let score = 0;
+
+  if (criteria.length === 0) {
+    if (artifact.body.split(/\s+/).length >= 10) score++;
+    else suggestions.push("Expand — more detail improves quality");
+    if (/because|due to|since/i.test(artifact.body)) score++;
+    else suggestions.push("Add rationale");
+    return { score, maxScore: 2, level: score >= 2 ? "adequate" : "weak", gaps, suggestions };
+  }
+
+  for (const c of criteria) {
+    const ck = c.check.toLowerCase();
+    let passed = false;
+    if (ck.includes("non-empty")) passed = artifact.fields.length > 3 || artifact.body.length > 0;
+    else if (ck.includes("10")) passed = artifact.body.split(/\s+/).length >= 10;
+    else if (ck.includes("number") || ck.includes("concrete")) passed = /\d/.test(artifact.body);
+    else if (ck.includes("interpretation") || ck.includes("does not contain")) passed = !/should|better|worse|means|implies/i.test(artifact.body);
+    else if (ck.includes("prohibition") || ck.includes("requirement")) passed = /must|must not|never|always|shall/i.test(artifact.body);
+    else passed = artifact.body.split(/\s+/).length >= 5;
+    if (passed) score++;
+    else { gaps.push(c.gapMessage); suggestions.push(c.gapMessage); }
+  }
+
+  const mx = criteria.length;
+  const level = score >= mx ? "strong" : score >= Math.ceil(mx * 0.6) ? "adequate" : score >= Math.ceil(mx * 0.4) ? "weak" : "insufficient";
+  return { score, maxScore: mx, level, gaps, suggestions };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -563,6 +731,8 @@ async function runCleanupStorage(
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
+  cachedEncodingTypes = null;
+  cachedEncodingTypesCanonUrl = undefined;
 
   return {
     action: "cleanup_storage",
@@ -1246,93 +1416,66 @@ async function runEncodeAction(
 ): Promise<ActionResult> {
   const startMs = Date.now();
   const fullInput = context ? `${input}\n${context}` : input;
-  const encodeType = detectEncodeType(input);
 
-  const firstSentence = input.split(/[.!?\n]/)[0]?.trim() || input.slice(0, 60);
-  const title =
-    firstSentence.split(/\s+/).length <= 12
-      ? firstSentence
-      : firstSentence.split(/\s+/).slice(0, 8).join(" ") + "...";
+  const types = await discoverEncodingTypes(fetcher, canonUrl);
+  const structured = isStructuredInput(fullInput);
+  const artifacts = structured
+    ? parseStructuredInput(fullInput, types)
+    : parseUnstructuredInput(fullInput, types);
 
-  let rationale: string | null = null;
-  const rMatch =
-    fullInput.match(/because\s+(.+?)(?:\.|$)/i) || fullInput.match(/due to\s+(.+?)(?:\.|$)/i);
-  if (rMatch && rMatch[1].split(/\s+/).length >= 3) rationale = rMatch[1].trim();
+  // Score each artifact using its type's quality criteria
+  const scoredArtifacts = artifacts.map((a) => {
+    const typeDef = types.find((t) => t.letter === a.type);
+    const criteria = typeDef ? typeDef.qualityCriteria : [];
+    const quality = scoreArtifactQuality(a, criteria);
+    return { title: a.title, type: a.type, typeName: a.typeName, content: a.body, fields: a.fields, quality };
+  });
 
-  const constraints: string[] = [];
-  for (const s of fullInput.split(/[.!?\n]+/).filter((s) => s.trim().length > 5)) {
-    if (/\b(must|shall|required|always|never|constraint|cannot)\b/i.test(s))
-      constraints.push(s.trim());
-  }
-
-  let score = 0;
-  if (input.split(/\s+/).length >= 10) score++;
-  if (rationale) score++;
-  if (constraints.length > 0) score++;
-  if (/\b(alternative|instead|option|versus|vs|rather than)\b/i.test(fullInput)) score++;
-  if (/\b(irreversib|reversib|temporary|permanent|until)\b/i.test(fullInput)) score++;
-  const qualityLevel =
-    score >= 4 ? "strong" : score >= 3 ? "adequate" : score >= 2 ? "weak" : "insufficient";
-
-  const gaps: string[] = [];
-  const suggestions: string[] = [];
-  if (!rationale) {
-    gaps.push("No rationale detected — add 'because...'");
-    suggestions.push("Add explicit rationale");
-  }
-  if (constraints.length === 0)
-    suggestions.push("Add constraints: what boundaries does this create?");
-  if (encodeType === "decision" && !/\b(alternative|instead)\b/i.test(fullInput))
-    suggestions.push("Document alternatives considered");
-  if (!/\b(irreversib|reversib|temporary|permanent)\b/i.test(fullInput))
-    suggestions.push("Note whether this is reversible or permanent");
-
-  const artifact = {
-    title,
-    type: encodeType,
-    decision: input.trim(),
-    rationale: rationale || "(not provided — add 'because...' to strengthen)",
-    constraints,
-    status: qualityLevel === "strong" || qualityLevel === "adequate" ? "recorded" : "draft",
-    timestamp: new Date().toISOString(),
-  };
-
-  // Update state
+  // Update state — track all encoded type letters
   const updatedState = state ? initState(state) : undefined;
   if (updatedState) {
-    updatedState.decisions_encoded.push(title);
+    for (const a of artifacts) {
+      updatedState.decisions_encoded.push(`${a.type}:${a.title}`);
+    }
   }
 
-  const lines = [
-    `Encoded ${encodeType}: ${title}`,
-    `Status: ${artifact.status} | Quality: ${qualityLevel} (${score}/5)`,
+  // Build assistant_text as markdown with per-artifact sections
+  const lines: string[] = [
+    `## Encoded ${scoredArtifacts.length} artifact${scoredArtifacts.length !== 1 ? "s" : ""}`,
     "",
   ];
-  lines.push(`Decision: ${input.trim()}`, `Rationale: ${artifact.rationale}`, "");
-  if (constraints.length > 0) {
-    lines.push("Constraints:");
-    for (const c of constraints) lines.push(`  - ${c}`);
+  for (const a of scoredArtifacts) {
+    lines.push(`### [${a.type}] ${a.typeName}: ${a.title}`);
+    lines.push(`**Quality:** ${a.quality.level} (${a.quality.score}/${a.quality.maxScore})`);
     lines.push("");
+    lines.push(a.content);
+    lines.push("");
+    if (a.quality.gaps.length > 0) {
+      lines.push("**Gaps:**");
+      for (const g of a.quality.gaps) lines.push(`- ${g}`);
+      lines.push("");
+    }
+    if (a.quality.suggestions.length > 0) {
+      lines.push("**Suggestions:**");
+      for (const s of a.quality.suggestions) lines.push(`- ${s}`);
+      lines.push("");
+    }
   }
-  if (gaps.length > 0) {
-    lines.push("Gaps:");
-    for (const g of gaps) lines.push(`  - ${g}`);
-    lines.push("");
-  }
-  if (suggestions.length > 0) {
-    lines.push("Suggestions:");
-    for (const s of suggestions) lines.push(`  - ${s}`);
-    lines.push("");
+
+  lines.push("---");
+  lines.push("**Encoding types (governance):**");
+  for (const t of types) {
+    lines.push(`- **${t.letter}** — ${t.name}`);
   }
 
   return {
     action: "encode",
     result: {
       status: "ENCODED",
-      artifact,
-      quality: { level: qualityLevel, score, max_score: 5, gaps, suggestions },
+      artifacts: scoredArtifacts,
+      governance: types.map((t) => ({ letter: t.letter, name: t.name })),
       persist_required: true,
-      next_action: "Save this artifact to the project's storage (project journal, file, database). Encode does NOT persist.",
+      next_action: "Save these artifacts to storage. Encode does NOT persist.",
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
