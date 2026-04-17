@@ -167,7 +167,11 @@ Use when:
       ]).describe("Which epistemic action to perform."),
       input: z.string().describe("Primary input — query, claim, URI, goal, or completion claim depending on action."),
       context: z.string().optional().describe("Optional supporting context."),
-      mode: z.enum(["exploration", "planning", "execution"]).optional().describe("Optional epistemic mode hint."),
+      mode: z.enum([
+        "exploration", "planning", "execution",
+        "voice-dump", "drafting", "peer-review-ready",
+        "canon-tier-2", "canon-tier-1", "published-essay",
+      ]).optional().describe("Optional mode hint. Epistemic modes (exploration/planning/execution) or writing-lifecycle modes (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). Sourced from odd/challenge/stakes-calibration."),
       canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
       include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
       section: z.string().optional().describe("For action='get': extract only the named ## section from the document. Returns section content or available sections if not found."),
@@ -232,7 +236,11 @@ Use when:
       action: "challenge",
       schema: {
         input: z.string().describe("A claim, assumption, or proposal to challenge."),
-        mode: z.enum(["exploration", "planning", "execution"]).optional().describe("Optional epistemic mode for proportional challenge."),
+        mode: z.enum([
+          "exploration", "planning", "execution",
+          "voice-dump", "drafting", "peer-review-ready",
+          "canon-tier-2", "canon-tier-1", "published-essay",
+        ]).optional().describe("Mode for proportional challenge. Epistemic (exploration/planning/execution) or writing-lifecycle (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). voice-dump suppresses all challenge output."),
         canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
