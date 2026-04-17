@@ -613,14 +613,14 @@ async function fetchNormativeVocabulary(
     const rfcRegex =
       rfcWords.length > 0
         ? new RegExp(
-            "\\b(" + rfcWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
+            "\\b(" + [...rfcWords].sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
           )  // case-sensitive — no "i" flag
         : null;
 
     const archRegex =
       archPhrases.length > 0
         ? new RegExp(
-            "\\b(" + archPhrases.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
+            "\\b(" + [...archPhrases].sort((a, b) => b.length - a.length).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
             "i",
           )
         : null;
@@ -678,7 +678,7 @@ async function fetchStakesCalibration(
       const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
       if (cols.length < 4) continue;
 
-      const mode = cols[0];
+      const mode = cols[0].toLowerCase();
       const tiersRaw = cols[1].toLowerCase();
       const strictRaw = cols[2].toLowerCase();
       const reframingsRaw = cols[3].toLowerCase();
