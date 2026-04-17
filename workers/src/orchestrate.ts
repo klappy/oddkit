@@ -551,7 +551,8 @@ async function discoverChallengeTypes(
   return types;
 }
 
-function getChallengeTypeIndex(): BM25Index | null {
+function getChallengeTypeIndex(canonUrl?: string): BM25Index | null {
+  if (cachedChallengeTypeIndexCanonUrl !== canonUrl) return null;
   return cachedChallengeTypeIndex;
 }
 
@@ -1551,7 +1552,7 @@ async function runChallengeAction(
   // Detection runs BEFORE the voice-dump suppression check so the SUPPRESSED
   // response can still expose `governance` — the model sees what would have
   // fired without surfacing the pressure-test questions.
-  const typeIndex = getChallengeTypeIndex();
+  const typeIndex = getChallengeTypeIndex(canonUrl);
   const matchedTypes: ChallengeTypeDef[] = [];
   if (typeIndex) {
     const hits = searchBM25(typeIndex, input, types.length);
