@@ -1636,10 +1636,8 @@ async function runChallengeAction(
       reframings = [];
       break;
     case "first_1":
-      // Take first reframing from each matched type (no more than one per type)
-      reframings = Array.from(
-        new Set(matchedTypes.map((t) => t.reframings[0]).filter((r) => r)),
-      );
+      // Surface at most one reframing total
+      reframings = dedupedReframings.slice(0, 1);
       break;
     case "all":
     case "all_plus_block":
