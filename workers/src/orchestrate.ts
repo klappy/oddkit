@@ -75,50 +75,65 @@ interface ParsedArtifact {
 let cachedEncodingTypes: EncodingTypeDef[] | null = null;
 let cachedEncodingTypesCanonUrl: string | undefined = undefined;
 
-// Governance-driven challenge types (parallel to EncodingTypeDef)
+// Governance-driven challenge types (E0008 — mirrors encode pattern from PR #96)
 interface ChallengeTypeDef {
-  slug: string;              // from ## Type Identity table, Slug row
-  name: string;              // from ## Type Identity table, Name row
-  blockquote: string;        // the opening > line after the title
-  fallback: boolean;         // from frontmatter
-  triggerWords: string[];    // from ## Detection Patterns code block
-  triggerRegex: RegExp | null;
-  questions: Array<{ question: string; tier: string }>;  // from ## Challenge Questions table
-  prereqOverlays: PrereqOverlay[];  // from ## Prerequisite Overlays table
-  reframings: string[];      // from ## Suggested Reframings bullets
+  slug: string;
+  name: string;
+  blockquote: string;
+  triggerWords: string[];
+  detectionText: string; // triggerWords + blockquote, fed to BM25 indexer
+  questions: Array<{ question: string; tier: string }>;
+  prerequisiteOverlays: Array<{ prerequisite: string; check: string; gapMessage: string }>;
+  reframings: string[];
+  fallback: boolean;
 }
 
-interface PrereqOverlay {
-  name: string;         // first column of table
-  check: string;        // second column — prose description (may contain quoted keywords)
-  gapMessage: string;   // third column — message if check fails
-  keywords: string[];   // extracted from check description (quoted strings)
+interface BasePrerequisite {
+  prerequisite: string;
+  check: string;
+  gapMessage: string;
 }
 
 interface NormativeVocabulary {
-  rfc2119Regex: RegExp | null;        // case-sensitive: MUST, SHALL, NEVER, etc.
-  architecturalRegex: RegExp | null;  // case-insensitive: "invariant", "forcing function", etc.
-  directiveLookup: Map<string, string>;  // word/phrase (lowercase key) → directive type
+  caseSensitiveRegex: RegExp | null;
+  caseInsensitiveRegex: RegExp | null;
+  directiveTypes: Map<string, string>;
+}
+
+interface StakesModeConfig {
+  questionTiers: string[];
+  prerequisiteStrictness: string;
+  reframingSurfacing: string;
 }
 
 interface StakesCalibration {
-  mode: string;                    // "exploration", "planning", "execution", "voice-dump", etc.
-  questionTiers: string[];         // ["baseline"], ["baseline","elevated"], etc. OR empty array for "none"
-  strictness: "optional" | "required" | "required_plus_source";
-  reframings: "none" | "first_1" | "all" | "all_plus_block";
+  byMode: Map<string, StakesModeConfig>;
 }
 
-// Caches — one per governance article, each guarded by canonUrl (mirror encoding types pattern)
+// Stop word set for challenge-type detection. Filters general filler
+// (the, of, in, etc.) but deliberately preserves modal verbs, "do/does/did",
+// and negation — those are load-bearing signal for strong-claim, proposal,
+// and assumption types. Using the default bm25 STOP_WORDS would silently
+// strip "must", "should", "shall", "may", "not" and break detection.
+const CHALLENGE_STOP_WORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+  "of", "in", "to", "for", "with", "on", "at", "by", "from", "as", "into", "through",
+  "and", "but", "or", "nor", "if", "then", "than",
+  "that", "this", "it", "its", "we", "you", "he", "she", "they",
+  // intentionally NOT in this list (kept as signal):
+  // must, should, shall, will, would, may, might, can, could, do, does, did,
+  // have, has, had, not, no, never, always
+]);
+
 let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
 let cachedChallengeTypesCanonUrl: string | undefined = undefined;
-
-let cachedBasePrerequisites: PrereqOverlay[] | null = null;
+let cachedChallengeTypeIndex: BM25Index | null = null;
+let cachedChallengeTypeIndexCanonUrl: string | undefined = undefined;
+let cachedBasePrerequisites: BasePrerequisite[] | null = null;
 let cachedBasePrerequisitesCanonUrl: string | undefined = undefined;
-
 let cachedNormativeVocabulary: NormativeVocabulary | null = null;
 let cachedNormativeVocabularyCanonUrl: string | undefined = undefined;
-
-let cachedStakesCalibration: StakesCalibration[] | null = null;
+let cachedStakesCalibration: StakesCalibration | null = null;
 let cachedStakesCalibrationCanonUrl: string | undefined = undefined;
 
 export interface UnifiedParams {
@@ -285,20 +300,6 @@ function detectMode(input: string): { mode: string; confidence: string } {
   return { mode: sorted[0][0], confidence };
 }
 
-function detectClaimType(input: string): string {
-  if (
-    /\b(must|always|never|guaranteed|impossible|certain|definitely|obviously|clearly)\b/i.test(
-      input,
-    )
-  )
-    return "strong_claim";
-  if (/\b(should|plan to|going to|will|propose|suggest|recommend|let's|want to)\b/i.test(input))
-    return "proposal";
-  if (/\b(assume|assuming|presume|given that|since|because|if we)\b/i.test(input))
-    return "assumption";
-  return "observation";
-}
-
 function detectTransition(input: string): { from: string; to: string } {
   if (/\b(ready to build|ready to implement|start building|let's code|start coding)\b/i.test(input))
     return { from: "planning", to: "execution" };
@@ -401,35 +402,11 @@ async function discoverEncodingTypes(
   return types;
 }
 
-function extractKeywordsFromCheck(check: string): string[] {
-  // Extract quoted substrings from check description
-  // Example input: `input contains "evidence", "saw", "observed"`
-  // Output: ["evidence", "saw", "observed"]
-  const matches = check.match(/"([^"]+)"/g) || [];
-  return matches.map((m: string) => m.replace(/^"|"$/g, ""));
-}
-
-function extractPrereqTable(content: string): PrereqOverlay[] {
-  const section = content.match(
-    /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
-  );
-  if (!section) return [];
-
-  const overlays: PrereqOverlay[] = [];
-  for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
-    const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-    if (cols.length >= 3) {
-      const check = cols[1];
-      overlays.push({
-        name: cols[0],
-        check,
-        gapMessage: cols[2].replace(/^"|"$/g, ""),
-        keywords: extractKeywordsFromCheck(check),
-      });
-    }
-  }
-  return overlays;
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// E0008 — Governance-driven challenge (mirrors encode pattern from PR #96)
+// Four discovery/fetch helpers read canon at runtime rather than hardcoding
+// claim types, tensions, prerequisites, and mode calibration in source.
+// ──────────────────────────────────────────────────────────────────────────────
 
 async function discoverChallengeTypes(
   fetcher: ZipBaselineFetcher,
@@ -449,104 +426,172 @@ async function discoverChallengeTypes(
       const content = await fetcher.getFile(article.path, canonUrl);
       if (!content) continue;
 
-      // Frontmatter → fallback flag
-      const metadata = parseFullFrontmatter(content) || {};
-      const fallback = metadata.fallback === true;
-
-      // Blockquote (opening > line)
-      const blockquoteMatch = content.match(/^---[\s\S]*?---\s*\n+\s*#[^\n]+\n+>\s*(.+?)(?=\n\n|\n---|\n##)/s);
-      const blockquote = blockquoteMatch ? blockquoteMatch[1].trim().replace(/\n>\s*/g, " ") : "";
-
-      // ## Type Identity → Slug and Name
-      const slugMatch = content.match(/\|\s*Slug\s*\|\s*([a-z0-9-]+)\s*\|/i);
-      const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/i);
+      // Slug from ## Type Identity table
+      const slugMatch = content.match(/\|\s*Slug\s*\|\s*([^|]+)\s*\|/);
+      const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/);
       if (!slugMatch) continue;
-      const slug = slugMatch[1];
+      const slug = slugMatch[1].trim();
       const name = nameMatch ? nameMatch[1].trim() : slug;
 
-      // ## Detection Patterns → code block of comma-separated words
-      const detectionMatch = content.match(
+      // Opening blockquote (first > line after title)
+      const blockquoteMatch = content.match(/^#\s[^\n]+\n+>\s*([^\n]+(?:\n>\s*[^\n]+)*)/m);
+      const blockquote = blockquoteMatch
+        ? blockquoteMatch[1].replace(/\n>\s*/g, " ").trim()
+        : "";
+
+      // Detection patterns — code block under ## Detection Patterns
+      const detectionSection = content.match(
         /## Detection Patterns[\s\S]*?```\n([\s\S]*?)\n```/,
       );
-      const triggerWords = detectionMatch
-        ? detectionMatch[1]
-            .split(/[,\n]/)
+      const triggerWords = detectionSection
+        ? detectionSection[1]
+            .split(",")
             .map((w: string) => w.trim())
             .filter((w: string) => w.length > 0)
         : [];
-      const triggerRegex =
-        triggerWords.length > 0
-          ? new RegExp(
-              "\\b(" +
-                triggerWords
-                  .map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-                  .join("|") +
-                ")\\b",
-              "i",
-            )
-          : null;
+      // Detection text fed to BM25 = trigger words + blockquote.
+      // Stemming handles morphology (coining ~ coin ~ coined ~ coinage)
+      // and IDF naturally weights distinctive trigger words above filler.
+      const detectionText = [triggerWords.join(" "), blockquote].filter((s) => s.length > 0).join(" ");
 
-      // ## Challenge Questions → table (Question | Stakes tier)
+      // Challenge Questions table — rows of (Question, Stakes tier)
       const questionsSection = content.match(
         /## Challenge Questions[\s\S]*?\| Question[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
       );
       const questions: Array<{ question: string; tier: string }> = [];
       if (questionsSection) {
         for (const row of questionsSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          const cols = row
+            .split("|")
+            .map((c: string) => c.trim())
+            .filter((c: string) => c.length > 0);
           if (cols.length >= 2) {
-            questions.push({ question: cols[0], tier: cols[1].toLowerCase() });
+            questions.push({ question: cols[0], tier: cols[1] });
           }
         }
       }
 
-      // ## Prerequisite Overlays → table (Prerequisite | Check | Gap message)
-      const prereqOverlays = extractPrereqTable(content);
-
-      // ## Suggested Reframings → bulleted list
-      const reframingsSection = content.match(
-        /## Suggested Reframings[\s\S]*?\n((?:- [^\n]+\n?)+)/,
+      // Prerequisite Overlays table — rows of (Prerequisite, Check, Gap message)
+      const prereqSection = content.match(
+        /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
       );
-      const reframings = reframingsSection
-        ? reframingsSection[1]
-            .split("\n")
-            .filter((l: string) => l.startsWith("- "))
-            .map((l: string) => l.slice(2).trim())
-        : [];
+      const prerequisiteOverlays: Array<{
+        prerequisite: string;
+        check: string;
+        gapMessage: string;
+      }> = [];
+      if (prereqSection) {
+        for (const row of prereqSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row
+            .split("|")
+            .map((c: string) => c.trim())
+            .filter((c: string) => c.length > 0);
+          if (cols.length >= 3) {
+            // Substitute {name} placeholder in gap messages
+            const gap = cols[2].replace(/^"|"$/g, "").replace(/\{name\}/g, name);
+            prerequisiteOverlays.push({
+              prerequisite: cols[0],
+              check: cols[1],
+              gapMessage: gap,
+            });
+          }
+        }
+      }
+
+      // Suggested Reframings — bullet list
+      const reframingsSection = content.match(
+        /## Suggested Reframings[\s\S]*?\n((?:-\s+[^\n]+\n?)+)/,
+      );
+      const reframings: string[] = [];
+      if (reframingsSection) {
+        for (const line of reframingsSection[1].split("\n")) {
+          const m = line.match(/^-\s+(.+)$/);
+          if (m) reframings.push(m[1].trim());
+        }
+      }
+
+      // Fallback flag from frontmatter
+      const frontmatter = parseFullFrontmatter(content);
+      const fallback = frontmatter?.fallback === true;
 
       types.push({
-        slug, name, blockquote, fallback,
-        triggerWords, triggerRegex,
-        questions, prereqOverlays, reframings,
+        slug,
+        name,
+        blockquote,
+        triggerWords,
+        detectionText,
+        questions,
+        prerequisiteOverlays,
+        reframings,
+        fallback,
       });
     } catch {
       continue;
     }
   }
 
+  // Sort: fallback types last for deterministic fallback-resolution
+  types.sort((a, b) => {
+    if (a.fallback && !b.fallback) return 1;
+    if (!a.fallback && b.fallback) return -1;
+    return a.slug.localeCompare(b.slug);
+  });
+
+  // Build BM25 index over per-type detection text (triggers + blockquote).
+  // Stemming handles morphology; IDF weights distinctive trigger terms above filler.
+  // CHALLENGE_STOP_WORDS preserves modal verbs and negation as signal — the
+  // default bm25 STOP_WORDS would silently strip "must", "should", "not" etc.
+  const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
+  const bm25Index = buildBM25Index(bm25Docs, CHALLENGE_STOP_WORDS);
+
   cachedChallengeTypes = types;
   cachedChallengeTypesCanonUrl = canonUrl;
+  cachedChallengeTypeIndex = bm25Index;
+  cachedChallengeTypeIndexCanonUrl = canonUrl;
   return types;
+}
+
+function getChallengeTypeIndex(): BM25Index | null {
+  return cachedChallengeTypeIndex;
 }
 
 async function fetchBasePrerequisites(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
-): Promise<PrereqOverlay[]> {
+): Promise<BasePrerequisite[]> {
   if (cachedBasePrerequisites && cachedBasePrerequisitesCanonUrl === canonUrl)
     return cachedBasePrerequisites;
 
+  const result: BasePrerequisite[] = [];
   try {
     const content = await fetcher.getFile("odd/challenge/base-prerequisites.md", canonUrl);
-    const overlays = content ? extractPrereqTable(content) : [];
-    cachedBasePrerequisites = overlays;
-    cachedBasePrerequisitesCanonUrl = canonUrl;
-    return overlays;
+    if (content) {
+      const prereqSection = content.match(
+        /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      if (prereqSection) {
+        for (const row of prereqSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row
+            .split("|")
+            .map((c: string) => c.trim())
+            .filter((c: string) => c.length > 0);
+          if (cols.length >= 3) {
+            result.push({
+              prerequisite: cols[0],
+              check: cols[1],
+              gapMessage: cols[2].replace(/^"|"$/g, ""),
+            });
+          }
+        }
+      }
+    }
   } catch {
-    cachedBasePrerequisites = [];
-    cachedBasePrerequisitesCanonUrl = canonUrl;
-    return [];
+    // Graceful degradation: no base prerequisites article → type overlays only
   }
+
+  cachedBasePrerequisites = result;
+  cachedBasePrerequisitesCanonUrl = canonUrl;
+  return result;
 }
 
 async function fetchNormativeVocabulary(
@@ -556,174 +601,112 @@ async function fetchNormativeVocabulary(
   if (cachedNormativeVocabulary && cachedNormativeVocabularyCanonUrl === canonUrl)
     return cachedNormativeVocabulary;
 
-  // Fallback minimal set if article is missing
-  const fallback: NormativeVocabulary = {
-    rfc2119Regex: /\b(MUST NOT|SHOULD NOT|MUST|SHOULD)\b/,
-    architecturalRegex: null,
-    directiveLookup: new Map([
-      ["must", "requirement"],
-      ["must not", "prohibition"],
-      ["should", "recommendation"],
-      ["should not", "discouragement"],
-    ]),
-  };
+  const caseSensitiveWords: string[] = [];
+  const caseInsensitiveWords: string[] = [];
+  const directiveTypes = new Map<string, string>();
 
   try {
     const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", canonUrl);
-    if (!content) {
-      cachedNormativeVocabulary = fallback;
-      cachedNormativeVocabularyCanonUrl = canonUrl;
-      return fallback;
-    }
-
-    // Parse two tables under ## Normative Vocabulary
-    // Table 1: ### Directive Language (RFC 2119 and Related) — 2 cols (Word | Directive type)
-    // Table 2: ### Architectural Writing Load-Bearing Terms — 2 cols (Phrase | Directive type)
-    const rfcSection = content.match(
-      /### Directive Language[\s\S]*?\| Word[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n###|\n##|$)/,
-    );
-    const archSection = content.match(
-      /### Architectural[\s\S]*?\|[^|]+\|[^|]+\|\n\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n###|\n##|$)/,
-    );
-
-    const rfcWords: string[] = [];
-    const archPhrases: string[] = [];
-    const lookup = new Map<string, string>();
-
-    if (rfcSection) {
-      for (const row of rfcSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-        const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-        if (cols.length >= 2) {
-          rfcWords.push(cols[0]);
-          lookup.set(cols[0].toLowerCase(), cols[1]);
+    if (content) {
+      // Two sections: one under "RFC 2119" heading (case-sensitive),
+      // one under "Architectural Writing" heading (case-insensitive).
+      // Each is a markdown table with (Word | Directive type).
+      const sections = content.split(/###\s+/);
+      for (const section of sections) {
+        const isCaseSensitive = /RFC 2119|Directive Language/i.test(section.split("\n")[0] || "");
+        const tableMatch = section.match(/\|\s*(?:Word|Phrase)\s*\|[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/);
+        if (!tableMatch) continue;
+        for (const row of tableMatch[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row
+            .split("|")
+            .map((c: string) => c.trim())
+            .filter((c: string) => c.length > 0);
+          if (cols.length >= 2) {
+            const phrase = cols[0];
+            const dtype = cols[1];
+            directiveTypes.set(phrase, dtype);
+            if (isCaseSensitive) caseSensitiveWords.push(phrase);
+            else caseInsensitiveWords.push(phrase);
+          }
         }
       }
     }
-
-    if (archSection) {
-      for (const row of archSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-        const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-        if (cols.length >= 2) {
-          archPhrases.push(cols[0]);
-          lookup.set(cols[0].toLowerCase(), cols[1]);
-        }
-      }
-    }
-
-    const rfcRegex =
-      rfcWords.length > 0
-        ? new RegExp(
-            "\\b(" + [...rfcWords].sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
-          )  // case-sensitive — no "i" flag
-        : null;
-
-    const archRegex =
-      archPhrases.length > 0
-        ? new RegExp(
-            "\\b(" + [...archPhrases].sort((a, b) => b.length - a.length).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
-            "i",
-          )
-        : null;
-
-    const result: NormativeVocabulary = {
-      rfc2119Regex: rfcRegex,
-      architecturalRegex: archRegex,
-      directiveLookup: lookup,
-    };
-    cachedNormativeVocabulary = result;
-    cachedNormativeVocabularyCanonUrl = canonUrl;
-    return result;
   } catch {
-    cachedNormativeVocabulary = fallback;
-    cachedNormativeVocabularyCanonUrl = canonUrl;
-    return fallback;
+    // Graceful degradation below
   }
+
+  // Fallback: minimal built-in RFC 2119 if article missing
+  if (caseSensitiveWords.length === 0 && caseInsensitiveWords.length === 0) {
+    for (const w of ["MUST", "MUST NOT", "SHOULD", "SHOULD NOT"]) {
+      caseSensitiveWords.push(w);
+      directiveTypes.set(w, w.includes("NOT") ? "prohibition" : "requirement");
+    }
+  }
+
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const caseSensitiveRegex =
+    caseSensitiveWords.length > 0
+      ? new RegExp("\\b(" + caseSensitiveWords.map(escape).join("|") + ")\\b")
+      : null;
+  const caseInsensitiveRegex =
+    caseInsensitiveWords.length > 0
+      ? new RegExp("(" + caseInsensitiveWords.map(escape).join("|") + ")", "i")
+      : null;
+
+  const vocab = { caseSensitiveRegex, caseInsensitiveRegex, directiveTypes };
+  cachedNormativeVocabulary = vocab;
+  cachedNormativeVocabularyCanonUrl = canonUrl;
+  return vocab;
 }
 
 async function fetchStakesCalibration(
   fetcher: ZipBaselineFetcher,
   canonUrl?: string,
-): Promise<StakesCalibration[]> {
+): Promise<StakesCalibration> {
   if (cachedStakesCalibration && cachedStakesCalibrationCanonUrl === canonUrl)
     return cachedStakesCalibration;
 
-  // Fallback: "surface everything" at every mode
-  const fallback: StakesCalibration[] = [
-    { mode: "exploration", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "optional", reframings: "all" },
-    { mode: "planning", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "required", reframings: "all" },
-    { mode: "execution", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "required_plus_source", reframings: "all" },
-  ];
-
+  const byMode = new Map<string, StakesModeConfig>();
   try {
     const content = await fetcher.getFile("odd/challenge/stakes-calibration.md", canonUrl);
-    if (!content) {
-      cachedStakesCalibration = fallback;
-      cachedStakesCalibrationCanonUrl = canonUrl;
-      return fallback;
-    }
-
-    // Parse ## Stakes Calibration table — 4 columns
-    // Mode | Question tiers surfaced | Prerequisite strictness | Reframings surfaced
-    const section = content.match(
-      /## Stakes Calibration[\s\S]*?\| Mode[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
-    );
-    if (!section) {
-      cachedStakesCalibration = fallback;
-      cachedStakesCalibrationCanonUrl = canonUrl;
-      return fallback;
-    }
-
-    const calibrations: StakesCalibration[] = [];
-    for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
-      const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-      if (cols.length < 4) continue;
-
-      const mode = cols[0].toLowerCase();
-      const tiersRaw = cols[1].toLowerCase();
-      const strictRaw = cols[2].toLowerCase();
-      const reframingsRaw = cols[3].toLowerCase();
-
-      // Parse question tiers
-      let questionTiers: string[];
-      if (tiersRaw.includes("none")) questionTiers = [];
-      else {
-        questionTiers = [];
-        if (tiersRaw.includes("baseline")) questionTiers.push("baseline");
-        if (tiersRaw.includes("elevated")) questionTiers.push("elevated");
-        if (tiersRaw.includes("rigorous")) questionTiers.push("rigorous");
+    if (content) {
+      // Parse the Stakes Calibration table:
+      // | Mode | Question tiers surfaced | Prerequisite strictness | Reframings surfaced |
+      const tableMatch = content.match(
+        /## Stakes Calibration[\s\S]*?\| Mode[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      if (tableMatch) {
+        for (const row of tableMatch[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row
+            .split("|")
+            .map((c: string) => c.trim())
+            .filter((c: string) => c.length > 0);
+          if (cols.length >= 4) {
+            const mode = cols[0];
+            const tiersRaw = cols[1].toLowerCase().trim();
+            // The cell may be "none" or "none (suppress all challenge)" — both mean
+            // empty tier list and trigger the voice-dump suppression invariant.
+            // Without this leading-"none" check the suppression invariant ships broken.
+            const isNone = tiersRaw === "none" || tiersRaw.startsWith("none ") || tiersRaw.startsWith("none(");
+            const questionTiers: string[] = isNone
+              ? []
+              : tiersRaw.split(",").map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+            byMode.set(mode, {
+              questionTiers,
+              prerequisiteStrictness: cols[2],
+              reframingSurfacing: cols[3],
+            });
+          }
+        }
       }
-
-      // Parse strictness
-      let strictness: StakesCalibration["strictness"];
-      if (strictRaw.includes("source-named")) strictness = "required_plus_source";
-      else if (strictRaw.includes("required")) strictness = "required";
-      else strictness = "optional";
-
-      // Parse reframings
-      let reframings: StakesCalibration["reframings"];
-      if (reframingsRaw.includes("block-until-addressed")) reframings = "all_plus_block";
-      else if (reframingsRaw.includes("all")) reframings = "all";
-      else if (reframingsRaw.includes("first 1") || reframingsRaw.includes("first one")) reframings = "first_1";
-      else if (reframingsRaw.includes("none")) reframings = "none";
-      else reframings = "all";
-
-      calibrations.push({ mode, questionTiers, strictness, reframings });
     }
-
-    if (calibrations.length === 0) {
-      cachedStakesCalibration = fallback;
-      cachedStakesCalibrationCanonUrl = canonUrl;
-      return fallback;
-    }
-
-    cachedStakesCalibration = calibrations;
-    cachedStakesCalibrationCanonUrl = canonUrl;
-    return calibrations;
   } catch {
-    cachedStakesCalibration = fallback;
-    cachedStakesCalibrationCanonUrl = canonUrl;
-    return fallback;
+    // Graceful degradation below
   }
+
+  cachedStakesCalibration = { byMode };
+  cachedStakesCalibrationCanonUrl = canonUrl;
+  return cachedStakesCalibration;
 }
 
 function isStructuredInput(input: string): boolean {
@@ -1111,8 +1094,11 @@ async function runCleanupStorage(
   cachedBM25Entries = null;
   cachedEncodingTypes = null;
   cachedEncodingTypesCanonUrl = undefined;
+  // E0008 — governance-driven challenge caches (mirror PR #96 fix)
   cachedChallengeTypes = null;
   cachedChallengeTypesCanonUrl = undefined;
+  cachedChallengeTypeIndex = null;
+  cachedChallengeTypeIndexCanonUrl = undefined;
   cachedBasePrerequisites = null;
   cachedBasePrerequisitesCanonUrl = undefined;
   cachedNormativeVocabulary = null;
@@ -1537,165 +1523,192 @@ async function runChallengeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-
-  // 1. Load all governance
-  const types = await discoverChallengeTypes(fetcher, canonUrl);
-  const basePrereqs = await fetchBasePrerequisites(fetcher, canonUrl);
-  const normVocab = await fetchNormativeVocabulary(fetcher, canonUrl);
-  const calibrations = await fetchStakesCalibration(fetcher, canonUrl);
-
-  // 2. Resolve mode and calibration
   const mode = modeHint || "planning";
-  const calibration =
-    calibrations.find((c) => c.mode === mode) ||
-    calibrations.find((c) => c.mode === "planning") ||
-    calibrations[0] || {
-      mode: "planning", questionTiers: ["baseline", "elevated"],
-      strictness: "required" as const, reframings: "all" as const,
-    };
 
-  // 3. Multi-match detection
-  let matchedTypes: ChallengeTypeDef[] = types.filter(
-    (t) => t.triggerRegex && t.triggerRegex.test(input),
-  );
-  if (matchedTypes.length === 0) {
-    const fallbackType = types.find((t) => t.fallback) || types[0];
-    if (fallbackType) matchedTypes = [fallbackType];
-  }
+  // Load governance in parallel
+  const [types, basePrereqs, vocab, calibration] = await Promise.all([
+    discoverChallengeTypes(fetcher, canonUrl),
+    fetchBasePrerequisites(fetcher, canonUrl),
+    fetchNormativeVocabulary(fetcher, canonUrl),
+    fetchStakesCalibration(fetcher, canonUrl),
+  ]);
 
-  // 4. VOICE-DUMP INVARIANT: if calibration says no question tiers, suppress entire output.
-  //    This is load-bearing — some modes exist for raw thought capture and pressure-testing
-  //    at that stage damages the mode. Do not "helpfully" surface a reduced set.
-  if (calibration.questionTiers.length === 0) {
-    const primary = matchedTypes[0]?.slug || "observation";
+  const modeConfig = calibration.byMode.get(mode);
+
+  // Voice-dump invariant: suppress all challenge output regardless of matched types.
+  // Encoded at klappy://odd/challenge/stakes-calibration. Some modes exist for getting
+  // thoughts out of the head; pressure-testing at that stage damages the mode.
+  if (modeConfig && modeConfig.questionTiers.length === 0) {
     return {
       action: "challenge",
       result: {
         status: "SUPPRESSED",
-        mode_used: mode,
-        matched_types: matchedTypes.map((t) => t.slug),
-        claim_type: primary,  // backward-compat alias
+        mode,
+        matched_types: [],
         tensions: [],
         missing_prerequisites: [],
         challenges: [],
         suggested_reframings: [],
         canon_constraints: [],
-        governance: matchedTypes.map((t) => ({
-          slug: t.slug,
-          name: t.name,
-          description: t.blockquote,
-        })),
+        suppression_reason:
+          `Mode '${mode}' suppresses challenge output. Challenge is not applied during raw thought capture.`,
       },
       state: state ? initState(state) : undefined,
-      assistant_text:
-        `Challenge suppressed (mode: ${mode}). This mode exists for raw capture; ` +
-        `pressure-testing would damage the mode's function. Resume challenge at a later stage.`,
+      assistant_text: `Challenge suppressed for mode '${mode}'. Raw thought capture protected.`,
       debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
     };
   }
 
-  // 5. Aggregate across matched types
-  const aggregatedQuestions: Array<{ question: string; tier: string }> = [];
-  const aggregatedOverlays: PrereqOverlay[] = [];
-  const aggregatedReframings: string[] = [];
+  // Detect matching types via BM25 over per-type detection text.
+  // Stemming makes "coining" match "coin", "rolled" match "rollback", etc.
+  // score > 0 = match (BM25 returns 0 when no stemmed query terms hit).
+  // Multi-match preserved: a single input may score against several types.
+  const typeIndex = getChallengeTypeIndex();
+  const matchedTypes: ChallengeTypeDef[] = [];
+  if (typeIndex) {
+    const hits = searchBM25(typeIndex, input, types.length);
+    const typeBySlug = new Map(types.map((t) => [t.slug, t]));
+    for (const hit of hits) {
+      const t = typeBySlug.get(hit.id);
+      if (t) matchedTypes.push(t);
+    }
+  }
+
+  // Fallback resolution when no type scored above zero
+  if (matchedTypes.length === 0) {
+    const fallback = types.find((t) => t.fallback) || types[0];
+    if (fallback) matchedTypes.push(fallback);
+  }
+
+  // Aggregate questions across matched types, deduped by question string
+  const questionMap = new Map<string, { question: string; tier: string }>();
   for (const t of matchedTypes) {
-    aggregatedQuestions.push(...t.questions);
-    aggregatedOverlays.push(...t.prereqOverlays);
-    aggregatedReframings.push(...t.reframings);
+    for (const q of t.questions) {
+      if (!questionMap.has(q.question)) questionMap.set(q.question, q);
+    }
   }
 
-  // 6. Filter questions by stakes tier, dedupe by string
-  const filteredQuestions = aggregatedQuestions
-    .filter((q) => calibration.questionTiers.includes(q.tier))
-    .map((q) => q.question);
-  const challenges = Array.from(new Set(filteredQuestions));
+  // Aggregate prerequisite overlays: base + all matched type overlays, deduped by prerequisite name
+  const prereqMap = new Map<string, BasePrerequisite>();
+  for (const p of basePrereqs) {
+    prereqMap.set(p.prerequisite, p);
+  }
+  for (const t of matchedTypes) {
+    for (const p of t.prerequisiteOverlays) {
+      if (!prereqMap.has(p.prerequisite)) prereqMap.set(p.prerequisite, p);
+    }
+  }
 
-  // 7. Merge base + type overlay prerequisites, dedupe by name, test each against input
-  const allPrereqs = [...basePrereqs, ...aggregatedOverlays];
-  const uniquePrereqs = Array.from(
-    new Map(allPrereqs.map((p) => [p.name, p])).values(),
-  );
+  // Aggregate reframings across matched types, deduped by string equality
+  const reframingSet = new Set<string>();
+  const reframingsByType = new Map<string, string[]>();
+  for (const t of matchedTypes) {
+    const typeReframings: string[] = [];
+    for (const r of t.reframings) {
+      if (!reframingSet.has(r)) {
+        reframingSet.add(r);
+        typeReframings.push(r);
+      }
+    }
+    reframingsByType.set(t.slug, typeReframings);
+  }
 
+  // Apply stakes calibration: filter questions by tier, evaluate prerequisites by strictness,
+  // surface reframings by the surfacing rule. When modeConfig is absent (no calibration
+  // article or mode not in table), surface everything — "uniformly loud" fallback.
+  const surfacedQuestions: string[] = [];
+  for (const q of questionMap.values()) {
+    if (!modeConfig || modeConfig.questionTiers.length === 0 || modeConfig.questionTiers.includes(q.tier)) {
+      surfacedQuestions.push(q.question);
+    }
+  }
+
+  const strictness = modeConfig?.prerequisiteStrictness?.toLowerCase() || "required";
   const missing: string[] = [];
-  for (const prereq of uniquePrereqs) {
-    if (prereq.keywords.length === 0) {
-      // No quoted keywords — check is descriptive-only, cannot mechanically test. Skip.
-      continue;
-    }
-    const matched = prereq.keywords.some((k) =>
-      new RegExp("\\b" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(input),
-    );
-    if (!matched) {
-      const typeName = matchedTypes[0]?.name || "claim";
-      let gap = prereq.gapMessage.replace(/\{name\}/g, typeName.toLowerCase());
-      if (calibration.strictness === "optional") gap = `Advisory: ${gap}`;
-      missing.push(gap);
+  for (const p of prereqMap.values()) {
+    const passed = evaluatePrerequisiteCheck(input, p.check);
+    if (!passed) {
+      // source-named check is escalated to blocking when strictness says so
+      if (strictness.includes("optional") && !p.prerequisite.includes("source-named")) {
+        continue;
+      }
+      missing.push(p.gapMessage);
     }
   }
 
-  // 8. Dedupe and filter reframings
-  const dedupedReframings = Array.from(new Set(aggregatedReframings));
-  let reframings: string[];
-  switch (calibration.reframings) {
-    case "none":
-      reframings = [];
-      break;
-    case "first_1":
-      // Surface at most one reframing total
-      reframings = dedupedReframings.slice(0, 1);
-      break;
-    case "all":
-    case "all_plus_block":
-    default:
-      reframings = dedupedReframings;
+  const surfacing = modeConfig?.reframingSurfacing?.toLowerCase() || "all";
+  const surfacedReframings: string[] = [];
+  if (surfacing === "none") {
+    // no reframings
+  } else if (surfacing.includes("first 1") || surfacing.includes("first-1")) {
+    for (const typeReframings of reframingsByType.values()) {
+      if (typeReframings.length > 0) surfacedReframings.push(typeReframings[0]);
+    }
+  } else {
+    // "all" or "all, plus block-until-addressed"
+    for (const typeReframings of reframingsByType.values()) {
+      surfacedReframings.push(...typeReframings);
+    }
   }
+  const blockUntilAddressed = surfacing.includes("block-until-addressed");
 
-  // 9. Retrieve canon constraints (same BM25 path as before)
+  // Retrieve canon quotes and detect tensions via governance-driven vocabulary
   const index = await fetcher.getIndex(canonUrl);
   const results = scoreEntries(index.entries, `constraints challenges risks ${input}`).slice(0, 4);
 
   const canonConstraints: Array<{ citation: string; quote: string }> = [];
-  const tensions: Array<{ type: string; message: string }> = [];
-
+  const tensions: Array<{ type: string; message: string; citation?: string; quote?: string }> = [];
   for (const entry of results) {
     const content = await fetcher.getFile(entry.path, canonUrl);
-    if (!content) continue;
-    const stripped = content.replace(/^---[\s\S]*?---\n/, "");
-    const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
-    const excerpt = lines.slice(0, 2).join(" ").slice(0, 150);
-    canonConstraints.push({ citation: `${entry.path}#${entry.title}`, quote: excerpt });
+    if (content) {
+      const stripped = content.replace(/^---[\s\S]*?---\n/, "");
+      const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+      const excerpt = lines.slice(0, 2).join(" ").slice(0, 150);
+      const citation = `${entry.path}#${entry.title}`;
+      canonConstraints.push({ citation, quote: excerpt });
 
-    // Apply normative vocabulary regexes
-    let foundMatch: string | null = null;
-    if (normVocab.rfc2119Regex) {
-      const m = excerpt.match(normVocab.rfc2119Regex);
-      if (m) foundMatch = m[0];
-    }
-    if (!foundMatch && normVocab.architecturalRegex) {
-      const m = excerpt.match(normVocab.architecturalRegex);
-      if (m) foundMatch = m[0];
-    }
-    if (foundMatch) {
-      const directiveType = normVocab.directiveLookup.get(foundMatch.toLowerCase()) || "directive";
-      tensions.push({
-        type: directiveType,
-        message: `Canon ${directiveType} (${foundMatch}) found in ${entry.path}`,
-      });
+      // Governance-driven tension detection
+      if (vocab.caseSensitiveRegex) {
+        const m = excerpt.match(vocab.caseSensitiveRegex);
+        if (m) {
+          const phrase = m[1];
+          tensions.push({
+            type: vocab.directiveTypes.get(phrase) || "directive",
+            message: `Canon ${vocab.directiveTypes.get(phrase) || "directive"} (${phrase}) found in ${entry.path}`,
+            citation,
+            quote: excerpt,
+          });
+          continue;
+        }
+      }
+      if (vocab.caseInsensitiveRegex) {
+        const m = excerpt.match(vocab.caseInsensitiveRegex);
+        if (m) {
+          const phrase = m[1];
+          const dtype =
+            vocab.directiveTypes.get(phrase) ||
+            vocab.directiveTypes.get(phrase.toLowerCase()) ||
+            "load-bearing-claim";
+          tensions.push({
+            type: dtype,
+            message: `Canon ${dtype} (${phrase}) found in ${entry.path}`,
+            citation,
+            quote: excerpt,
+          });
+        }
+      }
     }
   }
 
-  // 10. Update state
+  // Update state
   const updatedState = state ? initState(state) : undefined;
   if (updatedState && missing.length > 0) {
     updatedState.unresolved = [...updatedState.unresolved, ...missing];
   }
 
-  // 11. Build human-readable assistant_text (preserve existing format roughly)
-  const primarySlug = matchedTypes[0]?.slug || "observation";
-  const primaryName = matchedTypes[0]?.name || "Observation";
-  const typesLabel =
-    matchedTypes.length > 1 ? `${primaryName} +${matchedTypes.length - 1} more` : primaryName;
-  const lines = [`Challenge (${typesLabel}, mode: ${mode}):`, ""];
+  // Assistant text — preserves prior format, extends with matched types and mode
+  const matchedSlugs = matchedTypes.map((t) => t.slug);
+  const lines = [`Challenge (${matchedSlugs.join(", ") || "no-match"}) [mode: ${mode}]:`, ""];
   if (tensions.length > 0) {
     lines.push("Tensions found:");
     for (const t of tensions) lines.push(`  - [${t.type}] ${t.message}`);
@@ -1706,18 +1719,20 @@ async function runChallengeAction(
     for (const m of missing) lines.push(`  - ${m}`);
     lines.push("");
   }
-  if (challenges.length > 0) {
+  if (surfacedQuestions.length > 0) {
     lines.push("Questions to address:");
-    for (const c of challenges) lines.push(`  - ${c}`);
+    for (const c of surfacedQuestions) lines.push(`  - ${c}`);
     lines.push("");
   }
-  if (reframings.length > 0) {
+  if (surfacedReframings.length > 0) {
     lines.push("Suggested reframings:");
-    for (const r of reframings) lines.push(`  - ${r}`);
+    for (const r of surfacedReframings) lines.push(`  - ${r}`);
     lines.push("");
   }
-  if (calibration.reframings === "all_plus_block" && reframings.length > 0) {
-    lines.push("⚠ Block-until-addressed: this claim should not proceed until reframings are explicitly addressed or declined.");
+  if (blockUntilAddressed && (missing.length > 0 || tensions.length > 0)) {
+    lines.push(
+      "⚠ Block-until-addressed: in this mode, the claim should not proceed until the gaps above are resolved or explicitly declined.",
+    );
     lines.push("");
   }
   if (canonConstraints.length > 0) {
@@ -1733,24 +1748,56 @@ async function runChallengeAction(
     action: "challenge",
     result: {
       status: "CHALLENGED",
-      mode_used: mode,
-      matched_types: matchedTypes.map((t) => t.slug),
-      claim_type: primarySlug,  // backward-compat alias — first matched slug
-      tensions,
-      missing_prerequisites: missing,
-      challenges,
-      suggested_reframings: reframings,
-      canon_constraints: canonConstraints,
-      governance: matchedTypes.map((t) => ({
+      mode,
+      matched_types: matchedSlugs,
+      type_definitions: matchedTypes.map((t) => ({
         slug: t.slug,
         name: t.name,
         description: t.blockquote,
       })),
+      tensions,
+      missing_prerequisites: missing,
+      challenges: surfacedQuestions,
+      suggested_reframings: surfacedReframings,
+      block_until_addressed: blockUntilAddressed,
+      canon_constraints: canonConstraints,
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
     debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
   };
+}
+
+// Governance-driven check evaluator — interprets natural-language `check` strings
+// from ## Prerequisite Overlays tables. Uses cheap heuristics: substring matching
+// against quoted keywords in the check description, plus a few special-case patterns.
+function evaluatePrerequisiteCheck(input: string, check: string): boolean {
+  // Extract quoted keywords like "evidence", "observed", "alternative"
+  const quotedKeywords: string[] = [];
+  const quotedRegex = /"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = quotedRegex.exec(check)) !== null) {
+    quotedKeywords.push(m[1]);
+  }
+
+  if (quotedKeywords.length > 0) {
+    // Pass if ANY quoted keyword appears in input (case-insensitive, word-boundary where possible)
+    for (const kw of quotedKeywords) {
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Use word-boundary for single words, substring for phrases
+      const pattern = /^\w+$/.test(kw) ? new RegExp("\\b" + escaped + "\\b", "i") : new RegExp(escaped, "i");
+      if (pattern.test(input)) return true;
+    }
+    // Special-case check descriptions that mention URLs, citations, numeric markers
+    if (/\bURL\b/i.test(check) && /https?:\/\//.test(input)) return true;
+    if (/numeric/i.test(check) && /\d/.test(input)) return true;
+    if (/proper-?noun/i.test(check) && /\b[A-Z][a-z]+\s+[A-Z]/.test(input)) return true;
+    if (/citation/i.test(check) && /\[\d+\]|\bper\s+[A-Z]|\baccording to\b/i.test(input)) return true;
+    return false;
+  }
+
+  // No quoted keywords: conservative fallback — passes if input is non-trivial
+  return input.trim().length >= 20;
 }
 
 async function runGateAction(
