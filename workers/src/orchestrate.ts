@@ -646,11 +646,20 @@ async function fetchNormativeVocabulary(
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const caseSensitiveRegex =
     caseSensitiveWords.length > 0
-      ? new RegExp("\\b(" + caseSensitiveWords.map(escape).join("|") + ")\\b")
+      ? new RegExp(
+          "\\b(" +
+            [...caseSensitiveWords].sort((a, b) => b.length - a.length).map(escape).join("|") +
+            ")\\b",
+        )
       : null;
   const caseInsensitiveRegex =
     caseInsensitiveWords.length > 0
-      ? new RegExp("(" + caseInsensitiveWords.map(escape).join("|") + ")", "i")
+      ? new RegExp(
+          "(" +
+            [...caseInsensitiveWords].sort((a, b) => b.length - a.length).map(escape).join("|") +
+            ")",
+          "i",
+        )
       : null;
 
   const vocab = { caseSensitiveRegex, caseInsensitiveRegex, directiveTypes };
@@ -682,7 +691,7 @@ async function fetchStakesCalibration(
             .map((c: string) => c.trim())
             .filter((c: string) => c.length > 0);
           if (cols.length >= 4) {
-            const mode = cols[0];
+            const mode = cols[0].toLowerCase();
             const tiersRaw = cols[1].toLowerCase().trim();
             // The cell may be "none" or "none (suppress all challenge)" — both mean
             // empty tier list and trigger the voice-dump suppression invariant.
@@ -1523,7 +1532,7 @@ async function runChallengeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const mode = modeHint || "planning";
+  const mode = (modeHint || "planning").toLowerCase();
 
   // Load governance in parallel
   const [types, basePrereqs, vocab, calibration] = await Promise.all([
@@ -1535,34 +1544,13 @@ async function runChallengeAction(
 
   const modeConfig = calibration.byMode.get(mode);
 
-  // Voice-dump invariant: suppress all challenge output regardless of matched types.
-  // Encoded at klappy://odd/challenge/stakes-calibration. Some modes exist for getting
-  // thoughts out of the head; pressure-testing at that stage damages the mode.
-  if (modeConfig && modeConfig.questionTiers.length === 0) {
-    return {
-      action: "challenge",
-      result: {
-        status: "SUPPRESSED",
-        mode,
-        matched_types: [],
-        tensions: [],
-        missing_prerequisites: [],
-        challenges: [],
-        suggested_reframings: [],
-        canon_constraints: [],
-        suppression_reason:
-          `Mode '${mode}' suppresses challenge output. Challenge is not applied during raw thought capture.`,
-      },
-      state: state ? initState(state) : undefined,
-      assistant_text: `Challenge suppressed for mode '${mode}'. Raw thought capture protected.`,
-      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
-    };
-  }
-
   // Detect matching types via BM25 over per-type detection text.
   // Stemming makes "coining" match "coin", "rolled" match "rollback", etc.
   // score > 0 = match (BM25 returns 0 when no stemmed query terms hit).
   // Multi-match preserved: a single input may score against several types.
+  // Detection runs BEFORE the voice-dump suppression check so the SUPPRESSED
+  // response can still expose `governance` — the model sees what would have
+  // fired without surfacing the pressure-test questions.
   const typeIndex = getChallengeTypeIndex();
   const matchedTypes: ChallengeTypeDef[] = [];
   if (typeIndex) {
@@ -1578,6 +1566,36 @@ async function runChallengeAction(
   if (matchedTypes.length === 0) {
     const fallback = types.find((t) => t.fallback) || types[0];
     if (fallback) matchedTypes.push(fallback);
+  }
+
+  // Voice-dump invariant: suppress all challenge output regardless of matched types.
+  // Encoded at klappy://odd/challenge/stakes-calibration. Some modes exist for getting
+  // thoughts out of the head; pressure-testing at that stage damages the mode.
+  // The `governance` field is still surfaced so the model sees what types matched.
+  if (modeConfig && modeConfig.questionTiers.length === 0) {
+    return {
+      action: "challenge",
+      result: {
+        status: "SUPPRESSED",
+        mode,
+        matched_types: matchedTypes.map((t) => t.slug),
+        governance: matchedTypes.map((t) => ({
+          slug: t.slug,
+          name: t.name,
+          description: t.blockquote,
+        })),
+        tensions: [],
+        missing_prerequisites: [],
+        challenges: [],
+        suggested_reframings: [],
+        canon_constraints: [],
+        suppression_reason:
+          `Mode '${mode}' suppresses challenge output. Challenge is not applied during raw thought capture.`,
+      },
+      state: state ? initState(state) : undefined,
+      assistant_text: `Challenge suppressed for mode '${mode}'. Raw thought capture protected.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
   }
 
   // Aggregate questions across matched types, deduped by question string
@@ -1637,18 +1655,25 @@ async function runChallengeAction(
   }
 
   const surfacing = modeConfig?.reframingSurfacing?.toLowerCase() || "all";
-  const surfacedReframings: string[] = [];
+  const allReframings: string[] = [];
+  for (const typeReframings of reframingsByType.values()) {
+    allReframings.push(...typeReframings);
+  }
+  let surfacedReframings: string[] = [];
   if (surfacing === "none") {
-    // no reframings
-  } else if (surfacing.includes("first 1") || surfacing.includes("first-1")) {
-    for (const typeReframings of reframingsByType.values()) {
-      if (typeReframings.length > 0) surfacedReframings.push(typeReframings[0]);
-    }
+    surfacedReframings = [];
+  } else if (
+    surfacing.includes("first 1") ||
+    surfacing.includes("first-1") ||
+    surfacing.includes("first one")
+  ) {
+    // Surface at most one reframing total — across all matched types, not one per type.
+    // The governance phrase "first 1" means a single reframing in the response;
+    // multi-match should not multiply the surfacing.
+    surfacedReframings = allReframings.slice(0, 1);
   } else {
     // "all" or "all, plus block-until-addressed"
-    for (const typeReframings of reframingsByType.values()) {
-      surfacedReframings.push(...typeReframings);
-    }
+    surfacedReframings = allReframings;
   }
   const blockUntilAddressed = surfacing.includes("block-until-addressed");
 
@@ -1750,7 +1775,7 @@ async function runChallengeAction(
       status: "CHALLENGED",
       mode,
       matched_types: matchedSlugs,
-      type_definitions: matchedTypes.map((t) => ({
+      governance: matchedTypes.map((t) => ({
         slug: t.slug,
         name: t.name,
         description: t.blockquote,
