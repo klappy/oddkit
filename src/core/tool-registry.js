@@ -46,8 +46,12 @@ Use when:
       },
       mode: {
         type: "string",
-        enum: ["exploration", "planning", "execution"],
-        description: "Optional epistemic mode hint.",
+        enum: [
+          "exploration", "planning", "execution",
+          "voice-dump", "drafting", "peer-review-ready",
+          "canon-tier-2", "canon-tier-1", "published-essay",
+        ],
+        description: "Optional mode hint. Epistemic modes (exploration/planning/execution) or writing-lifecycle modes (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). Sourced from odd/challenge/stakes-calibration.",
       },
       canon_url: {
         type: "string",
@@ -107,7 +111,15 @@ export const TOOLS = [
       type: "object",
       properties: {
         input: { type: "string", description: "A claim, assumption, or proposal to challenge." },
-        mode: { type: "string", enum: ["exploration", "planning", "execution"], description: "Optional epistemic mode for proportional challenge." },
+        mode: {
+          type: "string",
+          enum: [
+            "exploration", "planning", "execution",
+            "voice-dump", "drafting", "peer-review-ready",
+            "canon-tier-2", "canon-tier-1", "published-essay",
+          ],
+          description: "Mode for proportional challenge. Epistemic (exploration/planning/execution) or writing-lifecycle (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). voice-dump suppresses all challenge output.",
+        },
         canon_url: { type: "string", description: "Optional: GitHub repo URL for canon override." },
       },
       required: ["input"],
