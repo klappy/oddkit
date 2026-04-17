@@ -98,6 +98,12 @@ interface NormativeVocabulary {
   caseSensitiveRegex: RegExp | null;
   caseInsensitiveRegex: RegExp | null;
   directiveTypes: Map<string, string>;
+  /** Stop words for user-input matching against per-type detection text.
+   *  Sourced from the `## Detection Noise` section of normative-vocabulary.md.
+   *  Empty Set = no filtering (server falls back to BM25 IDF only). Modal
+   *  verbs and negation are deliberately absent from canon's default list
+   *  because they are signal for strong-claim, proposal, and assumption types. */
+  stopWords: Set<string>;
 }
 
 interface StakesModeConfig {
@@ -109,21 +115,6 @@ interface StakesModeConfig {
 interface StakesCalibration {
   byMode: Map<string, StakesModeConfig>;
 }
-
-// Stop word set for challenge-type detection. Filters general filler
-// (the, of, in, etc.) but deliberately preserves modal verbs, "do/does/did",
-// and negation — those are load-bearing signal for strong-claim, proposal,
-// and assumption types. Using the default bm25 STOP_WORDS would silently
-// strip "must", "should", "shall", "may", "not" and break detection.
-const CHALLENGE_STOP_WORDS = new Set([
-  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-  "of", "in", "to", "for", "with", "on", "at", "by", "from", "as", "into", "through",
-  "and", "but", "or", "nor", "if", "then", "than",
-  "that", "this", "it", "its", "we", "you", "he", "she", "they",
-  // intentionally NOT in this list (kept as signal):
-  // must, should, shall, will, would, may, might, can, could, do, does, did,
-  // have, has, had, not, no, never, always
-]);
 
 let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
 let cachedChallengeTypesCanonUrl: string | undefined = undefined;
@@ -537,23 +528,37 @@ async function discoverChallengeTypes(
     return a.slug.localeCompare(b.slug);
   });
 
-  // Build BM25 index over per-type detection text (triggers + blockquote).
-  // Stemming handles morphology; IDF weights distinctive trigger terms above filler.
-  // CHALLENGE_STOP_WORDS preserves modal verbs and negation as signal — the
-  // default bm25 STOP_WORDS would silently strip "must", "should", "not" etc.
-  const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
-  const bm25Index = buildBM25Index(bm25Docs, CHALLENGE_STOP_WORDS);
-
   cachedChallengeTypes = types;
   cachedChallengeTypesCanonUrl = canonUrl;
-  cachedChallengeTypeIndex = bm25Index;
-  cachedChallengeTypeIndexCanonUrl = canonUrl;
+  // Index build deferred — needs vocab.stopWords from fetchNormativeVocabulary,
+  // assembled lazily by getOrBuildChallengeTypeIndex below. Both types and the
+  // index are deterministic functions of canonUrl, so caching by canonUrl
+  // remains safe.
   return types;
 }
 
-function getChallengeTypeIndex(canonUrl?: string): BM25Index | null {
-  if (cachedChallengeTypeIndexCanonUrl !== canonUrl) return null;
-  return cachedChallengeTypeIndex;
+/** Lazily build (or return cached) per-canonUrl BM25 index over the per-type
+ *  detection text, using governance-sourced stop words from normative-vocabulary.md.
+ *  The cache is keyed on canonUrl so different canon sources do not contaminate
+ *  each other's indexes. */
+function getOrBuildChallengeTypeIndex(
+  types: ChallengeTypeDef[],
+  vocab: NormativeVocabulary,
+  canonUrl?: string,
+): BM25Index {
+  if (cachedChallengeTypeIndex && cachedChallengeTypeIndexCanonUrl === canonUrl) {
+    return cachedChallengeTypeIndex;
+  }
+  // Build BM25 index over per-type detection text (triggers + blockquote).
+  // Stemming handles morphology; IDF weights distinctive trigger terms above filler.
+  // vocab.stopWords comes from `## Detection Noise` in normative-vocabulary.md;
+  // it deliberately preserves modal verbs and negation as signal. An empty
+  // Set means no filtering (governance opted into IDF-only scoring).
+  const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
+  const bm25Index = buildBM25Index(bm25Docs, vocab.stopWords);
+  cachedChallengeTypeIndex = bm25Index;
+  cachedChallengeTypeIndexCanonUrl = canonUrl;
+  return bm25Index;
 }
 
 async function fetchBasePrerequisites(
@@ -605,13 +610,16 @@ async function fetchNormativeVocabulary(
   const caseSensitiveWords: string[] = [];
   const caseInsensitiveWords: string[] = [];
   const directiveTypes = new Map<string, string>();
+  const stopWords = new Set<string>();
 
   try {
     const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", canonUrl);
     if (content) {
-      // Two sections: one under "RFC 2119" heading (case-sensitive),
-      // one under "Architectural Writing" heading (case-insensitive).
-      // Each is a markdown table with (Word | Directive type).
+      // ── Surface 1: Normative Vocabulary (signal in canon quotes) ──
+      // Two subsections under "## Normative Vocabulary": one keyed by "RFC 2119"
+      // or "Directive Language" (case-sensitive), one for architectural-writing
+      // load-bearing phrases (case-insensitive). Each is a markdown table with
+      // (Word | Directive type).
       const sections = content.split(/###\s+/);
       for (const section of sections) {
         const isCaseSensitive = /RFC 2119|Directive Language/i.test(section.split("\n")[0] || "");
@@ -629,6 +637,21 @@ async function fetchNormativeVocabulary(
             if (isCaseSensitive) caseSensitiveWords.push(phrase);
             else caseInsensitiveWords.push(phrase);
           }
+        }
+      }
+
+      // ── Surface 2: Detection Noise (filler in user input) ──
+      // A code block of comma-and-newline separated words under "## Detection
+      // Noise". The set is passed to the BM25 indexer as the custom stop-word
+      // filter. Modal verbs and negation are deliberately absent — they are
+      // signal for strong-claim, proposal, and assumption type detection.
+      // If the section is missing, stopWords stays empty and BM25 falls back
+      // to IDF-only filtering — an explicit governance choice in the article.
+      const noiseMatch = content.match(/## Detection Noise[\s\S]*?```\n([\s\S]*?)\n```/);
+      if (noiseMatch) {
+        for (const word of noiseMatch[1].split(/[,\n]/)) {
+          const w = word.trim().toLowerCase();
+          if (w.length > 0) stopWords.add(w);
         }
       }
     }
@@ -663,7 +686,12 @@ async function fetchNormativeVocabulary(
         )
       : null;
 
-  const vocab = { caseSensitiveRegex, caseInsensitiveRegex, directiveTypes };
+  const vocab: NormativeVocabulary = {
+    caseSensitiveRegex,
+    caseInsensitiveRegex,
+    directiveTypes,
+    stopWords,
+  };
   cachedNormativeVocabulary = vocab;
   cachedNormativeVocabularyCanonUrl = canonUrl;
   return vocab;
@@ -1552,15 +1580,15 @@ async function runChallengeAction(
   // Detection runs BEFORE the voice-dump suppression check so the SUPPRESSED
   // response can still expose `governance` — the model sees what would have
   // fired without surfacing the pressure-test questions.
-  const typeIndex = getChallengeTypeIndex(canonUrl);
+  // Stop words come from `## Detection Noise` in normative-vocabulary.md
+  // (governance), not a hardcoded constant in this file.
+  const typeIndex = getOrBuildChallengeTypeIndex(types, vocab, canonUrl);
   const matchedTypes: ChallengeTypeDef[] = [];
-  if (typeIndex) {
-    const hits = searchBM25(typeIndex, input, types.length);
-    const typeBySlug = new Map(types.map((t) => [t.slug, t]));
-    for (const hit of hits) {
-      const t = typeBySlug.get(hit.id);
-      if (t) matchedTypes.push(t);
-    }
+  const hits = searchBM25(typeIndex, input, types.length);
+  const typeBySlug = new Map(types.map((t) => [t.slug, t]));
+  for (const hit of hits) {
+    const t = typeBySlug.get(hit.id);
+    if (t) matchedTypes.push(t);
   }
 
   // Fallback resolution when no type scored above zero

@@ -20,7 +20,10 @@ const REPO_ROOT = join(__dirname, "..", "..");
 
 // Articles to test against — these MUST exist in the local clone of klappy.dev
 // or we fetch from raw.githubusercontent.com
-const KLAPPYDEV_RAW = "https://raw.githubusercontent.com/klappy/klappy.dev/main";
+// Default to main; override via KLAPPYDEV_RAW env var when testing against
+// an unmerged feature branch (e.g. while klappy.dev#100 is still open).
+const KLAPPYDEV_RAW =
+  process.env.KLAPPYDEV_RAW || "https://raw.githubusercontent.com/klappy/klappy.dev/main";
 const ARTICLE_PATHS = {
   meta: "odd/challenge-types/how-to-write-challenge-types.md",
   strongClaim: "odd/challenge-types/strong-claim.md",
@@ -220,15 +223,34 @@ async function run() {
       id: t.slug,
       text: [t.triggerWords.join(" "), t.blockquote].filter((s) => s.length > 0).join(" "),
     }));
-  // Same stop word set the worker uses — preserves modals as signal,
-  // filters general filler so irrelevant input doesn't over-match.
-  const CHALLENGE_STOP_WORDS = new Set([
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "of", "in", "to", "for", "with", "on", "at", "by", "from", "as", "into", "through",
-    "and", "but", "or", "nor", "if", "then", "than",
-    "that", "this", "it", "its", "we", "you", "he", "she", "they",
-  ]);
-  const bm25 = buildBM25Index(detectionDocs, CHALLENGE_STOP_WORDS);
+  // Stop words come from the `## Detection Noise` section of normative-vocabulary.md
+  // (governance), exactly the same way the worker reads them. No hardcoded
+  // duplicate in this test — drift would mean the test passes while production fails.
+  const noiseMatch = articles.normativeVocabulary.match(
+    /## Detection Noise[\s\S]*?```\n([\s\S]*?)\n```/,
+  );
+  const stopWords = new Set();
+  if (noiseMatch) {
+    for (const word of noiseMatch[1].split(/[,\n]/)) {
+      const w = word.trim().toLowerCase();
+      if (w.length > 0) stopWords.add(w);
+    }
+  }
+  ok(
+    "Detection Noise section parses non-empty stop word set",
+    stopWords.size > 0,
+    `parsed ${stopWords.size} stop words`,
+  );
+  ok(
+    "Detection Noise excludes modal verbs (signal preservation)",
+    !stopWords.has("must") && !stopWords.has("should") && !stopWords.has("not"),
+    `must=${stopWords.has("must")} should=${stopWords.has("should")} not=${stopWords.has("not")}`,
+  );
+  ok(
+    "Detection Noise includes common filler",
+    stopWords.has("the") && stopWords.has("of") && stopWords.has("in"),
+  );
+  const bm25 = buildBM25Index(detectionDocs, stopWords);
 
   // Each type's first trigger word should still match its own type
   for (const t of types) {
