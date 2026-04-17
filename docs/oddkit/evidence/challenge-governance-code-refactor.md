@@ -120,6 +120,29 @@ Visual proof: **N/A — server-side code change.** No UI, no interaction surface
 
 ---
 
+## Bugbot Review + Combine — A Sixth Layer of Catch
+
+After the regex version of this PR was first pushed, the Cursor bugbot reviewed it and flagged five issues, four of which were addressed via three follow-up commits on the remote branch (`31f8134`, `e9ef2f9`, `84932f0`). Those commits existed in parallel to the local BM25 pivot work and were not visible until the remote was fetched. Discovering them late led to a fork situation that was resolved by:
+
+1. Resetting local to the remote tip (preserving the three follow-up fixes plus the ledger entry on `a88abf7`)
+2. Cherry-picking the BM25 commit on top of the resolved tip
+3. Hand-porting the four polish fixes onto the BM25 base — they touch unrelated code regions so the port was mechanical
+4. Adding a fixup commit (`e82164b`) on top of the BM25 commit that captures the ports
+
+**Bugbot's five review items, all closed by this PR:**
+
+| Severity | Issue | Resolution |
+|----------|-------|------------|
+| High | Mode column not lowercased breaks voice-dump suppression | Lowercased at parse time AND at lookup |
+| Medium | Regex alternation order breaks multi-word directive matching (`MUST` before `MUST NOT`) | Sort vocab by length descending |
+| Medium | `first_1` reframings surfaces multiple instead of one | Slice from aggregated list, not per-type |
+| Medium | SUPPRESSED response missing `governance` field | Detection runs before suppression check; both responses share the `governance` shape |
+| Low | Dead code: `detectClaimType` has zero callers | Removed by the BM25 commit before bugbot reviewed |
+
+**Lesson recorded:** when encountering a divergent remote on an existing PR branch, fetch and read PR review comments first. Bugbot leaves structured comments that explain the divergent commits — checking saves the user from explaining what already exists.
+
+---
+
 ## Version Tracking
 
 - Branch: `feat/e0008-challenge-governance-driven`
