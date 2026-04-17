@@ -466,7 +466,7 @@ async function discoverChallengeTypes(
             .map((c: string) => c.trim())
             .filter((c: string) => c.length > 0);
           if (cols.length >= 2) {
-            questions.push({ question: cols[0], tier: cols[1] });
+            questions.push({ question: cols[0], tier: cols[1].toLowerCase() });
           }
         }
       }
