@@ -155,6 +155,27 @@ export interface OrchestrateOptions {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Markdown table helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a single markdown table row into trimmed cell values, preserving
+ * legitimately-empty middle cells. Only the leading and trailing empty strings
+ * produced by splitting a `| a | b |`-style row are stripped — a prior
+ * `.filter(c => c.length > 0)` approach also dropped empty interior cells,
+ * which silently collapsed the column count and caused `cols.length >= N`
+ * guards to misfire (e.g. a voice-dump row with an empty tiers cell).
+ */
+function parseTableRow(row: string): string[] {
+  const parts = row.split("|");
+  // Strip the leading empty produced by a leading `|`, if present
+  if (parts.length > 0 && parts[0].trim() === "") parts.shift();
+  // Strip the trailing empty produced by a trailing `|`, if present
+  if (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
+  return parts.map((c) => c.trim());
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // BM25 Index Cache (per-request, lazy)
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -353,7 +374,7 @@ async function discoverEncodingTypes(
       const qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }> = [];
       if (criteriaSection) {
         for (const row of criteriaSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 3) {
             qualityCriteria.push({
               criterion: cols[0],
@@ -452,10 +473,7 @@ async function discoverChallengeTypes(
       const questions: Array<{ question: string; tier: string }> = [];
       if (questionsSection) {
         for (const row of questionsSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row
-            .split("|")
-            .map((c: string) => c.trim())
-            .filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 2) {
             questions.push({ question: cols[0], tier: cols[1].toLowerCase() });
           }
@@ -473,10 +491,7 @@ async function discoverChallengeTypes(
       }> = [];
       if (prereqSection) {
         for (const row of prereqSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row
-            .split("|")
-            .map((c: string) => c.trim())
-            .filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 3) {
             // Substitute {name} placeholder in gap messages
             const gap = cols[2].replace(/^"|"$/g, "").replace(/\{name\}/g, name);
@@ -577,10 +592,7 @@ async function fetchBasePrerequisites(
       );
       if (prereqSection) {
         for (const row of prereqSection[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row
-            .split("|")
-            .map((c: string) => c.trim())
-            .filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 3) {
             result.push({
               prerequisite: cols[0],
@@ -626,10 +638,7 @@ async function fetchNormativeVocabulary(
         const tableMatch = section.match(/\|\s*(?:Word|Phrase)\s*\|[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/);
         if (!tableMatch) continue;
         for (const row of tableMatch[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row
-            .split("|")
-            .map((c: string) => c.trim())
-            .filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 2) {
             const phrase = cols[0];
             const dtype = cols[1];
@@ -716,10 +725,7 @@ async function fetchStakesCalibration(
       );
       if (tableMatch) {
         for (const row of tableMatch[1].split("\n").filter((r: string) => r.includes("|"))) {
-          const cols = row
-            .split("|")
-            .map((c: string) => c.trim())
-            .filter((c: string) => c.length > 0);
+          const cols = parseTableRow(row);
           if (cols.length >= 4) {
             const mode = cols[0].toLowerCase();
             const tiersRaw = cols[1].toLowerCase().trim();
@@ -1554,6 +1560,30 @@ async function runOrientAction(
   };
 }
 
+// Governance-driven tension detection helper.
+//
+// `.match()` with a combined alternation returns the *leftmost* hit, so
+// "You MUST do X and MUST NOT do Y" would resolve to "MUST" (requirement)
+// even though a prohibition is present later in the excerpt. Collect all
+// matches via `matchAll` and prefer a prohibition over any other directive
+// type, falling back to the leftmost match otherwise. This preserves the
+// prior two-test priority (MUST NOT before MUST) without coupling to a
+// hard-coded vocabulary.
+function pickStrongestDirective(
+  matches: IterableIterator<RegExpMatchArray>,
+  lookup: (phrase: string) => string | undefined,
+): { phrase: string; dtype: string } | null {
+  let first: { phrase: string; dtype: string } | null = null;
+  let prohibition: { phrase: string; dtype: string } | null = null;
+  for (const m of matches) {
+    const phrase = m[1];
+    const dtype = lookup(phrase) || "directive";
+    if (!first) first = { phrase, dtype };
+    if (!prohibition && dtype === "prohibition") prohibition = { phrase, dtype };
+  }
+  return prohibition || first;
+}
+
 async function runChallengeAction(
   input: string,
   modeHint: string | undefined,
@@ -1723,32 +1753,8 @@ async function runChallengeAction(
       const citation = `${entry.path}#${entry.title}`;
       canonConstraints.push({ citation, quote: excerpt });
 
-      // Governance-driven tension detection
-      //
-      // `.match()` with a combined alternation returns the *leftmost* hit, so
-      // "You MUST do X and MUST NOT do Y" would resolve to "MUST" (requirement)
-      // even though a prohibition is present later in the excerpt. Collect all
-      // matches via `matchAll` and prefer a prohibition over any other
-      // directive type, falling back to the leftmost match otherwise. This
-      // preserves the prior two-test priority (MUST NOT before MUST) without
-      // coupling to a hard-coded vocabulary.
-      const pickStrongest = (
-        matches: IterableIterator<RegExpMatchArray>,
-        lookup: (phrase: string) => string | undefined,
-      ): { phrase: string; dtype: string } | null => {
-        let first: { phrase: string; dtype: string } | null = null;
-        let prohibition: { phrase: string; dtype: string } | null = null;
-        for (const m of matches) {
-          const phrase = m[1];
-          const dtype = lookup(phrase) || "directive";
-          if (!first) first = { phrase, dtype };
-          if (!prohibition && dtype === "prohibition") prohibition = { phrase, dtype };
-        }
-        return prohibition || first;
-      };
-
       if (vocab.caseSensitiveRegex) {
-        const hit = pickStrongest(
+        const hit = pickStrongestDirective(
           excerpt.matchAll(vocab.caseSensitiveRegex),
           (p) => vocab.directiveTypes.get(p),
         );
@@ -1763,7 +1769,7 @@ async function runChallengeAction(
         }
       }
       if (vocab.caseInsensitiveRegex) {
-        const hit = pickStrongest(
+        const hit = pickStrongestDirective(
           excerpt.matchAll(vocab.caseInsensitiveRegex),
           (p) => vocab.directiveTypes.get(p) || vocab.directiveTypes.get(p.toLowerCase()) || "load-bearing-claim",
         );
