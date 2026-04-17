@@ -1580,6 +1580,11 @@ async function runChallengeAction(
         challenges: [],
         suggested_reframings: [],
         canon_constraints: [],
+        governance: matchedTypes.map((t) => ({
+          slug: t.slug,
+          name: t.name,
+          description: t.blockquote,
+        })),
       },
       state: state ? initState(state) : undefined,
       assistant_text:
