@@ -49,6 +49,16 @@ async function fetchArticle(path) {
 // Parser logic — verbatim copies of the regexes in workers/src/orchestrate.ts
 // ──────────────────────────────────────────────────────────────────────────
 
+// Mirror of `parseTableRow` in workers/src/orchestrate.ts. Preserves
+// legitimately-empty interior cells (a prior `.filter(c => c.length > 0)`
+// approach dropped them and silently collapsed column indexes).
+function parseTableRow(row) {
+  const parts = row.split("|");
+  if (parts.length > 0 && parts[0].trim() === "") parts.shift();
+  if (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
+  return parts.map((c) => c.trim());
+}
+
 function parseChallengeType(content) {
   const slugMatch = content.match(/\|\s*Slug\s*\|\s*([^|]+)\s*\|/);
   const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/);
@@ -74,7 +84,7 @@ function parseChallengeType(content) {
   const questions = [];
   if (questionsSection) {
     for (const row of questionsSection[1].split("\n").filter((r) => r.includes("|"))) {
-      const cols = row.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const cols = parseTableRow(row);
       if (cols.length >= 2) questions.push({ question: cols[0], tier: cols[1] });
     }
   }
@@ -85,7 +95,7 @@ function parseChallengeType(content) {
   const prerequisiteOverlays = [];
   if (prereqSection) {
     for (const row of prereqSection[1].split("\n").filter((r) => r.includes("|"))) {
-      const cols = row.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const cols = parseTableRow(row);
       if (cols.length >= 3) {
         prerequisiteOverlays.push({
           prerequisite: cols[0],
@@ -121,7 +131,7 @@ function parseBasePrereqs(content) {
   const result = [];
   if (section) {
     for (const row of section[1].split("\n").filter((r) => r.includes("|"))) {
-      const cols = row.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const cols = parseTableRow(row);
       if (cols.length >= 3) {
         result.push({ prerequisite: cols[0], check: cols[1], gapMessage: cols[2].replace(/^"|"$/g, "") });
       }
@@ -139,7 +149,7 @@ function parseNormativeVocab(content) {
     const tableMatch = section.match(/\|\s*(?:Word|Phrase)\s*\|[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/);
     if (!tableMatch) continue;
     for (const row of tableMatch[1].split("\n").filter((r) => r.includes("|"))) {
-      const cols = row.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const cols = parseTableRow(row);
       if (cols.length >= 2) {
         if (isCS) caseSensitive.push(cols[0]);
         else caseInsensitive.push(cols[0]);
@@ -156,7 +166,7 @@ function parseStakesCalibration(content) {
   const byMode = new Map();
   if (tableMatch) {
     for (const row of tableMatch[1].split("\n").filter((r) => r.includes("|"))) {
-      const cols = row.split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      const cols = parseTableRow(row);
       if (cols.length >= 4) {
         const tiersRaw = cols[1].toLowerCase().trim();
         const isNone = tiersRaw === "none" || tiersRaw.startsWith("none ") || tiersRaw.startsWith("none(");
