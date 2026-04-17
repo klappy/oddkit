@@ -30,13 +30,17 @@ export function stem(word: string): string {
     .replace(/s$/, "");
 }
 
-/** Tokenize and stem text, removing stop words */
-export function tokenize(text: string): string[] {
+/** Tokenize and stem text. Pass a custom `stopWords` set to override the
+ *  default. Pass an empty Set to disable filtering entirely. Use this for
+ *  domains where the default modal verbs (must, should, shall, may, might,
+ *  can, could, will, would) carry meaningful signal — for example,
+ *  challenge-type detection where modals are themselves the trigger words. */
+export function tokenize(text: string, stopWords: Set<string> = STOP_WORDS): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\s-]/g, " ")
     .split(/[\s\-_/]+/)
-    .filter((t) => t.length > 1 && !STOP_WORDS.has(t))
+    .filter((t) => t.length > 1 && !stopWords.has(t))
     .map(stem);
 }
 
@@ -53,18 +57,25 @@ export interface BM25Index {
   df: Map<string, number>;
   avgdl: number;
   N: number;
+  /** The stop word set used at index time. searchBM25 reuses it so that
+   *  query tokenization matches doc tokenization exactly. */
+  stopWords?: Set<string>;
 }
 
-/** Build BM25 index from {id, text} pairs */
+/** Build BM25 index from {id, text} pairs.
+ *  Pass `stopWords` to override the default filter (e.g., for domains where
+ *  modal verbs are signal). The same set is stored on the index so that
+ *  searchBM25 tokenizes queries consistently with the indexed docs. */
 export function buildBM25Index(
   documents: Array<{ id: string; text: string }>,
+  stopWords: Set<string> = STOP_WORDS,
 ): BM25Index {
   const docs: BM25Doc[] = [];
   const df = new Map<string, number>();
   let totalLength = 0;
 
   for (const doc of documents) {
-    const terms = tokenize(doc.text);
+    const terms = tokenize(doc.text, stopWords);
     docs.push({ id: doc.id, terms, length: terms.length, originalText: doc.text });
     totalLength += terms.length;
 
@@ -82,6 +93,7 @@ export function buildBM25Index(
     df,
     avgdl: documents.length > 0 ? totalLength / documents.length : 0,
     N: documents.length,
+    stopWords,
   };
 }
 
@@ -97,12 +109,16 @@ export function searchBM25(
   query: string,
   limit: number = 5,
 ): Array<{ id: string; score: number }> {
-  const queryTerms = tokenize(query);
+  const stopWords = index.stopWords ?? STOP_WORDS;
+  const queryTerms = tokenize(query, stopWords);
   if (queryTerms.length === 0) return [];
 
   // Pre-compute phrase matching inputs once, outside the per-doc loop.
   const queryLower = query.toLowerCase();
-  const queryWords = queryLower.replace(/[^\w\s-]/g, " ").split(/[\s\-_/]+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+  const queryWords = queryLower
+    .replace(/[^\w\s-]/g, " ")
+    .split(/[\s\-_/]+/)
+    .filter((w) => w.length > 1 && !stopWords.has(w));
 
   const scores: Array<{ id: string; score: number }> = [];
 
