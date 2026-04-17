@@ -1579,6 +1579,7 @@ async function runChallengeAction(
       result: {
         status: "SUPPRESSED",
         mode,
+        claim_type: matchedTypes[0]?.slug,
         matched_types: matchedTypes.map((t) => t.slug),
         governance: matchedTypes.map((t) => ({
           slug: t.slug,
@@ -1775,6 +1776,7 @@ async function runChallengeAction(
     result: {
       status: "CHALLENGED",
       mode,
+      claim_type: matchedSlugs[0],
       matched_types: matchedSlugs,
       governance: matchedTypes.map((t) => ({
         slug: t.slug,
