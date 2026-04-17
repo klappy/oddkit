@@ -75,6 +75,52 @@ interface ParsedArtifact {
 let cachedEncodingTypes: EncodingTypeDef[] | null = null;
 let cachedEncodingTypesCanonUrl: string | undefined = undefined;
 
+// Governance-driven challenge types (parallel to EncodingTypeDef)
+interface ChallengeTypeDef {
+  slug: string;              // from ## Type Identity table, Slug row
+  name: string;              // from ## Type Identity table, Name row
+  blockquote: string;        // the opening > line after the title
+  fallback: boolean;         // from frontmatter
+  triggerWords: string[];    // from ## Detection Patterns code block
+  triggerRegex: RegExp | null;
+  questions: Array<{ question: string; tier: string }>;  // from ## Challenge Questions table
+  prereqOverlays: PrereqOverlay[];  // from ## Prerequisite Overlays table
+  reframings: string[];      // from ## Suggested Reframings bullets
+}
+
+interface PrereqOverlay {
+  name: string;         // first column of table
+  check: string;        // second column — prose description (may contain quoted keywords)
+  gapMessage: string;   // third column — message if check fails
+  keywords: string[];   // extracted from check description (quoted strings)
+}
+
+interface NormativeVocabulary {
+  rfc2119Regex: RegExp | null;        // case-sensitive: MUST, SHALL, NEVER, etc.
+  architecturalRegex: RegExp | null;  // case-insensitive: "invariant", "forcing function", etc.
+  directiveLookup: Map<string, string>;  // word/phrase (lowercase key) → directive type
+}
+
+interface StakesCalibration {
+  mode: string;                    // "exploration", "planning", "execution", "voice-dump", etc.
+  questionTiers: string[];         // ["baseline"], ["baseline","elevated"], etc. OR empty array for "none"
+  strictness: "optional" | "required" | "required_plus_source";
+  reframings: "none" | "first_1" | "all" | "all_plus_block";
+}
+
+// Caches — one per governance article, each guarded by canonUrl (mirror encoding types pattern)
+let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
+let cachedChallengeTypesCanonUrl: string | undefined = undefined;
+
+let cachedBasePrerequisites: PrereqOverlay[] | null = null;
+let cachedBasePrerequisitesCanonUrl: string | undefined = undefined;
+
+let cachedNormativeVocabulary: NormativeVocabulary | null = null;
+let cachedNormativeVocabularyCanonUrl: string | undefined = undefined;
+
+let cachedStakesCalibration: StakesCalibration[] | null = null;
+let cachedStakesCalibrationCanonUrl: string | undefined = undefined;
+
 export interface UnifiedParams {
   action: string;
   input: string;
@@ -353,6 +399,331 @@ async function discoverEncodingTypes(
   cachedEncodingTypes = types;
   cachedEncodingTypesCanonUrl = canonUrl;
   return types;
+}
+
+function extractKeywordsFromCheck(check: string): string[] {
+  // Extract quoted substrings from check description
+  // Example input: `input contains "evidence", "saw", "observed"`
+  // Output: ["evidence", "saw", "observed"]
+  const matches = check.match(/"([^"]+)"/g) || [];
+  return matches.map((m: string) => m.replace(/^"|"$/g, ""));
+}
+
+function extractPrereqTable(content: string): PrereqOverlay[] {
+  const section = content.match(
+    /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+  );
+  if (!section) return [];
+
+  const overlays: PrereqOverlay[] = [];
+  for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
+    const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+    if (cols.length >= 3) {
+      const check = cols[1];
+      overlays.push({
+        name: cols[0],
+        check,
+        gapMessage: cols[2].replace(/^"|"$/g, ""),
+        keywords: extractKeywordsFromCheck(check),
+      });
+    }
+  }
+  return overlays;
+}
+
+async function discoverChallengeTypes(
+  fetcher: ZipBaselineFetcher,
+  canonUrl?: string,
+): Promise<ChallengeTypeDef[]> {
+  if (cachedChallengeTypes && cachedChallengeTypesCanonUrl === canonUrl) return cachedChallengeTypes;
+
+  const index = await fetcher.getIndex(canonUrl);
+  const typeArticles = index.entries.filter(
+    (entry: IndexEntry) =>
+      entry.tags?.includes("challenge-type") && entry.path.includes("challenge-types/"),
+  );
+
+  const types: ChallengeTypeDef[] = [];
+  for (const article of typeArticles) {
+    try {
+      const content = await fetcher.getFile(article.path, canonUrl);
+      if (!content) continue;
+
+      // Frontmatter → fallback flag
+      const metadata = parseFullFrontmatter(content) || {};
+      const fallback = metadata.fallback === true;
+
+      // Blockquote (opening > line)
+      const blockquoteMatch = content.match(/^---[\s\S]*?---\s*\n+\s*#[^\n]+\n+>\s*(.+?)(?=\n\n|\n---|\n##)/s);
+      const blockquote = blockquoteMatch ? blockquoteMatch[1].trim().replace(/\n>\s*/g, " ") : "";
+
+      // ## Type Identity → Slug and Name
+      const slugMatch = content.match(/\|\s*Slug\s*\|\s*([a-z0-9-]+)\s*\|/i);
+      const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/i);
+      if (!slugMatch) continue;
+      const slug = slugMatch[1];
+      const name = nameMatch ? nameMatch[1].trim() : slug;
+
+      // ## Detection Patterns → code block of comma-separated words
+      const detectionMatch = content.match(
+        /## Detection Patterns[\s\S]*?```\n([\s\S]*?)\n```/,
+      );
+      const triggerWords = detectionMatch
+        ? detectionMatch[1]
+            .split(/[,\n]/)
+            .map((w: string) => w.trim())
+            .filter((w: string) => w.length > 0)
+        : [];
+      const triggerRegex =
+        triggerWords.length > 0
+          ? new RegExp(
+              "\\b(" +
+                triggerWords
+                  .map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+                  .join("|") +
+                ")\\b",
+              "i",
+            )
+          : null;
+
+      // ## Challenge Questions → table (Question | Stakes tier)
+      const questionsSection = content.match(
+        /## Challenge Questions[\s\S]*?\| Question[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      const questions: Array<{ question: string; tier: string }> = [];
+      if (questionsSection) {
+        for (const row of questionsSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          if (cols.length >= 2) {
+            questions.push({ question: cols[0], tier: cols[1].toLowerCase() });
+          }
+        }
+      }
+
+      // ## Prerequisite Overlays → table (Prerequisite | Check | Gap message)
+      const prereqOverlays = extractPrereqTable(content);
+
+      // ## Suggested Reframings → bulleted list
+      const reframingsSection = content.match(
+        /## Suggested Reframings[\s\S]*?\n((?:- [^\n]+\n?)+)/,
+      );
+      const reframings = reframingsSection
+        ? reframingsSection[1]
+            .split("\n")
+            .filter((l: string) => l.startsWith("- "))
+            .map((l: string) => l.slice(2).trim())
+        : [];
+
+      types.push({
+        slug, name, blockquote, fallback,
+        triggerWords, triggerRegex,
+        questions, prereqOverlays, reframings,
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  cachedChallengeTypes = types;
+  cachedChallengeTypesCanonUrl = canonUrl;
+  return types;
+}
+
+async function fetchBasePrerequisites(
+  fetcher: ZipBaselineFetcher,
+  canonUrl?: string,
+): Promise<PrereqOverlay[]> {
+  if (cachedBasePrerequisites && cachedBasePrerequisitesCanonUrl === canonUrl)
+    return cachedBasePrerequisites;
+
+  try {
+    const content = await fetcher.getFile("odd/challenge/base-prerequisites.md", canonUrl);
+    const overlays = content ? extractPrereqTable(content) : [];
+    cachedBasePrerequisites = overlays;
+    cachedBasePrerequisitesCanonUrl = canonUrl;
+    return overlays;
+  } catch {
+    cachedBasePrerequisites = [];
+    cachedBasePrerequisitesCanonUrl = canonUrl;
+    return [];
+  }
+}
+
+async function fetchNormativeVocabulary(
+  fetcher: ZipBaselineFetcher,
+  canonUrl?: string,
+): Promise<NormativeVocabulary> {
+  if (cachedNormativeVocabulary && cachedNormativeVocabularyCanonUrl === canonUrl)
+    return cachedNormativeVocabulary;
+
+  // Fallback minimal set if article is missing
+  const fallback: NormativeVocabulary = {
+    rfc2119Regex: /\b(MUST NOT|SHOULD NOT|MUST|SHOULD)\b/,
+    architecturalRegex: null,
+    directiveLookup: new Map([
+      ["must", "requirement"],
+      ["must not", "prohibition"],
+      ["should", "recommendation"],
+      ["should not", "discouragement"],
+    ]),
+  };
+
+  try {
+    const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", canonUrl);
+    if (!content) {
+      cachedNormativeVocabulary = fallback;
+      cachedNormativeVocabularyCanonUrl = canonUrl;
+      return fallback;
+    }
+
+    // Parse two tables under ## Normative Vocabulary
+    // Table 1: ### Directive Language (RFC 2119 and Related) — 2 cols (Word | Directive type)
+    // Table 2: ### Architectural Writing Load-Bearing Terms — 2 cols (Phrase | Directive type)
+    const rfcSection = content.match(
+      /### Directive Language[\s\S]*?\| Word[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n###|\n##|$)/,
+    );
+    const archSection = content.match(
+      /### Architectural[\s\S]*?\|[^|]+\|[^|]+\|\n\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n###|\n##|$)/,
+    );
+
+    const rfcWords: string[] = [];
+    const archPhrases: string[] = [];
+    const lookup = new Map<string, string>();
+
+    if (rfcSection) {
+      for (const row of rfcSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+        const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+        if (cols.length >= 2) {
+          rfcWords.push(cols[0]);
+          lookup.set(cols[0].toLowerCase(), cols[1]);
+        }
+      }
+    }
+
+    if (archSection) {
+      for (const row of archSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+        const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+        if (cols.length >= 2) {
+          archPhrases.push(cols[0]);
+          lookup.set(cols[0].toLowerCase(), cols[1]);
+        }
+      }
+    }
+
+    const rfcRegex =
+      rfcWords.length > 0
+        ? new RegExp(
+            "\\b(" + rfcWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
+          )  // case-sensitive — no "i" flag
+        : null;
+
+    const archRegex =
+      archPhrases.length > 0
+        ? new RegExp(
+            "\\b(" + archPhrases.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b",
+            "i",
+          )
+        : null;
+
+    const result: NormativeVocabulary = {
+      rfc2119Regex: rfcRegex,
+      architecturalRegex: archRegex,
+      directiveLookup: lookup,
+    };
+    cachedNormativeVocabulary = result;
+    cachedNormativeVocabularyCanonUrl = canonUrl;
+    return result;
+  } catch {
+    cachedNormativeVocabulary = fallback;
+    cachedNormativeVocabularyCanonUrl = canonUrl;
+    return fallback;
+  }
+}
+
+async function fetchStakesCalibration(
+  fetcher: ZipBaselineFetcher,
+  canonUrl?: string,
+): Promise<StakesCalibration[]> {
+  if (cachedStakesCalibration && cachedStakesCalibrationCanonUrl === canonUrl)
+    return cachedStakesCalibration;
+
+  // Fallback: "surface everything" at every mode
+  const fallback: StakesCalibration[] = [
+    { mode: "exploration", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "optional", reframings: "all" },
+    { mode: "planning", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "required", reframings: "all" },
+    { mode: "execution", questionTiers: ["baseline", "elevated", "rigorous"], strictness: "required_plus_source", reframings: "all" },
+  ];
+
+  try {
+    const content = await fetcher.getFile("odd/challenge/stakes-calibration.md", canonUrl);
+    if (!content) {
+      cachedStakesCalibration = fallback;
+      cachedStakesCalibrationCanonUrl = canonUrl;
+      return fallback;
+    }
+
+    // Parse ## Stakes Calibration table — 4 columns
+    // Mode | Question tiers surfaced | Prerequisite strictness | Reframings surfaced
+    const section = content.match(
+      /## Stakes Calibration[\s\S]*?\| Mode[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+    );
+    if (!section) {
+      cachedStakesCalibration = fallback;
+      cachedStakesCalibrationCanonUrl = canonUrl;
+      return fallback;
+    }
+
+    const calibrations: StakesCalibration[] = [];
+    for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
+      const cols = row.split("|").map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+      if (cols.length < 4) continue;
+
+      const mode = cols[0];
+      const tiersRaw = cols[1].toLowerCase();
+      const strictRaw = cols[2].toLowerCase();
+      const reframingsRaw = cols[3].toLowerCase();
+
+      // Parse question tiers
+      let questionTiers: string[];
+      if (tiersRaw.includes("none")) questionTiers = [];
+      else {
+        questionTiers = [];
+        if (tiersRaw.includes("baseline")) questionTiers.push("baseline");
+        if (tiersRaw.includes("elevated")) questionTiers.push("elevated");
+        if (tiersRaw.includes("rigorous")) questionTiers.push("rigorous");
+      }
+
+      // Parse strictness
+      let strictness: StakesCalibration["strictness"];
+      if (strictRaw.includes("source-named")) strictness = "required_plus_source";
+      else if (strictRaw.includes("required")) strictness = "required";
+      else strictness = "optional";
+
+      // Parse reframings
+      let reframings: StakesCalibration["reframings"];
+      if (reframingsRaw.includes("block-until-addressed")) reframings = "all_plus_block";
+      else if (reframingsRaw.includes("all")) reframings = "all";
+      else if (reframingsRaw.includes("first 1") || reframingsRaw.includes("first one")) reframings = "first_1";
+      else if (reframingsRaw.includes("none")) reframings = "none";
+      else reframings = "all";
+
+      calibrations.push({ mode, questionTiers, strictness, reframings });
+    }
+
+    if (calibrations.length === 0) {
+      cachedStakesCalibration = fallback;
+      cachedStakesCalibrationCanonUrl = canonUrl;
+      return fallback;
+    }
+
+    cachedStakesCalibration = calibrations;
+    cachedStakesCalibrationCanonUrl = canonUrl;
+    return calibrations;
+  } catch {
+    cachedStakesCalibration = fallback;
+    cachedStakesCalibrationCanonUrl = canonUrl;
+    return fallback;
+  }
 }
 
 function isStructuredInput(input: string): boolean {
@@ -740,6 +1111,14 @@ async function runCleanupStorage(
   cachedBM25Entries = null;
   cachedEncodingTypes = null;
   cachedEncodingTypesCanonUrl = undefined;
+  cachedChallengeTypes = null;
+  cachedChallengeTypesCanonUrl = undefined;
+  cachedBasePrerequisites = null;
+  cachedBasePrerequisitesCanonUrl = undefined;
+  cachedNormativeVocabulary = null;
+  cachedNormativeVocabularyCanonUrl = undefined;
+  cachedStakesCalibration = null;
+  cachedStakesCalibrationCanonUrl = undefined;
 
   return {
     action: "cleanup_storage",
@@ -1158,72 +1537,162 @@ async function runChallengeAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const claimType = detectClaimType(input);
+
+  // 1. Load all governance
+  const types = await discoverChallengeTypes(fetcher, canonUrl);
+  const basePrereqs = await fetchBasePrerequisites(fetcher, canonUrl);
+  const normVocab = await fetchNormativeVocabulary(fetcher, canonUrl);
+  const calibrations = await fetchStakesCalibration(fetcher, canonUrl);
+
+  // 2. Resolve mode and calibration
+  const mode = modeHint || "planning";
+  const calibration =
+    calibrations.find((c) => c.mode === mode) ||
+    calibrations.find((c) => c.mode === "planning") ||
+    calibrations[0] || {
+      mode: "planning", questionTiers: ["baseline", "elevated"],
+      strictness: "required" as const, reframings: "all" as const,
+    };
+
+  // 3. Multi-match detection
+  let matchedTypes: ChallengeTypeDef[] = types.filter(
+    (t) => t.triggerRegex && t.triggerRegex.test(input),
+  );
+  if (matchedTypes.length === 0) {
+    const fallbackType = types.find((t) => t.fallback) || types[0];
+    if (fallbackType) matchedTypes = [fallbackType];
+  }
+
+  // 4. VOICE-DUMP INVARIANT: if calibration says no question tiers, suppress entire output.
+  //    This is load-bearing — some modes exist for raw thought capture and pressure-testing
+  //    at that stage damages the mode. Do not "helpfully" surface a reduced set.
+  if (calibration.questionTiers.length === 0) {
+    const primary = matchedTypes[0]?.slug || "observation";
+    return {
+      action: "challenge",
+      result: {
+        status: "SUPPRESSED",
+        mode_used: mode,
+        matched_types: matchedTypes.map((t) => t.slug),
+        claim_type: primary,  // backward-compat alias
+        tensions: [],
+        missing_prerequisites: [],
+        challenges: [],
+        suggested_reframings: [],
+        canon_constraints: [],
+      },
+      state: state ? initState(state) : undefined,
+      assistant_text:
+        `Challenge suppressed (mode: ${mode}). This mode exists for raw capture; ` +
+        `pressure-testing would damage the mode's function. Resume challenge at a later stage.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
+  }
+
+  // 5. Aggregate across matched types
+  const aggregatedQuestions: Array<{ question: string; tier: string }> = [];
+  const aggregatedOverlays: PrereqOverlay[] = [];
+  const aggregatedReframings: string[] = [];
+  for (const t of matchedTypes) {
+    aggregatedQuestions.push(...t.questions);
+    aggregatedOverlays.push(...t.prereqOverlays);
+    aggregatedReframings.push(...t.reframings);
+  }
+
+  // 6. Filter questions by stakes tier, dedupe by string
+  const filteredQuestions = aggregatedQuestions
+    .filter((q) => calibration.questionTiers.includes(q.tier))
+    .map((q) => q.question);
+  const challenges = Array.from(new Set(filteredQuestions));
+
+  // 7. Merge base + type overlay prerequisites, dedupe by name, test each against input
+  const allPrereqs = [...basePrereqs, ...aggregatedOverlays];
+  const uniquePrereqs = Array.from(
+    new Map(allPrereqs.map((p) => [p.name, p])).values(),
+  );
+
+  const missing: string[] = [];
+  for (const prereq of uniquePrereqs) {
+    if (prereq.keywords.length === 0) {
+      // No quoted keywords — check is descriptive-only, cannot mechanically test. Skip.
+      continue;
+    }
+    const matched = prereq.keywords.some((k) =>
+      new RegExp("\\b" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(input),
+    );
+    if (!matched) {
+      const typeName = matchedTypes[0]?.name || "claim";
+      let gap = prereq.gapMessage.replace(/\{name\}/g, typeName.toLowerCase());
+      if (calibration.strictness === "optional") gap = `Advisory: ${gap}`;
+      missing.push(gap);
+    }
+  }
+
+  // 8. Dedupe and filter reframings
+  const dedupedReframings = Array.from(new Set(aggregatedReframings));
+  let reframings: string[];
+  switch (calibration.reframings) {
+    case "none":
+      reframings = [];
+      break;
+    case "first_1":
+      // Take first reframing from each matched type (no more than one per type)
+      reframings = Array.from(
+        new Set(matchedTypes.map((t) => t.reframings[0]).filter((r) => r)),
+      );
+      break;
+    case "all":
+    case "all_plus_block":
+    default:
+      reframings = dedupedReframings;
+  }
+
+  // 9. Retrieve canon constraints (same BM25 path as before)
   const index = await fetcher.getIndex(canonUrl);
   const results = scoreEntries(index.entries, `constraints challenges risks ${input}`).slice(0, 4);
 
   const canonConstraints: Array<{ citation: string; quote: string }> = [];
   const tensions: Array<{ type: string; message: string }> = [];
+
   for (const entry of results) {
     const content = await fetcher.getFile(entry.path, canonUrl);
-    if (content) {
-      const stripped = content.replace(/^---[\s\S]*?---\n/, "");
-      const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
-      const excerpt = lines.slice(0, 2).join(" ").slice(0, 150);
-      canonConstraints.push({ citation: `${entry.path}#${entry.title}`, quote: excerpt });
-      if (/\bMUST NOT\b/.test(excerpt))
-        tensions.push({ type: "prohibition", message: `Canon prohibition found in ${entry.path}` });
-      else if (/\bMUST\b/.test(excerpt))
-        tensions.push({ type: "requirement", message: `Canon requirement found in ${entry.path}` });
+    if (!content) continue;
+    const stripped = content.replace(/^---[\s\S]*?---\n/, "");
+    const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+    const excerpt = lines.slice(0, 2).join(" ").slice(0, 150);
+    canonConstraints.push({ citation: `${entry.path}#${entry.title}`, quote: excerpt });
+
+    // Apply normative vocabulary regexes
+    let foundMatch: string | null = null;
+    if (normVocab.rfc2119Regex) {
+      const m = excerpt.match(normVocab.rfc2119Regex);
+      if (m) foundMatch = m[0];
+    }
+    if (!foundMatch && normVocab.architecturalRegex) {
+      const m = excerpt.match(normVocab.architecturalRegex);
+      if (m) foundMatch = m[0];
+    }
+    if (foundMatch) {
+      const directiveType = normVocab.directiveLookup.get(foundMatch.toLowerCase()) || "directive";
+      tensions.push({
+        type: directiveType,
+        message: `Canon ${directiveType} (${foundMatch}) found in ${entry.path}`,
+      });
     }
   }
 
-  const missing: string[] = [];
-  if (!/\bevidence\b/i.test(input) && !/\bdata\b/i.test(input))
-    missing.push("No evidence cited — claims without evidence are assumptions");
-  if (claimType === "strong_claim" || claimType === "proposal") {
-    if (!/\balternative/i.test(input)) missing.push("No alternatives mentioned");
-    if (!/\brisk/i.test(input) && !/\bcost\b/i.test(input))
-      missing.push("No risks or costs acknowledged");
-  }
-
-  const challenges: string[] = [];
-  if (claimType === "strong_claim") {
-    challenges.push(
-      "What evidence would disprove this?",
-      "Under what conditions does this NOT hold?",
-      "Who would disagree, and why?",
-    );
-  } else if (claimType === "proposal") {
-    challenges.push(
-      "What's the cost of being wrong?",
-      "What alternatives were considered?",
-      "What would need to be true for this to fail?",
-    );
-  } else if (claimType === "assumption") {
-    challenges.push(
-      "Has this assumption been validated?",
-      "What if this assumption is wrong — what breaks?",
-    );
-  } else {
-    challenges.push("Is this observation representative?", "What context might change this?");
-  }
-
-  const reframings: string[] = [];
-  if (claimType === "strong_claim")
-    reframings.push("Reframe as hypothesis: 'We believe X because Y, and would reconsider if Z'");
-  if (claimType === "assumption")
-    reframings.push("Make explicit: state the assumption and how you'd validate it");
-  if (claimType === "proposal")
-    reframings.push("Add optionality: 'We're choosing X over Y because Z, reversible until W'");
-
-  // Update state
+  // 10. Update state
   const updatedState = state ? initState(state) : undefined;
   if (updatedState && missing.length > 0) {
     updatedState.unresolved = [...updatedState.unresolved, ...missing];
   }
 
-  const lines = [`Challenge (${claimType}):`, ""];
+  // 11. Build human-readable assistant_text (preserve existing format roughly)
+  const primarySlug = matchedTypes[0]?.slug || "observation";
+  const primaryName = matchedTypes[0]?.name || "Observation";
+  const typesLabel =
+    matchedTypes.length > 1 ? `${primaryName} +${matchedTypes.length - 1} more` : primaryName;
+  const lines = [`Challenge (${typesLabel}, mode: ${mode}):`, ""];
   if (tensions.length > 0) {
     lines.push("Tensions found:");
     for (const t of tensions) lines.push(`  - [${t.type}] ${t.message}`);
@@ -1234,12 +1703,18 @@ async function runChallengeAction(
     for (const m of missing) lines.push(`  - ${m}`);
     lines.push("");
   }
-  lines.push("Questions to address:");
-  for (const c of challenges) lines.push(`  - ${c}`);
-  lines.push("");
+  if (challenges.length > 0) {
+    lines.push("Questions to address:");
+    for (const c of challenges) lines.push(`  - ${c}`);
+    lines.push("");
+  }
   if (reframings.length > 0) {
     lines.push("Suggested reframings:");
     for (const r of reframings) lines.push(`  - ${r}`);
+    lines.push("");
+  }
+  if (calibration.reframings === "all_plus_block" && reframings.length > 0) {
+    lines.push("⚠ Block-until-addressed: this claim should not proceed until reframings are explicitly addressed or declined.");
     lines.push("");
   }
   if (canonConstraints.length > 0) {
@@ -1255,12 +1730,19 @@ async function runChallengeAction(
     action: "challenge",
     result: {
       status: "CHALLENGED",
-      claim_type: claimType,
+      mode_used: mode,
+      matched_types: matchedTypes.map((t) => t.slug),
+      claim_type: primarySlug,  // backward-compat alias — first matched slug
       tensions,
       missing_prerequisites: missing,
       challenges,
       suggested_reframings: reframings,
       canon_constraints: canonConstraints,
+      governance: matchedTypes.map((t) => ({
+        slug: t.slug,
+        name: t.name,
+        description: t.blockquote,
+      })),
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
