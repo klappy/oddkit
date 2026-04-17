@@ -161,7 +161,7 @@ function parseStakesCalibration(content) {
         const tiersRaw = cols[1].toLowerCase().trim();
         const isNone = tiersRaw === "none" || tiersRaw.startsWith("none ") || tiersRaw.startsWith("none(");
         const tiers = isNone ? [] : tiersRaw.split(",").map((t) => t.trim()).filter((t) => t);
-        byMode.set(cols[0], { tiers, strictness: cols[2], surfacing: cols[3] });
+        byMode.set(cols[0].toLowerCase(), { tiers, strictness: cols[2], surfacing: cols[3] });
       }
     }
   }

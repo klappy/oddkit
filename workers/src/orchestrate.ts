@@ -674,6 +674,7 @@ async function fetchNormativeVocabulary(
           "\\b(" +
             [...caseSensitiveWords].sort((a, b) => b.length - a.length).map(escape).join("|") +
             ")\\b",
+          "g",
         )
       : null;
   const caseInsensitiveRegex =
@@ -682,7 +683,7 @@ async function fetchNormativeVocabulary(
           "(" +
             [...caseInsensitiveWords].sort((a, b) => b.length - a.length).map(escape).join("|") +
             ")",
-          "i",
+          "gi",
         )
       : null;
 
@@ -1723,13 +1724,38 @@ async function runChallengeAction(
       canonConstraints.push({ citation, quote: excerpt });
 
       // Governance-driven tension detection
-      if (vocab.caseSensitiveRegex) {
-        const m = excerpt.match(vocab.caseSensitiveRegex);
-        if (m) {
+      //
+      // `.match()` with a combined alternation returns the *leftmost* hit, so
+      // "You MUST do X and MUST NOT do Y" would resolve to "MUST" (requirement)
+      // even though a prohibition is present later in the excerpt. Collect all
+      // matches via `matchAll` and prefer a prohibition over any other
+      // directive type, falling back to the leftmost match otherwise. This
+      // preserves the prior two-test priority (MUST NOT before MUST) without
+      // coupling to a hard-coded vocabulary.
+      const pickStrongest = (
+        matches: IterableIterator<RegExpMatchArray>,
+        lookup: (phrase: string) => string | undefined,
+      ): { phrase: string; dtype: string } | null => {
+        let first: { phrase: string; dtype: string } | null = null;
+        let prohibition: { phrase: string; dtype: string } | null = null;
+        for (const m of matches) {
           const phrase = m[1];
+          const dtype = lookup(phrase) || "directive";
+          if (!first) first = { phrase, dtype };
+          if (!prohibition && dtype === "prohibition") prohibition = { phrase, dtype };
+        }
+        return prohibition || first;
+      };
+
+      if (vocab.caseSensitiveRegex) {
+        const hit = pickStrongest(
+          excerpt.matchAll(vocab.caseSensitiveRegex),
+          (p) => vocab.directiveTypes.get(p),
+        );
+        if (hit) {
           tensions.push({
-            type: vocab.directiveTypes.get(phrase) || "directive",
-            message: `Canon ${vocab.directiveTypes.get(phrase) || "directive"} (${phrase}) found in ${entry.path}`,
+            type: hit.dtype,
+            message: `Canon ${hit.dtype} (${hit.phrase}) found in ${entry.path}`,
             citation,
             quote: excerpt,
           });
@@ -1737,16 +1763,14 @@ async function runChallengeAction(
         }
       }
       if (vocab.caseInsensitiveRegex) {
-        const m = excerpt.match(vocab.caseInsensitiveRegex);
-        if (m) {
-          const phrase = m[1];
-          const dtype =
-            vocab.directiveTypes.get(phrase) ||
-            vocab.directiveTypes.get(phrase.toLowerCase()) ||
-            "load-bearing-claim";
+        const hit = pickStrongest(
+          excerpt.matchAll(vocab.caseInsensitiveRegex),
+          (p) => vocab.directiveTypes.get(p) || vocab.directiveTypes.get(p.toLowerCase()) || "load-bearing-claim",
+        );
+        if (hit) {
           tensions.push({
-            type: dtype,
-            message: `Canon ${dtype} (${phrase}) found in ${entry.path}`,
+            type: hit.dtype,
+            message: `Canon ${hit.dtype} (${hit.phrase}) found in ${entry.path}`,
             citation,
             quote: excerpt,
           });
