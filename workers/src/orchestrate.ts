@@ -1695,9 +1695,12 @@ async function runChallengeAction(
   // Apply stakes calibration: filter questions by tier, evaluate prerequisites by strictness,
   // surface reframings by the surfacing rule. When modeConfig is absent (no calibration
   // article or mode not in table), surface everything — "uniformly loud" fallback.
+  // Note: the questionTiers.length === 0 case is impossible here because the
+  // SUPPRESSED early-return above already handled it. We branch only on
+  // modeConfig presence and tier-membership.
   const surfacedQuestions: string[] = [];
   for (const q of questionMap.values()) {
-    if (!modeConfig || modeConfig.questionTiers.length === 0 || modeConfig.questionTiers.includes(q.tier)) {
+    if (!modeConfig || modeConfig.questionTiers.includes(q.tier)) {
       surfacedQuestions.push(q.question);
     }
   }
@@ -1721,7 +1724,14 @@ async function runChallengeAction(
     allReframings.push(...typeReframings);
   }
   let surfacedReframings: string[] = [];
-  if (surfacing === "none") {
+  // Same defensive shape as the tiersRaw "none" check in fetchStakesCalibration.
+  // The cell may be "none" or "none (parenthetical reason)" — both mean suppress
+  // all reframings. Strict equality would let the parenthetical fall through to
+  // the "all" branch and silently surface every reframing for a mode that opted
+  // out of them.
+  const surfaceNone =
+    surfacing === "none" || surfacing.startsWith("none ") || surfacing.startsWith("none(");
+  if (surfaceNone) {
     surfacedReframings = [];
   } else if (
     surfacing.includes("first 1") ||
