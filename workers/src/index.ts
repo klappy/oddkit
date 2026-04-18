@@ -42,6 +42,15 @@ const BUILD_VERSION = pkg.version;
 function parseSelfReportHeadersTable(markdown: string): Record<string, string> | null {
   // Target section: "### Self-Report Fields" — grab the table that follows.
   // Stop at the next `###` or `##` heading, whichever comes first.
+  //
+  // Expected table schema (governed by canon/constraints/telemetry-governance):
+  //   | Field | Header | Source | Description |
+  //   cols[0]  cols[1]  cols[2]  cols[3]
+  //
+  // We key on the Header (col 1, with backticks stripped) and use the
+  // Description (col 3) as the value. The parser is deliberately permissive
+  // on whitespace and fails closed to null so the caller falls back to the
+  // minimal baseline rather than hiding the degradation.
   const section = markdown.match(
     /###\s+Self-Report Fields[^\n]*\n([\s\S]*?)(?=\n###|\n##|$)/,
   );
@@ -51,13 +60,14 @@ function parseSelfReportHeadersTable(markdown: string): Record<string, string> |
   for (const raw of section[1].split("\n")) {
     if (!raw.includes("|")) continue;
     const cols = parseTableRow(raw);
-    // Expected layout: | Field | Header | Source |
+    // Need at least 4 cols (Field, Header, Source, Description).
     // Skip header row, separator row, and any malformed row.
-    if (cols.length < 2) continue;
-    const fieldDescription = cols[0];
+    if (cols.length < 4) continue;
     const headerName = cols[1].replace(/`/g, "").trim();
     if (!headerName.startsWith("x-oddkit-")) continue; // skip header/separator
-    headers[headerName] = fieldDescription;
+    const description = cols[3].trim();
+    if (!description) continue;
+    headers[headerName] = description;
   }
 
   return Object.keys(headers).length > 0 ? headers : null;
