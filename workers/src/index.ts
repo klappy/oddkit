@@ -22,6 +22,7 @@ import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { RequestTracer } from "./tracing";
 import { parseConsumerLabel } from "./telemetry";
 import { renderNotFoundPage } from "./not-found-ui";
+import { parseTableRow } from "./markdown-utils";
 import pkg from "../package.json";
 
 export type { Env };
@@ -29,7 +30,7 @@ export type { Env };
 const BUILD_VERSION = pkg.version;
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Canon-table parsing helper (local copy — mirrors orchestrate.ts parseTableRow).
+// Canon-table parsing helper.
 //
 // parseSelfReportHeadersTable extracts the self-report header contract from
 // canon/constraints/telemetry-governance.md. The table format is governed by
@@ -37,13 +38,6 @@ const BUILD_VERSION = pkg.version;
 // backticks around header name) and fails closed to null so the caller can
 // fall back to the minimal baseline without hiding the degradation.
 // ──────────────────────────────────────────────────────────────────────────────
-
-function parseTableRow(row: string): string[] {
-  const parts = row.split("|");
-  if (parts.length > 0 && parts[0].trim() === "") parts.shift();
-  if (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
-  return parts.map((c) => c.trim());
-}
 
 function parseSelfReportHeadersTable(markdown: string): Record<string, string> | null {
   // Target section: "### Self-Report Fields" — grab the table that follows.
