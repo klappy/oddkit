@@ -18,6 +18,7 @@ import {
   type SectionResult,
 } from "./zip-baseline-fetcher";
 import { buildBM25Index, searchBM25, type BM25Index } from "./bm25";
+import { parseTableRow } from "./markdown-utils";
 import type { RequestTracer } from "./tracing";
 import pkg from "../package.json";
 
@@ -152,27 +153,6 @@ export interface OrchestrateOptions {
   action?: string;
   env: Env;
   canonUrl?: string;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Markdown table helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parse a single markdown table row into trimmed cell values, preserving
- * legitimately-empty middle cells. Only the leading and trailing empty strings
- * produced by splitting a `| a | b |`-style row are stripped — a prior
- * `.filter(c => c.length > 0)` approach also dropped empty interior cells,
- * which silently collapsed the column count and caused `cols.length >= N`
- * guards to misfire (e.g. a voice-dump row with an empty tiers cell).
- */
-function parseTableRow(row: string): string[] {
-  const parts = row.split("|");
-  // Strip the leading empty produced by a leading `|`, if present
-  if (parts.length > 0 && parts[0].trim() === "") parts.shift();
-  // Strip the trailing empty produced by a trailing `|`, if present
-  if (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
-  return parts.map((c) => c.trim());
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
