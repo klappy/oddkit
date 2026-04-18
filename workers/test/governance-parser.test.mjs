@@ -36,6 +36,7 @@ const ARTICLE_PATHS = {
   basePrerequisites: "odd/challenge/base-prerequisites.md",
   normativeVocabulary: "odd/challenge/normative-vocabulary.md",
   stakesCalibration: "odd/challenge/stakes-calibration.md",
+  telemetryGovernance: "canon/constraints/telemetry-governance.md",
 };
 
 async function fetchArticle(path) {
@@ -338,6 +339,47 @@ async function run() {
   ok("voice-dump has empty tiers (suppression invariant)", calib.get("voice-dump")?.tiers.length === 0);
   ok("planning has baseline+elevated", calib.get("planning")?.tiers.length === 2);
   ok("execution has all three tiers", calib.get("execution")?.tiers.length === 3);
+
+  console.log("\n─── Test 8: Self-report headers table (telemetry_policy canary) ───");
+  // Mirrors parseSelfReportHeadersTable in workers/src/index.ts. If either
+  // parser changes, both must change — tracked as a known duplication per
+  // PR #106 discussion.
+  const parseHeaders = (md) => {
+    const section = md.match(/###\s+Self-Report Fields[^\n]*\n([\s\S]*?)(?=\n###|\n##|$)/);
+    if (!section) return null;
+    const out = {};
+    for (const raw of section[1].split("\n")) {
+      if (!raw.includes("|")) continue;
+      const parts = raw.split("|");
+      if (parts.length > 0 && parts[0].trim() === "") parts.shift();
+      if (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
+      const cols = parts.map((c) => c.trim());
+      if (cols.length < 4) continue;
+      const headerName = cols[1].replace(/`/g, "").trim();
+      if (!headerName.startsWith("x-oddkit-")) continue;
+      const description = cols[3].trim();
+      if (!description) continue;
+      out[headerName] = description;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  };
+
+  const headers = parseHeaders(articles.telemetryGovernance);
+  ok("self-report headers parse", headers !== null);
+  ok("eight headers extracted", headers && Object.keys(headers).length === 8, `got ${headers ? Object.keys(headers).length : 0}`);
+  ok("x-oddkit-client present", headers && typeof headers["x-oddkit-client"] === "string" && headers["x-oddkit-client"].length > 0);
+  ok("x-oddkit-surface present", headers && typeof headers["x-oddkit-surface"] === "string" && headers["x-oddkit-surface"].length > 0);
+  ok("x-oddkit-capabilities present", headers && typeof headers["x-oddkit-capabilities"] === "string" && headers["x-oddkit-capabilities"].length > 0);
+  ok(
+    "descriptions are non-trivial (canon Description column, not Field label)",
+    headers && Object.values(headers).every((d) => d.length > 15),
+    `shortest: ${headers ? Math.min(...Object.values(headers).map((d) => d.length)) : 0} chars`,
+  );
+
+  // Degradation: missing section → null
+  ok("no section returns null", parseHeaders("# No section here\n") === null);
+  // Degradation: section present but no table rows → null
+  ok("empty section returns null", parseHeaders("### Self-Report Fields\n\n(no table)\n") === null);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
