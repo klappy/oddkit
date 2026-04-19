@@ -11,7 +11,7 @@
  *   blob3: tool_name      — oddkit action name (e.g. "orient", "search")
  *   blob4: consumer_label — best-effort identity (e.g. "Claude-User", "unknown")
  *   blob5: consumer_source — how label was resolved (e.g. "user-agent")
- *   blob6: canon_url      — which repo is being served
+ *   blob6: knowledge_base_url — which repo is being served
  *   blob7: document_uri   — for get calls, the URI requested
  *   blob8: worker_version — oddkit version string
  *   blob9: cache_tier    — which storage tier served the index (E0008.1)
@@ -131,7 +131,7 @@ export function parseToolCall(payload: unknown): {
   method: string;
   toolName: string;
   documentUri: string;
-  canonUrl: string;
+  knowledgeBaseUrl: string;
 } | null {
   if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
@@ -144,7 +144,7 @@ export function parseToolCall(payload: unknown): {
 
   const params = msg.params;
   if (typeof params !== "object" || params === null) {
-    return { method, toolName: "", documentUri: "", canonUrl: "" };
+    return { method, toolName: "", documentUri: "", knowledgeBaseUrl: "" };
   }
 
   const p = params as Record<string, unknown>;
@@ -152,7 +152,7 @@ export function parseToolCall(payload: unknown): {
 
   // Extract details from tool arguments
   let documentUri = "";
-  let canonUrl = "";
+  let knowledgeBaseUrl = "";
   const args = p.arguments;
   if (typeof args === "object" && args !== null) {
     const a = args as Record<string, unknown>;
@@ -160,15 +160,13 @@ export function parseToolCall(payload: unknown): {
     if (typeof a.input === "string" && a.input.includes("://")) {
       documentUri = a.input;
     }
-    // Extract knowledge base URL from tool arguments (accept legacy canon_url alias)
+    // Extract knowledge base URL from tool arguments
     if (typeof a.knowledge_base_url === "string" && a.knowledge_base_url) {
-      canonUrl = a.knowledge_base_url;
-    } else if (typeof a.canon_url === "string" && a.canon_url) {
-      canonUrl = a.canon_url;
+      knowledgeBaseUrl = a.knowledge_base_url;
     }
   }
 
-  return { method, toolName, documentUri, canonUrl };
+  return { method, toolName, documentUri, knowledgeBaseUrl };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -215,7 +213,7 @@ export function recordTelemetry(request: Request, env: Env, durationMs: number, 
             toolName,
             consumerLabel,
             consumerSource,
-            toolCall?.canonUrl || env.BASELINE_URL || "",
+            toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
             documentUri,
             env.ODDKIT_VERSION || "unknown",
             cacheTier || "none", // blob9: E0008.1 x-ray cache tier

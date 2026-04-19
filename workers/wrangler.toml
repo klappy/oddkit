@@ -10,7 +10,7 @@ keep_vars = true
 
 # Environment variables
 [vars]
-BASELINE_URL = "https://raw.githubusercontent.com/klappy/klappy.dev/main"
+DEFAULT_KNOWLEDGE_BASE_URL = "https://raw.githubusercontent.com/klappy/klappy.dev/main"
 # ODDKIT_VERSION injected at deploy time from root package.json
 
 # OPENAI_API_KEY — set via Cloudflare dashboard: Workers > oddkit > Settings > Variables and Secrets

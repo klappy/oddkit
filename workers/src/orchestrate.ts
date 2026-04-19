@@ -1,7 +1,7 @@
 /**
  * Orchestration logic for oddkit MCP Worker
  *
- * Uses ZipBaselineFetcher for tiered caching of baseline repos.
+ * Uses KnowledgeBaseFetcher for tiered caching of baseline repos.
  * Supports canon repo overrides with klappy.dev fallback.
  *
  * v2: Unified handler with action routing, BM25 search, state threading,
@@ -9,7 +9,7 @@
  */
 
 import {
-  ZipBaselineFetcher,
+  KnowledgeBaseFetcher,
   extractSection,
   parseFullFrontmatter,
   type Env,
@@ -44,7 +44,7 @@ export interface OddkitEnvelope {
   assistant_text: string;
   debug?: {
     baseline_url?: string;
-    canon_url?: string;
+    knowledge_base_url?: string;
     canon_commit?: string;
     generated_at?: string;
     search_index_size?: number;
@@ -74,7 +74,7 @@ interface ParsedArtifact {
 }
 
 let cachedEncodingTypes: EncodingTypeDef[] | null = null;
-let cachedEncodingTypesCanonUrl: string | undefined = undefined;
+let cachedEncodingTypesKnowledgeBaseUrl: string | undefined = undefined;
 
 // Governance-driven challenge types (E0008 — mirrors encode pattern from PR #96)
 interface ChallengeTypeDef {
@@ -118,22 +118,22 @@ interface StakesCalibration {
 }
 
 let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
-let cachedChallengeTypesCanonUrl: string | undefined = undefined;
+let cachedChallengeTypesKnowledgeBaseUrl: string | undefined = undefined;
 let cachedChallengeTypeIndex: BM25Index | null = null;
-let cachedChallengeTypeIndexCanonUrl: string | undefined = undefined;
+let cachedChallengeTypeIndexKnowledgeBaseUrl: string | undefined = undefined;
 let cachedBasePrerequisites: BasePrerequisite[] | null = null;
-let cachedBasePrerequisitesCanonUrl: string | undefined = undefined;
+let cachedBasePrerequisitesKnowledgeBaseUrl: string | undefined = undefined;
 let cachedNormativeVocabulary: NormativeVocabulary | null = null;
-let cachedNormativeVocabularyCanonUrl: string | undefined = undefined;
+let cachedNormativeVocabularyKnowledgeBaseUrl: string | undefined = undefined;
 let cachedStakesCalibration: StakesCalibration | null = null;
-let cachedStakesCalibrationCanonUrl: string | undefined = undefined;
+let cachedStakesCalibrationKnowledgeBaseUrl: string | undefined = undefined;
 
 export interface UnifiedParams {
   action: string;
   input: string;
   context?: string;
   mode?: string;
-  canon_url?: string;
+  knowledge_base_url?: string;
   include_metadata?: boolean;
   section?: string;
   sort_by?: string;
@@ -152,7 +152,7 @@ export interface OrchestrateOptions {
   message: string;
   action?: string;
   env: Env;
-  canonUrl?: string;
+  knowledgeBaseUrl?: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -314,12 +314,12 @@ function detectTransition(input: string): { from: string; to: string } {
 
 // Discover encoding types from canon governance docs
 async function discoverEncodingTypes(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<EncodingTypeDef[]> {
-  if (cachedEncodingTypes && cachedEncodingTypesCanonUrl === canonUrl) return cachedEncodingTypes;
+  if (cachedEncodingTypes && cachedEncodingTypesKnowledgeBaseUrl === knowledgeBaseUrl) return cachedEncodingTypes;
 
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const typeArticles = index.entries.filter(
     (entry: IndexEntry) => entry.tags?.includes("encoding-type") && entry.path.includes("encoding-types/"),
   );
@@ -327,7 +327,7 @@ async function discoverEncodingTypes(
   const types: EncodingTypeDef[] = [];
   for (const article of typeArticles) {
     try {
-      const content = await fetcher.getFile(article.path, canonUrl);
+      const content = await fetcher.getFile(article.path, knowledgeBaseUrl);
       if (!content) continue;
 
       const identityMatch = content.match(/\|\s*Letter\s*\|\s*([A-Z])\s*\|/);
@@ -390,7 +390,7 @@ async function discoverEncodingTypes(
   }
 
   cachedEncodingTypes = types;
-  cachedEncodingTypesCanonUrl = canonUrl;
+  cachedEncodingTypesKnowledgeBaseUrl = knowledgeBaseUrl;
   return types;
 }
 
@@ -401,12 +401,12 @@ async function discoverEncodingTypes(
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function discoverChallengeTypes(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<ChallengeTypeDef[]> {
-  if (cachedChallengeTypes && cachedChallengeTypesCanonUrl === canonUrl) return cachedChallengeTypes;
+  if (cachedChallengeTypes && cachedChallengeTypesKnowledgeBaseUrl === knowledgeBaseUrl) return cachedChallengeTypes;
 
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const typeArticles = index.entries.filter(
     (entry: IndexEntry) =>
       entry.tags?.includes("challenge-type") && entry.path.includes("challenge-types/"),
@@ -415,7 +415,7 @@ async function discoverChallengeTypes(
   const types: ChallengeTypeDef[] = [];
   for (const article of typeArticles) {
     try {
-      const content = await fetcher.getFile(article.path, canonUrl);
+      const content = await fetcher.getFile(article.path, knowledgeBaseUrl);
       if (!content) continue;
 
       // Slug from ## Type Identity table
@@ -524,24 +524,24 @@ async function discoverChallengeTypes(
   });
 
   cachedChallengeTypes = types;
-  cachedChallengeTypesCanonUrl = canonUrl;
+  cachedChallengeTypesKnowledgeBaseUrl = knowledgeBaseUrl;
   // Index build deferred — needs vocab.stopWords from fetchNormativeVocabulary,
   // assembled lazily by getOrBuildChallengeTypeIndex below. Both types and the
-  // index are deterministic functions of canonUrl, so caching by canonUrl
+  // index are deterministic functions of knowledgeBaseUrl, so caching by knowledgeBaseUrl
   // remains safe.
   return types;
 }
 
-/** Lazily build (or return cached) per-canonUrl BM25 index over the per-type
+/** Lazily build (or return cached) per-knowledgeBaseUrl BM25 index over the per-type
  *  detection text, using governance-sourced stop words from normative-vocabulary.md.
- *  The cache is keyed on canonUrl so different canon sources do not contaminate
+ *  The cache is keyed on knowledgeBaseUrl so different canon sources do not contaminate
  *  each other's indexes. */
 function getOrBuildChallengeTypeIndex(
   types: ChallengeTypeDef[],
   vocab: NormativeVocabulary,
-  canonUrl?: string,
+  knowledgeBaseUrl?: string,
 ): BM25Index {
-  if (cachedChallengeTypeIndex && cachedChallengeTypeIndexCanonUrl === canonUrl) {
+  if (cachedChallengeTypeIndex && cachedChallengeTypeIndexKnowledgeBaseUrl === knowledgeBaseUrl) {
     return cachedChallengeTypeIndex;
   }
   // Build BM25 index over per-type detection text (triggers + blockquote).
@@ -552,20 +552,20 @@ function getOrBuildChallengeTypeIndex(
   const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
   const bm25Index = buildBM25Index(bm25Docs, vocab.stopWords);
   cachedChallengeTypeIndex = bm25Index;
-  cachedChallengeTypeIndexCanonUrl = canonUrl;
+  cachedChallengeTypeIndexKnowledgeBaseUrl = knowledgeBaseUrl;
   return bm25Index;
 }
 
 async function fetchBasePrerequisites(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<BasePrerequisite[]> {
-  if (cachedBasePrerequisites && cachedBasePrerequisitesCanonUrl === canonUrl)
+  if (cachedBasePrerequisites && cachedBasePrerequisitesKnowledgeBaseUrl === knowledgeBaseUrl)
     return cachedBasePrerequisites;
 
   const result: BasePrerequisite[] = [];
   try {
-    const content = await fetcher.getFile("odd/challenge/base-prerequisites.md", canonUrl);
+    const content = await fetcher.getFile("odd/challenge/base-prerequisites.md", knowledgeBaseUrl);
     if (content) {
       const prereqSection = content.match(
         /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
@@ -588,15 +588,15 @@ async function fetchBasePrerequisites(
   }
 
   cachedBasePrerequisites = result;
-  cachedBasePrerequisitesCanonUrl = canonUrl;
+  cachedBasePrerequisitesKnowledgeBaseUrl = knowledgeBaseUrl;
   return result;
 }
 
 async function fetchNormativeVocabulary(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<NormativeVocabulary> {
-  if (cachedNormativeVocabulary && cachedNormativeVocabularyCanonUrl === canonUrl)
+  if (cachedNormativeVocabulary && cachedNormativeVocabularyKnowledgeBaseUrl === knowledgeBaseUrl)
     return cachedNormativeVocabulary;
 
   const caseSensitiveWords: string[] = [];
@@ -605,7 +605,7 @@ async function fetchNormativeVocabulary(
   const stopWords = new Set<string>();
 
   try {
-    const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", canonUrl);
+    const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", knowledgeBaseUrl);
     if (content) {
       // ── Surface 1: Normative Vocabulary (signal in canon quotes) ──
       // Two subsections under "## Normative Vocabulary": one keyed by "RFC 2119"
@@ -683,20 +683,20 @@ async function fetchNormativeVocabulary(
     stopWords,
   };
   cachedNormativeVocabulary = vocab;
-  cachedNormativeVocabularyCanonUrl = canonUrl;
+  cachedNormativeVocabularyKnowledgeBaseUrl = knowledgeBaseUrl;
   return vocab;
 }
 
 async function fetchStakesCalibration(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<StakesCalibration> {
-  if (cachedStakesCalibration && cachedStakesCalibrationCanonUrl === canonUrl)
+  if (cachedStakesCalibration && cachedStakesCalibrationKnowledgeBaseUrl === knowledgeBaseUrl)
     return cachedStakesCalibration;
 
   const byMode = new Map<string, StakesModeConfig>();
   try {
-    const content = await fetcher.getFile("odd/challenge/stakes-calibration.md", canonUrl);
+    const content = await fetcher.getFile("odd/challenge/stakes-calibration.md", knowledgeBaseUrl);
     if (content) {
       // Parse the Stakes Calibration table:
       // | Mode | Question tiers surfaced | Prerequisite strictness | Reframings surfaced |
@@ -730,7 +730,7 @@ async function fetchStakesCalibration(
   }
 
   cachedStakesCalibration = { byMode };
-  cachedStakesCalibrationCanonUrl = canonUrl;
+  cachedStakesCalibrationKnowledgeBaseUrl = knowledgeBaseUrl;
   return cachedStakesCalibration;
 }
 
@@ -860,13 +860,13 @@ function scoreEntries(entries: IndexEntry[], query: string): Array<IndexEntry & 
 
 async function runSearch(
   input: string,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
   includeMetadata?: boolean,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const bm25 = getBM25Index(index.entries);
   const results = searchBM25(bm25, input, 5);
 
@@ -899,7 +899,7 @@ async function runSearch(
       assistant_text: `Searched ${index.stats.total} documents but found no matches for "${input}". Try rephrasing or ask with action "catalog" to see available documentation.`,
       debug: {
         baseline_url: index.baseline_url,
-        canon_url: canonUrl,
+        knowledge_base_url: knowledgeBaseUrl,
         search_index_size: bm25.N,
         duration_ms: Date.now() - startMs,
         generated_at: new Date().toISOString(),
@@ -913,7 +913,7 @@ async function runSearch(
   // Fetch excerpts for top results
   const evidence: Array<{ quote: string; citation: string; source: string }> = [];
   for (const entry of hits.slice(0, 3)) {
-    const content = await fetcher.getFile(entry.path, canonUrl);
+    const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
     if (content) {
       contentCache.set(entry.path, content);
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
@@ -950,7 +950,7 @@ async function runSearch(
     };
     if (includeMetadata) {
       // Reuse cached content from evidence fetch, or fetch fresh if not cached
-      const fileContent = contentCache.get(h.path) ?? (await fetcher.getFile(h.path, canonUrl));
+      const fileContent = contentCache.get(h.path) ?? (await fetcher.getFile(h.path, knowledgeBaseUrl));
       if (fileContent) {
         const metadata = parseFullFrontmatter(fileContent);
         if (metadata) hit.metadata = metadata;
@@ -971,7 +971,7 @@ async function runSearch(
     assistant_text: assistantLines.join("\n").trim(),
     debug: {
       baseline_url: index.baseline_url,
-      canon_url: canonUrl,
+      knowledge_base_url: knowledgeBaseUrl,
       search_index_size: bm25.N,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
@@ -981,8 +981,8 @@ async function runSearch(
 
 async function runGet(
   input: string,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
   includeMetadata?: boolean,
   section?: string,
@@ -1004,7 +1004,7 @@ async function runGet(
     // Non-klappy URI (e.g., kb://sources/stringer-widening-the-table)
     // The index knows the real file path for each URI, including suffixes
     // like .surface.md or .full.md that can't be guessed from the URI alone.
-    const index = await fetcher.getIndex(canonUrl);
+    const index = await fetcher.getIndex(knowledgeBaseUrl);
     const entry = index.entries.find((e) => e.uri === input);
     if (entry) {
       path = entry.path;
@@ -1027,7 +1027,7 @@ async function runGet(
     }
   }
 
-  const content = await fetcher.getFile(path, canonUrl);
+  const content = await fetcher.getFile(path, knowledgeBaseUrl);
   const updatedState = state ? addCanonRefs(initState(state), [path]) : undefined;
 
   if (!content) {
@@ -1102,7 +1102,7 @@ function runVersion(env: Env): ActionResult {
     action: "version",
     result: {
       oddkit_version: env.ODDKIT_VERSION || pkg.version,
-      baseline_url: env.BASELINE_URL,
+      baseline_url: env.DEFAULT_KNOWLEDGE_BASE_URL,
     },
     assistant_text: `oddkit v${env.ODDKIT_VERSION || pkg.version}`,
     debug: { generated_at: new Date().toISOString() },
@@ -1110,30 +1110,30 @@ function runVersion(env: Env): ActionResult {
 }
 
 async function runCleanupStorage(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
 ): Promise<ActionResult> {
-  await fetcher.invalidateCache(canonUrl);
+  await fetcher.invalidateCache(knowledgeBaseUrl);
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
   cachedEncodingTypes = null;
-  cachedEncodingTypesCanonUrl = undefined;
+  cachedEncodingTypesKnowledgeBaseUrl = undefined;
   // E0008 — governance-driven challenge caches (mirror PR #96 fix)
   cachedChallengeTypes = null;
-  cachedChallengeTypesCanonUrl = undefined;
+  cachedChallengeTypesKnowledgeBaseUrl = undefined;
   cachedChallengeTypeIndex = null;
-  cachedChallengeTypeIndexCanonUrl = undefined;
+  cachedChallengeTypeIndexKnowledgeBaseUrl = undefined;
   cachedBasePrerequisites = null;
-  cachedBasePrerequisitesCanonUrl = undefined;
+  cachedBasePrerequisitesKnowledgeBaseUrl = undefined;
   cachedNormativeVocabulary = null;
-  cachedNormativeVocabularyCanonUrl = undefined;
+  cachedNormativeVocabularyKnowledgeBaseUrl = undefined;
   cachedStakesCalibration = null;
-  cachedStakesCalibrationCanonUrl = undefined;
+  cachedStakesCalibrationKnowledgeBaseUrl = undefined;
 
   return {
     action: "cleanup_storage",
-    result: { success: true, canon_url: canonUrl },
+    result: { success: true, knowledge_base_url: knowledgeBaseUrl },
     assistant_text:
       "Storage cleaned up. Note: this is storage hygiene only. " +
       "Content-addressed caching ensures correct content is served automatically " +
@@ -1145,12 +1145,12 @@ async function runCleanupStorage(
 // Kept for backward-compat: old librarian using scoreEntries
 async function runLibrarian(
   message: string,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   // Delegate to search (BM25) for better results
-  return runSearch(message, fetcher, canonUrl, state);
+  return runSearch(message, fetcher, knowledgeBaseUrl, state);
 }
 
 async function runValidate(message: string, state?: OddkitState): Promise<ActionResult> {
@@ -1198,13 +1198,13 @@ async function runValidate(message: string, state?: OddkitState): Promise<Action
 }
 
 async function runCatalog(
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
   options?: { sort_by?: string; limit?: number; offset?: number; filter_epoch?: string },
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const { sort_by, limit: rawLimit, offset: rawOffset, filter_epoch } = options || {};
   const effectiveLimit = Math.min(Math.max(rawLimit || 10, 1), 500);
   const effectiveOffset = Math.max(rawOffset || 0, 0);
@@ -1274,7 +1274,7 @@ async function runCatalog(
     `ODD Documentation Catalog`,
     ``,
     `Total: ${index.stats.total} docs (${index.stats.canon} canon, ${index.stats.baseline} baseline)`,
-    canonUrl ? `Canon override: ${canonUrl}` : "",
+    knowledgeBaseUrl ? `Canon override: ${knowledgeBaseUrl}` : "",
     ``,
     `Start here:`,
     ...startHere.map((e) => `- \`${e.path}\` — ${e.title}`),
@@ -1329,7 +1329,7 @@ async function runCatalog(
     state: state ? initState(state) : undefined,
     assistant_text: assistantText,
     debug: {
-      canon_url: canonUrl,
+      knowledge_base_url: knowledgeBaseUrl,
       baseline_url: index.baseline_url,
       generated_at: index.generated_at,
       duration_ms: Date.now() - startMs,
@@ -1339,12 +1339,12 @@ async function runCatalog(
 
 async function runPreflight(
   message: string,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const topic = message.replace(/^preflight:\s*/i, "").trim();
   const results = scoreEntries(index.entries, topic).slice(0, 5);
 
@@ -1386,7 +1386,7 @@ async function runPreflight(
     assistant_text: assistantText,
     debug: {
       docs_considered: index.entries.length,
-      canon_url: canonUrl,
+      knowledge_base_url: knowledgeBaseUrl,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
@@ -1423,19 +1423,19 @@ function extractCreedFromContent(content: string): string[] | null {
 
 async function runOrientAction(
   input: string,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
   const { mode, confidence } = detectMode(input);
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const results = scoreEntries(index.entries, input).slice(0, 3);
 
   // Read creed from baseline (always included in orient response)
   let creed: string[] | null = null;
   try {
-    const orientContent = await fetcher.getFile("canon/values/orientation.md", canonUrl);
+    const orientContent = await fetcher.getFile("canon/values/orientation.md", knowledgeBaseUrl);
     if (orientContent) {
       creed = extractCreedFromContent(orientContent);
     }
@@ -1445,7 +1445,7 @@ async function runOrientAction(
 
   const canonRefs: Array<{ path: string; quote: string }> = [];
   for (const entry of results) {
-    const content = await fetcher.getFile(entry.path, canonUrl);
+    const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
     if (content) {
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
       const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
@@ -1567,8 +1567,8 @@ function pickStrongestDirective(
 async function runChallengeAction(
   input: string,
   modeHint: string | undefined,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
@@ -1576,10 +1576,10 @@ async function runChallengeAction(
 
   // Load governance in parallel
   const [types, basePrereqs, vocab, calibration] = await Promise.all([
-    discoverChallengeTypes(fetcher, canonUrl),
-    fetchBasePrerequisites(fetcher, canonUrl),
-    fetchNormativeVocabulary(fetcher, canonUrl),
-    fetchStakesCalibration(fetcher, canonUrl),
+    discoverChallengeTypes(fetcher, knowledgeBaseUrl),
+    fetchBasePrerequisites(fetcher, knowledgeBaseUrl),
+    fetchNormativeVocabulary(fetcher, knowledgeBaseUrl),
+    fetchStakesCalibration(fetcher, knowledgeBaseUrl),
   ]);
 
   const modeConfig = calibration.byMode.get(mode);
@@ -1593,7 +1593,7 @@ async function runChallengeAction(
   // fired without surfacing the pressure-test questions.
   // Stop words come from `## Detection Noise` in normative-vocabulary.md
   // (governance), not a hardcoded constant in this file.
-  const typeIndex = getOrBuildChallengeTypeIndex(types, vocab, canonUrl);
+  const typeIndex = getOrBuildChallengeTypeIndex(types, vocab, knowledgeBaseUrl);
   const matchedTypes: ChallengeTypeDef[] = [];
   const hits = searchBM25(typeIndex, input, types.length);
   const typeBySlug = new Map(types.map((t) => [t.slug, t]));
@@ -1729,13 +1729,13 @@ async function runChallengeAction(
   const blockUntilAddressed = surfacing.includes("block-until-addressed");
 
   // Retrieve canon quotes and detect tensions via governance-driven vocabulary
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const results = scoreEntries(index.entries, `constraints challenges risks ${input}`).slice(0, 4);
 
   const canonConstraints: Array<{ citation: string; quote: string }> = [];
   const tensions: Array<{ type: string; message: string; citation?: string; quote?: string }> = [];
   for (const entry of results) {
-    const content = await fetcher.getFile(entry.path, canonUrl);
+    const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
     if (content) {
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
       const lines = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
@@ -1879,8 +1879,8 @@ function evaluatePrerequisiteCheck(input: string, check: string): boolean {
 async function runGateAction(
   input: string,
   context: string | undefined,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
@@ -1952,14 +1952,14 @@ async function runGateAction(
 
   const gateStatus = unmet.length > 0 ? "NOT_READY" : "PASS";
 
-  const index = await fetcher.getIndex(canonUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
   const results = scoreEntries(index.entries, `transition boundary deceleration ${input}`).slice(
     0,
     3,
   );
   const canonRefs: Array<{ path: string; quote: string }> = [];
   for (const entry of results) {
-    const content = await fetcher.getFile(entry.path, canonUrl);
+    const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
     if (content) {
       const stripped = content.replace(/^---[\s\S]*?---\n/, "");
       const lines2 = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
@@ -2025,8 +2025,8 @@ async function runGateAction(
 async function runEncodeAction(
   input: string,
   context: string | undefined,
-  fetcher: ZipBaselineFetcher,
-  canonUrl?: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
@@ -2035,7 +2035,7 @@ async function runEncodeAction(
   // Do not pass fullInput to parsers — that would create separate artifacts
   // for each context paragraph instead of letting context inform scoring.
 
-  const types = await discoverEncodingTypes(fetcher, canonUrl);
+  const types = await discoverEncodingTypes(fetcher, knowledgeBaseUrl);
   const structured = isStructuredInput(input);
   const artifacts = structured
     ? parseStructuredInput(input, types)
@@ -2124,7 +2124,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, canon_url, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
+  const { action, input, context, mode, knowledge_base_url, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -2136,7 +2136,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
     };
   }
 
-  const fetcher = new ZipBaselineFetcher(env, tracer);
+  const fetcher = new KnowledgeBaseFetcher(env, tracer);
 
   try {
     const actionStart = performance.now();
@@ -2144,40 +2144,40 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
 
     switch (action) {
       case "orient":
-        result = await runOrientAction(input, fetcher, canon_url, state);
+        result = await runOrientAction(input, fetcher, knowledge_base_url, state);
         break;
       case "challenge":
-        result = await runChallengeAction(input, mode, fetcher, canon_url, state);
+        result = await runChallengeAction(input, mode, fetcher, knowledge_base_url, state);
         break;
       case "gate":
-        result = await runGateAction(input, context, fetcher, canon_url, state);
+        result = await runGateAction(input, context, fetcher, knowledge_base_url, state);
         break;
       case "encode":
-        result = await runEncodeAction(input, context, fetcher, canon_url, state);
+        result = await runEncodeAction(input, context, fetcher, knowledge_base_url, state);
         break;
       case "search":
-        result = await runSearch(input, fetcher, canon_url, state, include_metadata);
+        result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata);
         break;
       case "get":
-        result = await runGet(input, fetcher, canon_url, state, include_metadata, section);
+        result = await runGet(input, fetcher, knowledge_base_url, state, include_metadata, section);
         break;
       case "catalog":
-        result = await runCatalog(fetcher, canon_url, state, { sort_by, limit, offset, filter_epoch });
+        result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch });
         break;
       case "validate":
         result = await runValidate(input, state);
         break;
       case "preflight":
-        result = await runPreflight(input, fetcher, canon_url, state);
+        result = await runPreflight(input, fetcher, knowledge_base_url, state);
         break;
       case "version":
         result = runVersion(env);
         break;
       case "cleanup_storage":
-        result = await runCleanupStorage(fetcher, canon_url);
+        result = await runCleanupStorage(fetcher, knowledge_base_url);
         break;
       default:
-        result = await runSearch(input, fetcher, canon_url, state);
+        result = await runSearch(input, fetcher, knowledge_base_url, state);
     }
 
     // Inject trace into debug envelope (E0008.1)
@@ -2199,8 +2199,8 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
       state: state ? initState(state) : undefined,
       assistant_text: `Error in ${action}: ${error instanceof Error ? error.message : "Unknown error"}`,
       debug: {
-        canon_url,
-        baseline_url: env.BASELINE_URL,
+        knowledge_base_url,
+        baseline_url: env.DEFAULT_KNOWLEDGE_BASE_URL,
         generated_at: new Date().toISOString(),
         ...(tracer ? { trace: tracer.toJSON() } : {}),
       },
@@ -2214,7 +2214,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
 // ──────────────────────────────────────────────────────────────────────────────
 
 export async function runOrchestrate(options: OrchestrateOptions): Promise<OddkitEnvelope> {
-  const { message, action: explicitAction, env, canonUrl } = options;
+  const { message, action: explicitAction, env, knowledgeBaseUrl } = options;
   const action = explicitAction || detectAction(message);
 
   // Map legacy action names
@@ -2227,7 +2227,7 @@ export async function runOrchestrate(options: OrchestrateOptions): Promise<Oddki
   return handleUnifiedAction({
     action: mappedAction,
     input: message,
-    canon_url: canonUrl,
+    knowledge_base_url: knowledgeBaseUrl,
     env,
   });
 }
@@ -2239,25 +2239,25 @@ export async function runOrchestrate(options: OrchestrateOptions): Promise<Oddki
 interface OrientOptions {
   input: string;
   env: Env;
-  canonUrl?: string;
+  knowledgeBaseUrl?: string;
 }
 interface ChallengeOptions {
   input: string;
   mode?: string;
   env: Env;
-  canonUrl?: string;
+  knowledgeBaseUrl?: string;
 }
 interface GateOptions {
   input: string;
   context?: string;
   env: Env;
-  canonUrl?: string;
+  knowledgeBaseUrl?: string;
 }
 interface EncodeOptions {
   input: string;
   context?: string;
   env: Env;
-  canonUrl?: string;
+  knowledgeBaseUrl?: string;
 }
 
 /** @deprecated Use handleUnifiedAction({ action: "orient", ... }) */
@@ -2265,7 +2265,7 @@ export async function runOrientActionCompat(options: OrientOptions): Promise<Odd
   return handleUnifiedAction({
     action: "orient",
     input: options.input,
-    canon_url: options.canonUrl,
+    knowledge_base_url: options.knowledgeBaseUrl,
     env: options.env,
   });
 }
@@ -2276,7 +2276,7 @@ export async function runChallengeActionCompat(options: ChallengeOptions): Promi
     action: "challenge",
     input: options.input,
     mode: options.mode,
-    canon_url: options.canonUrl,
+    knowledge_base_url: options.knowledgeBaseUrl,
     env: options.env,
   });
 }
@@ -2287,7 +2287,7 @@ export async function runGateActionCompat(options: GateOptions): Promise<OddkitE
     action: "gate",
     input: options.input,
     context: options.context,
-    canon_url: options.canonUrl,
+    knowledge_base_url: options.knowledgeBaseUrl,
     env: options.env,
   });
 }
@@ -2298,7 +2298,7 @@ export async function runEncodeActionCompat(options: EncodeOptions): Promise<Odd
     action: "encode",
     input: options.input,
     context: options.context,
-    canon_url: options.canonUrl,
+    knowledge_base_url: options.knowledgeBaseUrl,
     env: options.env,
   });
 }
