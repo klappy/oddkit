@@ -496,15 +496,17 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
 
   server.tool(
     "telemetry_policy",
-    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime. Response envelope declares governance_source (canon|baseline|minimal) per canon/constraints/core-governance-baseline.",
-    {},
+    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime. Response envelope declares governance_source (canon|baseline|minimal) per canon/constraints/core-governance-baseline. Accepts canon_url to read from an alternate canon repo.",
+    {
+      canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override. When provided, fetches canon/constraints/telemetry-governance.md from this repo instead of the oddkit-hosted default. Falls back to the minimal baseline if the file is missing."),
+    },
     {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
     },
-    async () => {
+    async ({ canon_url }) => {
       // Governance resolution per canon/constraints/core-governance-baseline:
       //   1. Live canon fetch (preferred) → governance_source: "canon"
       //   2. Minimal baseline (shipped in code) → governance_source: "minimal"
@@ -512,13 +514,14 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       // This canary refactor implements tiers 1 and 3 only. The bundled
       // baseline tier (2) and the build-time schema check arrive in follow-up
       // work; the manifest + baseline directory are not yet in place.
+      const startTime = Date.now();
       const fetcher = new ZipBaselineFetcher(env);
       let policyContent: string | null = null;
       let selfReportHeaders: Record<string, string> | null = null;
       let governanceSource: "canon" | "baseline" | "minimal" = "minimal";
 
       try {
-        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md");
+        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md", canon_url);
         if (content) {
           policyContent = content;
           const parsed = parseSelfReportHeadersTable(content);
@@ -551,6 +554,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
         }
       }
 
+      const headerCount = selfReportHeaders ? Object.keys(selfReportHeaders).length : 0;
+      const assistantText = `Telemetry policy loaded from ${governanceSource}. ${headerCount} self-report headers available.${canon_url ? ` (canon_url override: ${canon_url})` : ""}`;
+
       return {
         content: [{
           type: "text" as const,
@@ -563,6 +569,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
               self_report_headers: selfReportHeaders,
               generated_at: new Date().toISOString(),
             },
+            server_time: new Date().toISOString(),
+            assistant_text: assistantText,
+            debug: { duration_ms: Date.now() - startTime, canon_url: canon_url ?? null },
           }, null, 2),
         }],
       };
