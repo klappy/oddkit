@@ -129,6 +129,87 @@ async function run() {
     `got: ${policyOverride.debug?.knowledge_base_url}`,
   );
 
+  // Tool 4: oddkit_encode — canon-driven, DOLCHEO-aware. Full envelope +
+  // governance_source + DOLCHEO prefix-tag batch mode + Open facet + back-
+  // compat for unprefixed input.
+  console.log(`\n─── oddkit_encode: envelope + governance_source ───`);
+  const encodeSingle = await callTool("oddkit_encode", {
+    input: "decided to ship two-tier cascade because encoding-types are canon-only per the baseline contract",
+  });
+  expectFullEnvelope("oddkit_encode (single unprefixed)", encodeSingle);
+  expectGovernanceSource("oddkit_encode (single unprefixed, default KB)", encodeSingle, "knowledge_base");
+  ok(
+    "oddkit_encode: result.governance_uri points at DOLCHEO canon",
+    encodeSingle.result?.governance_uri === "klappy://canon/definitions/dolcheo-vocabulary",
+    `got: ${encodeSingle.result?.governance_uri}`,
+  );
+  ok(
+    "oddkit_encode: result.artifacts is an array",
+    Array.isArray(encodeSingle.result?.artifacts),
+    `got: ${typeof encodeSingle.result?.artifacts}`,
+  );
+  ok(
+    "oddkit_encode: single unprefixed input returns at least one artifact (backward compat)",
+    (encodeSingle.result?.artifacts?.length ?? 0) >= 1,
+    `got length: ${encodeSingle.result?.artifacts?.length}`,
+  );
+
+  console.log(`\n─── oddkit_encode: DOLCHEO batch-prefix parsing ───`);
+  const encodeBatch = await callTool("oddkit_encode", {
+    input: "[D] picked two-tier cascade because contract classifies encoding-types as canon-only\n\n[O] telemetry_policy canary already declares governance_source\n\n[L] recency of handoff ≠ authority over governing contract",
+  });
+  expectFullEnvelope("oddkit_encode (batch prefix)", encodeBatch);
+  ok(
+    "oddkit_encode: batch of 3 prefixed paragraphs returns exactly 3 artifacts",
+    encodeBatch.result?.artifacts?.length === 3,
+    `got length: ${encodeBatch.result?.artifacts?.length}`,
+  );
+  const batchTypes = (encodeBatch.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: artifact types match prefix order [D,O,L]",
+    JSON.stringify(batchTypes) === JSON.stringify(["D", "O", "L"]),
+    `got: ${JSON.stringify(batchTypes)}`,
+  );
+
+  console.log(`\n─── oddkit_encode: Open facet + priority band ───`);
+  const encodeOpen = await callTool("oddkit_encode", {
+    input: "[O-open P1] retrofit encode envelope to declare governance_source\n\n[O-open P2.1] correct handoff Tier 2/3 wording in follow-up PR",
+  });
+  expectFullEnvelope("oddkit_encode (O-open with bands)", encodeOpen);
+  const openArtifacts = encodeOpen.result?.artifacts ?? [];
+  ok(
+    "oddkit_encode: [O-open P1] sets facet='open' and priority_band='P1'",
+    openArtifacts[0]?.facet === "open" && openArtifacts[0]?.priority_band === "P1",
+    `got: facet=${openArtifacts[0]?.facet} band=${openArtifacts[0]?.priority_band}`,
+  );
+  ok(
+    "oddkit_encode: sub-band [O-open P2.1] is preserved",
+    openArtifacts[1]?.priority_band === "P2.1",
+    `got: ${openArtifacts[1]?.priority_band}`,
+  );
+  ok(
+    "oddkit_encode: O-open artifacts still use letter 'O' (facet, not separate letter)",
+    openArtifacts.every((a) => a.type === "O"),
+    `got: ${openArtifacts.map((a) => a.type).join(",")}`,
+  );
+
+  console.log(`\n─── oddkit_encode: knowledge_base_url override ───`);
+  const encodeOverride = await callTool("oddkit_encode", {
+    input: "[D] verify override is threaded through to debug envelope",
+    knowledge_base_url: "https://github.com/torvalds/linux",
+  });
+  expectFullEnvelope("oddkit_encode (knowledge_base_url override)", encodeOverride);
+  ok(
+    "oddkit_encode: debug.knowledge_base_url echoes the override",
+    encodeOverride.debug?.knowledge_base_url === "https://github.com/torvalds/linux",
+    `got: ${encodeOverride.debug?.knowledge_base_url}`,
+  );
+  ok(
+    "oddkit_encode: override pointing at non-canon repo falls through to 'minimal'",
+    encodeOverride.result?.governance_source === "minimal",
+    `got: ${encodeOverride.result?.governance_source}`,
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }

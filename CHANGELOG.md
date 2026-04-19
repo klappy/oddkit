@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-19
+
+### Added
+
+- **DOLCHEO batch-prefix input syntax for `oddkit_encode`** — Paragraph-split input now recognizes per-paragraph prefix tags: `[D]` (Decision), `[O]` (Observation closed), `[L]` (Learning), `[C]` (Constraint), `[H]` (Handoff), `[E]` (Encode), and `[O-open]` with optional priority band (`[O-open P1]`, `[O-open P2.1]`). Each tagged paragraph becomes its own artifact in the response array. See `canon/definitions/dolcheo-vocabulary` for the seven-dimension vocabulary. Unprefixed input still works unchanged (back-compat); TSV `LETTER\tTITLE\tBODY` input still works unchanged.
+
+- **`facet` and `priority_band` fields on encoded artifacts** — Artifacts produced from `[O-open ...]` prefixes carry `facet: "open"` and (when provided) `priority_band: "P1"` / `"P2.1"` so the Open-vs-closed distinction per DOLCHEO survives the envelope. Omitted for non-Open artifacts to keep legacy consumer output identical.
+
+- **`governance_source` on `oddkit_encode` envelope** — Encode response `result` now declares which tier served its vocabulary: `"knowledge_base"` (live canon read succeeded, canon-governed encoding-type docs parsed) or `"minimal"` (canon unreachable, six-letter DOLCHEO fallback in effect). Two-tier cascade, not three — per `canon/constraints/core-governance-baseline`, encoding-types are canon-only (not in the required-baseline manifest), so there is no `"bundled"` middle tier for this tool. The `governance_uri` field now also points at `klappy://canon/definitions/dolcheo-vocabulary` for callers that want the authoritative source.
+
+### Changed
+
+- **Minimal encoding-types fallback upgraded from 5-letter OLDC+H to 6-letter DOLCHEO** — When canon is unreachable, encode's built-in fallback now includes `E` (Encode) in addition to the original D/O/L/C/H. Open remains a facet of O per canon (surfaced via the prefix parser), not a seventh letter.
+
+- **`oddkit_encode` discovery dedups by letter** — Canon now contains separate per-type docs for closed Observation (`odd/encoding-types/observation.md`) and Open (`odd/encoding-types/open.md`), both claiming letter `O`. Discovery keeps the first and skips duplicates so the letter registry stays single-character-per-entry.
+
+- **`oddkit_encode` tool description rewritten** — Now references DOLCHEO, lists the seven dimensions, and documents the batch-prefix syntax.
+
+### Fixed
+
+- **0.17.0 release note correction: `governance_source` on encode and challenge.** The 0.17.0 entry for "`governance_source` on refactored tool envelopes" claimed challenge, encode, and telemetry_policy all declared the tier signal. In practice only telemetry_policy did at HEAD — challenge and encode's envelopes were silent. This release retrofits encode's envelope to declare it. Challenge remains to be fixed in the P1.3 sweep.
+
 ## [0.17.0] - 2026-04-19
 
 ### Added
