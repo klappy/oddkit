@@ -71,10 +71,17 @@ interface ParsedArtifact {
   fields: string[];
   title: string;
   body: string;
+  // DOLCHEO facet for Open items ([O-open] prefix). Canon-defined variant of
+  // letter O — closed Observation is the default; facet "open" marks forward-
+  // pointing unresolved threads. See canon/definitions/dolcheo-vocabulary.
+  facet?: string;
+  // Priority band for Open items, e.g. "P1", "P2.1". Sub-bands allowed.
+  priority_band?: string;
 }
 
 let cachedEncodingTypes: EncodingTypeDef[] | null = null;
 let cachedEncodingTypesKnowledgeBaseUrl: string | undefined = undefined;
+let cachedEncodingTypesSource: "knowledge_base" | "minimal" = "minimal";
 
 // Governance-driven challenge types (E0008 — mirrors encode pattern from PR #96)
 interface ChallengeTypeDef {
@@ -312,12 +319,23 @@ function detectTransition(input: string): { from: string; to: string } {
   return { from: "unknown", to: "unknown" };
 }
 
-// Discover encoding types from canon governance docs
+// Discover encoding types from canon governance docs.
+//
+// Governance resolution per canon/constraints/core-governance-baseline:
+//   1. Live knowledge-base fetch (preferred) → governance_source: "knowledge_base"
+//   2. Minimal hardcoded DOLCHEO fallback     → governance_source: "minimal"
+//
+// Encoding-types are documented as canon-only (not in the required-baseline
+// manifest), so encode has no "bundled" tier. Degradation is soft: the tool
+// still encodes, with generic-rather-than-type-specific quality scoring.
+// See canon/definitions/dolcheo-vocabulary for the letter registry contract.
 async function discoverEncodingTypes(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
-): Promise<EncodingTypeDef[]> {
-  if (cachedEncodingTypes && cachedEncodingTypesKnowledgeBaseUrl === knowledgeBaseUrl) return cachedEncodingTypes;
+): Promise<{ types: EncodingTypeDef[]; source: "knowledge_base" | "minimal" }> {
+  if (cachedEncodingTypes && cachedEncodingTypesKnowledgeBaseUrl === knowledgeBaseUrl) {
+    return { types: cachedEncodingTypes, source: cachedEncodingTypesSource };
+  }
 
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const typeArticles = index.entries.filter(
@@ -371,27 +389,48 @@ async function discoverEncodingTypes(
     }
   }
 
-  if (types.length === 0) {
-    // Fallback OLDC+H defaults when no governance docs in canon
-    const defaults: Array<[string, string, string[]]> = [
-      ["D", "Decision", ["decided", "decision", "chose", "committed to", "going with"]],
-      ["O", "Observation", ["observed", "noticed", "found", "measured", "detected"]],
-      ["L", "Learning", ["learned", "realized", "discovered", "turns out", "insight"]],
-      ["C", "Constraint", ["must", "must not", "never", "always", "constraint", "cannot"]],
-      ["H", "Handoff", ["next session", "next step", "todo", "follow up", "blocked by"]],
-    ];
-    for (const [letter, name, words] of defaults) {
-      types.push({
-        letter, name, triggerWords: words,
-        triggerRegex: new RegExp("\\b(" + words.join("|") + ")\\b", "i"),
-        qualityCriteria: [],
-      });
-    }
+  // Deduplicate by letter: per DOLCHEO, both closed Observation and Open share
+  // letter "O" (with Open distinguished by facet, not letter). If canon contains
+  // multiple `encoding-type`-tagged docs with the same letter (e.g. observation.md
+  // and open.md), keep the first one discovered — the letter registry is
+  // single-character-per-entry.
+  const deduped: EncodingTypeDef[] = [];
+  const seen = new Set<string>();
+  for (const t of types) {
+    if (seen.has(t.letter)) continue;
+    seen.add(t.letter);
+    deduped.push(t);
   }
 
-  cachedEncodingTypes = types;
+  let source: "knowledge_base" | "minimal";
+  let resolved: EncodingTypeDef[];
+  if (deduped.length > 0) {
+    resolved = deduped;
+    source = "knowledge_base";
+  } else {
+    // Minimal DOLCHEO fallback — six letters per canon/definitions/dolcheo-vocabulary.
+    // Open is a facet of O, not a separate letter; the prefix parser surfaces
+    // it via the [O-open] tag. Upgraded from the pre-DOLCHEO 5-letter OLDC+H.
+    const defaults: Array<[string, string, string[]]> = [
+      ["D", "Decision",    ["decided", "decision", "chose", "committed to", "going with"]],
+      ["O", "Observation", ["observed", "noticed", "found", "measured", "detected"]],
+      ["L", "Learning",    ["learned", "realized", "discovered", "turns out", "insight"]],
+      ["C", "Constraint",  ["must", "must not", "never", "always", "constraint", "cannot"]],
+      ["H", "Handoff",     ["next session", "next step", "todo", "follow up", "blocked by"]],
+      ["E", "Encode",      ["encoded", "captured", "crystallized", "persisted", "artifact"]],
+    ];
+    resolved = defaults.map(([letter, name, words]) => ({
+      letter, name, triggerWords: words,
+      triggerRegex: new RegExp("\\b(" + words.join("|") + ")\\b", "i"),
+      qualityCriteria: [],
+    }));
+    source = "minimal";
+  }
+
+  cachedEncodingTypes = resolved;
   cachedEncodingTypesKnowledgeBaseUrl = knowledgeBaseUrl;
-  return types;
+  cachedEncodingTypesSource = source;
+  return { types: resolved, source };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -737,6 +776,107 @@ async function fetchStakesCalibration(
 function isStructuredInput(input: string): boolean {
   const lines = input.split("\n").filter((l) => l.trim().length > 0);
   return lines.length > 0 && lines.every((l) => /^[A-Z]\t/.test(l));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// DOLCHEO prefix-tag batch parser
+//
+// Recognizes paragraph-split input where each paragraph optionally begins with
+// a DOLCHEO letter tag:
+//
+//   [D]        Decision
+//   [O]        Observation (closed)
+//   [L]        Learning
+//   [C]        Constraint
+//   [H]        Handoff
+//   [E]        Encode
+//   [O-open]           Open item (forward-pointing facet of O)
+//   [O-open P1]        Open item with priority band
+//   [O-open P2.1]      Open item with sub-band
+//
+// Per canon/definitions/dolcheo-vocabulary — both Os remain letter O; the
+// -open suffix is a facet, not a new letter. Paragraphs without a recognized
+// prefix are left for the unstructured trigger-word fallback.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Matches [LETTER] for any DOLCHEO letter (D/O/L/C/H/E), or [O-open] /
+// [O-open P1] / [O-open P2.1] at paragraph start. The -open facet and the
+// priority band are exclusive to the O (Observation) letter per
+// canon/definitions/dolcheo-vocabulary — they are not accepted on other
+// letters. Restricting the letter set to the six DOLCHEO letters also
+// prevents misrouting unstructured input that happens to begin a paragraph
+// with an unrelated bracketed letter (e.g. enumerated points like "[A] ...").
+//
+// Capture groups:
+//   1 — non-O DOLCHEO letter ([DLCHE]) when no facet/band applies
+//   2 — "O" letter when the O branch matches (with optional facet/band)
+//   3 — "open" facet (only on O)
+//   4 — priority band "P1" / "P2.1" (only on O)
+const PREFIX_TAG_REGEX = /^\[(?:([DLCHE])|(O)(?:-(open)(?:\s+(P\d+(?:\.\d+)?))?)?)\]\s*/;
+
+function isPrefixedBatchInput(input: string): boolean {
+  const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
+  if (paragraphs.length === 0) return false;
+  // At least one paragraph must carry a prefix tag. Mixed input (some tagged,
+  // some not) routes through this path — untagged paragraphs drop through to
+  // the existing trigger-word classification inside the parser.
+  return paragraphs.some((p) => PREFIX_TAG_REGEX.test(p));
+}
+
+function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
+  const typeMap = new Map(types.map((t) => [t.letter, t.name]));
+  const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
+  const artifacts: ParsedArtifact[] = [];
+
+  for (const para of paragraphs) {
+    const match = para.match(PREFIX_TAG_REGEX);
+    if (match) {
+      // match[1]: non-O letter ([DLCHE]); match[2]: "O" when O branch matched.
+      // Facet and band are only captured on the O branch — enforced by regex.
+      const letter = match[1] || match[2];
+      const facet = match[3]; // "open" | undefined (O only)
+      const band = match[4];  // "P1" | "P2.1" | undefined (O only)
+      const body = para.slice(match[0].length).trim();
+      const first = body.split(/[.!?\n]/)[0]?.trim() || body.slice(0, 60);
+      const title = first.split(/\s+/).length <= 12
+        ? first
+        : first.split(/\s+/).slice(0, 8).join(" ") + "...";
+      const baseName = typeMap.get(letter) || letter;
+      const typeName = facet === "open" ? `${baseName} (Open)` : baseName;
+      const artifact: ParsedArtifact = {
+        type: letter,
+        typeName,
+        fields: [letter, title, body],
+        title,
+        body,
+      };
+      if (facet) artifact.facet = facet;
+      if (band) artifact.priority_band = band;
+      artifacts.push(artifact);
+    } else {
+      // Untagged paragraph in a batch that contains tags: classify via trigger
+      // words like parseUnstructuredInput, but emit one artifact per paragraph
+      // (not one-per-match) to preserve the author's paragraph boundaries.
+      let matched: EncodingTypeDef | null = null;
+      for (const t of types) {
+        if (t.triggerRegex && t.triggerRegex.test(para)) { matched = t; break; }
+      }
+      const pick = matched ?? types[0] ?? { letter: "D", name: "Decision" };
+      const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
+      const title = first.split(/\s+/).length <= 12
+        ? first
+        : first.split(/\s+/).slice(0, 8).join(" ") + "...";
+      artifacts.push({
+        type: pick.letter,
+        typeName: pick.name,
+        fields: [pick.letter, title, para],
+        title,
+        body: para,
+      });
+    }
+  }
+
+  return artifacts;
 }
 
 function parseStructuredInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
@@ -1119,6 +1259,7 @@ async function runCleanupStorage(
   cachedBM25Entries = null;
   cachedEncodingTypes = null;
   cachedEncodingTypesKnowledgeBaseUrl = undefined;
+  cachedEncodingTypesSource = "minimal";
   // E0008 — governance-driven challenge caches (mirror PR #96 fix)
   cachedChallengeTypes = null;
   cachedChallengeTypesKnowledgeBaseUrl = undefined;
@@ -2035,9 +2176,17 @@ async function runEncodeAction(
   // Do not pass fullInput to parsers — that would create separate artifacts
   // for each context paragraph instead of letting context inform scoring.
 
-  const types = await discoverEncodingTypes(fetcher, knowledgeBaseUrl);
-  const structured = isStructuredInput(input);
-  const artifacts = structured
+  const { types, source: governanceSource } = await discoverEncodingTypes(fetcher, knowledgeBaseUrl);
+
+  // Detection cascade:
+  //   1. DOLCHEO prefix-tagged batch ([D] / [O] / [L] / [C] / [H] / [E] / [O-open]) — batch-mode canary
+  //   2. TSV-structured input (LETTER\tTITLE\tBODY per line) — legacy
+  //   3. Unstructured paragraphs — trigger-word classification
+  const prefixed = isPrefixedBatchInput(input);
+  const structured = !prefixed && isStructuredInput(input);
+  const artifacts = prefixed
+    ? parsePrefixedBatchInput(input, types)
+    : structured
     ? parseStructuredInput(input, types)
     : parseUnstructuredInput(input, types);
 
@@ -2050,24 +2199,38 @@ async function runEncodeAction(
     const criteria = typeDef ? typeDef.qualityCriteria : [];
     const scoringText = context ? `${a.body}\n${context}` : undefined;
     const quality = scoreArtifactQuality(a, criteria, scoringText);
-    return { title: a.title, type: a.type, typeName: a.typeName, content: a.body, fields: a.fields, quality };
+    const scored: {
+      title: string; type: string; typeName: string; content: string;
+      fields: string[]; quality: ReturnType<typeof scoreArtifactQuality>;
+      facet?: string; priority_band?: string;
+    } = {
+      title: a.title, type: a.type, typeName: a.typeName,
+      content: a.body, fields: a.fields, quality,
+    };
+    if (a.facet) scored.facet = a.facet;
+    if (a.priority_band) scored.priority_band = a.priority_band;
+    return scored;
   });
 
-  // Update state — track all encoded type letters
+  // Update state — track all encoded type letters (Open facet uses same letter)
   const updatedState = state ? initState(state) : undefined;
   if (updatedState) {
     for (const a of artifacts) {
-      updatedState.decisions_encoded.push(`${a.type}:${a.title}`);
+      const tag = a.facet === "open" ? `${a.type}-open:${a.title}` : `${a.type}:${a.title}`;
+      updatedState.decisions_encoded.push(tag);
     }
   }
 
   // Build assistant_text as markdown with per-artifact sections
   const lines: string[] = [
-    `## Encoded ${scoredArtifacts.length} artifact${scoredArtifacts.length !== 1 ? "s" : ""}`,
+    `## Encoded ${scoredArtifacts.length} artifact${scoredArtifacts.length !== 1 ? "s" : ""} (governance: ${governanceSource})`,
     "",
   ];
   for (const a of scoredArtifacts) {
-    lines.push(`### [${a.type}] ${a.typeName}: ${a.title}`);
+    const header = a.facet === "open"
+      ? `### [${a.type}-open${a.priority_band ? ` ${a.priority_band}` : ""}] ${a.typeName}: ${a.title}`
+      : `### [${a.type}] ${a.typeName}: ${a.title}`;
+    lines.push(header);
     lines.push(`**Quality:** ${a.quality.level} (${a.quality.score}/${a.quality.maxScore})`);
     lines.push("");
     lines.push(a.content);
@@ -2096,12 +2259,18 @@ async function runEncodeAction(
       status: "ENCODED",
       artifacts: scoredArtifacts,
       governance: types.map((t) => ({ letter: t.letter, name: t.name })),
+      governance_source: governanceSource,
+      governance_uri: "klappy://canon/definitions/dolcheo-vocabulary",
       persist_required: true,
       next_action: "Save these artifacts to storage. Encode does NOT persist.",
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
-    debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    debug: {
+      duration_ms: Date.now() - startMs,
+      generated_at: new Date().toISOString(),
+      knowledge_base_url: knowledgeBaseUrl,
+    },
   };
 }
 

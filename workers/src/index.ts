@@ -303,7 +303,7 @@ Use when:
     },
     {
       name: "oddkit_encode",
-      description: "Structure a decision, insight, or boundary as a durable record. IMPORTANT: This tool returns the structured artifact in the response — it does NOT persist or save it. The caller must save the output to storage. Standard artifact types: Observations (O), Learnings (L), Decisions (D), Constraints (C), Handoffs (H) — OLDC+H. Track OLDC+H continuously — encode what the user shared, encode what you did. Persist at natural breakpoints.",
+      description: "Structure decisions, insights, or boundaries as DOLCHEO artifacts (canon/definitions/dolcheo-vocabulary) — Decisions (D), Observations closed (O), Learnings (L), Constraints (C), Handoffs (H), Encodes (E), Opens (O-open, facet of O). IMPORTANT: does NOT persist — caller must save output to storage. Batch mode: paragraph-split input with optional prefix tags like '[D] body', '[O] body', '[O-open P1] body' returns a per-artifact array. Unprefixed input uses trigger-word classification (back-compat). Response envelope declares governance_source (knowledge_base|minimal) per canon/constraints/core-governance-baseline. Accepts knowledge_base_url to read the encoding-type vocabulary from an alternate knowledge base.",
       action: "encode",
       schema: {
         input: z.string().describe("A decision, insight, or boundary to capture."),
