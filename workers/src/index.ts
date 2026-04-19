@@ -217,7 +217,7 @@ Use when:
         "voice-dump", "drafting", "peer-review-ready",
         "canon-tier-2", "canon-tier-1", "published-essay",
       ]).optional().describe("Optional mode hint. Epistemic modes (exploration/planning/execution) or writing-lifecycle modes (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). Sourced from odd/challenge/stakes-calibration."),
-      canon_url: z.string().optional().describe("Optional GitHub repo URL for canon override."),
+      knowledge_base_url: z.string().optional().describe("Optional GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier rather than silently substituting from the default knowledge base."),
       include_metadata: z.boolean().optional().describe("When true, search/get responses include a metadata object with full parsed frontmatter. Default: false."),
       section: z.string().optional().describe("For action='get': extract only the named ## section from the document. Returns section content or available sections if not found."),
       sort_by: z.enum(["date", "path"]).optional().describe("For action='catalog': sort articles. 'date' returns newest first (requires frontmatter). 'path' returns all docs alphabetically, including undated."),
@@ -238,7 +238,7 @@ Use when:
         input: args.input,
         context: args.context,
         mode: args.mode,
-        canon_url: args.canon_url,
+        canon_url: args.knowledge_base_url,
         include_metadata: args.include_metadata,
         section: args.section,
         sort_by: args.sort_by,
@@ -271,7 +271,7 @@ Use when:
       action: "orient",
       schema: {
         input: z.string().describe("A goal, idea, or situation description to orient against."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -286,7 +286,7 @@ Use when:
           "voice-dump", "drafting", "peer-review-ready",
           "canon-tier-2", "canon-tier-1", "published-essay",
         ]).optional().describe("Mode for proportional challenge. Epistemic (exploration/planning/execution) or writing-lifecycle (voice-dump/drafting/peer-review-ready/canon-tier-2/canon-tier-1/published-essay). voice-dump suppresses all challenge output."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -297,7 +297,7 @@ Use when:
       schema: {
         input: z.string().describe("The proposed transition (e.g., 'ready to build', 'moving to planning')."),
         context: z.string().optional().describe("Optional context about what's been decided so far."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -308,7 +308,7 @@ Use when:
       schema: {
         input: z.string().describe("A decision, insight, or boundary to capture."),
         context: z.string().optional().describe("Optional supporting context."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -318,7 +318,7 @@ Use when:
       action: "search",
       schema: {
         input: z.string().describe("Natural language query or tags to search for."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
         include_metadata: z.boolean().optional().describe("When true, each hit includes a metadata object with full parsed frontmatter. Default: false."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -329,7 +329,7 @@ Use when:
       action: "get",
       schema: {
         input: z.string().describe("Canonical URI (e.g., klappy://canon/values/orientation)."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
         include_metadata: z.boolean().optional().describe("When true, response includes a metadata object with full parsed frontmatter. Default: false."),
         section: z.string().optional().describe("Extract only the named ## section from the document. Returns available sections if not found."),
       },
@@ -340,7 +340,7 @@ Use when:
       description: "Lists available documentation with categories, counts, and start-here suggestions. Supports temporal discovery: use sort_by='date' to get recent articles with full frontmatter metadata.",
       action: "catalog",
       schema: {
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
         sort_by: z.enum(["date", "path"]).optional().describe("Sort articles. 'date' returns newest first (requires frontmatter). 'path' returns all docs alphabetically, including undated."),
         limit: z.number().min(1).max(500).optional().describe("Max articles to return when sort_by is provided. Default: 10, max: 500."),
         offset: z.number().min(0).optional().describe("Skip this many articles before returning results. Use with limit for pagination. Default: 0."),
@@ -363,7 +363,7 @@ Use when:
       action: "preflight",
       schema: {
         input: z.string().describe("Description of what you're about to implement."),
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -372,7 +372,7 @@ Use when:
       description: "Returns oddkit version and the authoritative canon target (commit/mode).",
       action: "version",
       schema: {
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -381,7 +381,7 @@ Use when:
       description: "Storage hygiene: clears orphaned cached data. NOT required for correctness — content-addressed caching ensures fresh content is served automatically when the baseline changes.",
       action: "cleanup_storage",
       schema: {
-        canon_url: z.string().optional().describe("Optional: GitHub repo URL for canon override."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -399,7 +399,7 @@ Use when:
           input: (args.input as string) || "",
           context: args.context as string | undefined,
           mode: args.mode as string | undefined,
-          canon_url: args.canon_url as string | undefined,
+          canon_url: args.knowledge_base_url as string | undefined,
           include_metadata: args.include_metadata as boolean | undefined,
           section: args.section as string | undefined,
           sort_by: args.sort_by as string | undefined,
@@ -430,7 +430,7 @@ Schema:
   blob3  — tool_name       oddkit action (e.g. "orient", "search")
   blob4  — consumer_label  best-effort caller identity
   blob5  — consumer_source how label was resolved (e.g. "user-agent")
-  blob6  — canon_url       which repo baseline is being served
+  blob6  — knowledge_base_url       which knowledge base is being served
   blob7  — document_uri    for get calls, the klappy:// URI requested
   blob8  — worker_version  oddkit version string
   double1 — count          always 1
@@ -496,35 +496,46 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
 
   server.tool(
     "telemetry_policy",
-    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime. Response envelope declares governance_source (canon|baseline|minimal) per canon/constraints/core-governance-baseline.",
-    {},
+    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime. Response envelope declares governance_source (knowledge_base|bundled|minimal) per canon/constraints/core-governance-baseline. Accepts knowledge_base_url to read from an alternate knowledge base.",
+    {
+      knowledge_base_url: z.string().optional().describe("Optional GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier rather than silently substituting from the default knowledge base. When provided, fetches canon/constraints/telemetry-governance.md from this repo instead of the oddkit-hosted default. Falls back to the minimal baseline if the file is missing."),
+    },
     {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
     },
-    async () => {
+    async ({ knowledge_base_url }) => {
       // Governance resolution per canon/constraints/core-governance-baseline:
-      //   1. Live canon fetch (preferred) → governance_source: "canon"
-      //   2. Minimal baseline (shipped in code) → governance_source: "minimal"
+      //   1. Live knowledge base fetch (preferred) → governance_source: "knowledge_base"
+      //   2. Bundled governance (oddkit Worker snapshot) → governance_source: "bundled"
+      //   3. Minimal hardcoded fallback → governance_source: "minimal"
       //
       // This canary refactor implements tiers 1 and 3 only. The bundled
       // baseline tier (2) and the build-time schema check arrive in follow-up
       // work; the manifest + baseline directory are not yet in place.
+      const startTime = Date.now();
       const fetcher = new ZipBaselineFetcher(env);
       let policyContent: string | null = null;
       let selfReportHeaders: Record<string, string> | null = null;
-      let governanceSource: "canon" | "baseline" | "minimal" = "minimal";
+      let governanceSource: "knowledge_base" | "bundled" | "minimal" = "minimal";
 
       try {
-        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md");
+        // When knowledge_base_url is set, strict mode is automatic: suppress the bundled-governance fallback
+        // so a missing file in the override knowledge base surfaces as "minimal" rather
+        // than silently serving content from the default knowledge base.
+        const content = await fetcher.getFile(
+          "canon/constraints/telemetry-governance.md",
+          knowledge_base_url,
+          knowledge_base_url ? { skipBaselineFallback: true } : undefined,
+        );
         if (content) {
           policyContent = content;
           const parsed = parseSelfReportHeadersTable(content);
           if (parsed && Object.keys(parsed).length > 0) {
             selfReportHeaders = parsed;
-            governanceSource = "canon";
+            governanceSource = "knowledge_base";
           }
         }
       } catch {
@@ -551,6 +562,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
         }
       }
 
+      const headerCount = selfReportHeaders ? Object.keys(selfReportHeaders).length : 0;
+      const assistantText = `Telemetry policy loaded from ${governanceSource}. ${headerCount} self-report headers available.${knowledge_base_url ? ` (knowledge_base_url override: ${knowledge_base_url})` : ""}`;
+
       return {
         content: [{
           type: "text" as const,
@@ -563,6 +577,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
               self_report_headers: selfReportHeaders,
               generated_at: new Date().toISOString(),
             },
+            server_time: new Date().toISOString(),
+            assistant_text: assistantText,
+            debug: { duration_ms: Date.now() - startTime, knowledge_base_url: knowledge_base_url ?? null },
           }, null, 2),
         }],
       };
