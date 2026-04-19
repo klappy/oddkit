@@ -89,18 +89,20 @@ Canon source of truth: `odd/challenge/stakes-calibration`. Klappy named this as 
 
 ### CLEAN — no anti-pattern
 
-`challenge` (recently refactored, gold standard), `search`, `get`, `catalog`, `version`, `time`, `cleanup_storage`, `telemetry_public`, `telemetry_policy`.
+`challenge` (recently refactored, gold standard), `search`, `get`, `catalog`, `version`, `time`, `cleanup_storage`, `telemetry_public`.
+
+(Earlier classification of `telemetry_policy` as CLEAN was wrong — it had a hardcoded header dictionary next to the canon-fetched policy prose. Reclassified to LOW severity and selected as the canary refactor; see status below.)
 
 ## Refactor priority
 
-Ranked by impact × tractability:
+Revised during planning after the canary was selected and the `core-governance-baseline` contract was drafted. The sequence reflects lessons-first-smallest ordering, not raw severity:
 
-1. **`orient`** — three issues; "Proactive posture" prose is the headline embarrassment.
-2. **`validate`** — silently broken contract: gates "done" without reading the done definition.
-3. **`gate`** — three issues; mirrors orient pattern.
-4. **Mode-enum collapse** — already named by Klappy; cross-cutting; enables consistent vocabulary handling for `challenge`/`orient`/`gate`/`validate`.
+0. **✅ CANARY: `telemetry_policy`** — smallest blast radius; proved the three-tier contract and refactor template. **Shipped to prod 2026-04-18 via oddkit#106 + oddkit#107.** Live smoke confirms `governance_source: "canon"` with 8/8 canon-sourced descriptions. Canon extension to add the Description column shipped via klappy.dev#102.
+1. **`validate` + `preflight` (bundled)** — next. Requires writing `canon/constraints/definition-of-done.md` first (currently referenced by user-facing docs but does not exist in the repo). Fixes validate's silently-broken "done" contract.
+2. **Mode-enum collapse** — cross-cutting; single source of truth for the 9-mode vocabulary. Already named by Klappy in PR #102 commit.
+3. **`orient`** — three issues; "Proactive posture" prose is the headline embarrassment.
+4. **`gate`** — three issues; mirrors orient pattern.
 5. **`encode` quality interpreter** — same bug class as PR #100; subtle and silent.
-6. **`preflight` tail** — small, low risk; bundle with `validate`.
 
 ## Constraints for future refactors
 
