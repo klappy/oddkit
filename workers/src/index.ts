@@ -18,7 +18,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { handleUnifiedAction, type Env } from "./orchestrate";
-import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
+import { KnowledgeBaseFetcher } from "./zip-baseline-fetcher";
 import { RequestTracer } from "./tracing";
 import { parseConsumerLabel } from "./telemetry";
 import { renderNotFoundPage } from "./not-found-ui";
@@ -117,17 +117,17 @@ interface PromptRegistry {
 import { parseTimestamp, formatDuration } from "../../src/core/time-utils.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Prompt registry helpers — ZipBaselineFetcher with module-level cache
+// Prompt registry helpers — KnowledgeBaseFetcher with module-level cache
 //
-// Uses ZipBaselineFetcher (R2/KV content-addressed cache) for both registry
+// Uses KnowledgeBaseFetcher (R2/KV content-addressed cache) for both registry
 // and prompt content. Module-level cache (5-min TTL) avoids re-fetching the
 // registry on every MCP request. Prompt content is fetched lazily on
-// prompts/get and benefits from ZipBaselineFetcher's R2 cache.
+// prompts/get and benefits from KnowledgeBaseFetcher's R2 cache.
 //
 // DO NOT replace with raw HTTP fetch — that bypasses the R2 cache pipeline
 // and hammers raw.githubusercontent.com on every request. The .md filter
 // bug that previously caused REGISTRY.json to return null has been fixed
-// in ZipBaselineFetcher.getUnzipped (see zip-baseline-fetcher.ts).
+// in KnowledgeBaseFetcher.getUnzipped (see zip-baseline-fetcher.ts).
 // ──────────────────────────────────────────────────────────────────────────────
 
 let cachedRegistry: PromptRegistry | null = null;
@@ -140,7 +140,7 @@ async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
     return cachedRegistry;
   }
   try {
-    const fetcher = new ZipBaselineFetcher(env);
+    const fetcher = new KnowledgeBaseFetcher(env);
     const registryJson = await fetcher.getFile("canon/instructions/REGISTRY.json");
     if (!registryJson) return cachedRegistry;
     cachedRegistry = JSON.parse(registryJson) as PromptRegistry;
@@ -153,7 +153,7 @@ async function fetchPromptsRegistry(env: Env): Promise<PromptRegistry | null> {
 
 async function fetchPromptContent(env: Env, path: string): Promise<string | null> {
   try {
-    const fetcher = new ZipBaselineFetcher(env);
+    const fetcher = new KnowledgeBaseFetcher(env);
     const content = await fetcher.getFile(path);
     if (!content) return null;
     return content.replace(/^---[\s\S]*?---\n/, "").trim();
@@ -173,7 +173,7 @@ async function fetchPromptContent(env: Env, path: string): Promise<string | null
  * cross-client data leakage (CVE fix). The `env` is closed over
  * at request time so tools can access bindings.
  *
- * Prompts are fetched from the baseline registry via ZipBaselineFetcher
+ * Prompts are fetched from the baseline registry via KnowledgeBaseFetcher
  * (R2-cached) with module-level caching (5-minute TTL). Prompt content
  * is fetched lazily on prompts/get via the same R2 pipeline.
  */
@@ -238,7 +238,7 @@ Use when:
         input: args.input,
         context: args.context,
         mode: args.mode,
-        canon_url: args.knowledge_base_url,
+        knowledge_base_url: args.knowledge_base_url,
         include_metadata: args.include_metadata,
         section: args.section,
         sort_by: args.sort_by,
@@ -399,7 +399,7 @@ Use when:
           input: (args.input as string) || "",
           context: args.context as string | undefined,
           mode: args.mode as string | undefined,
-          canon_url: args.knowledge_base_url as string | undefined,
+          knowledge_base_url: args.knowledge_base_url as string | undefined,
           include_metadata: args.include_metadata as boolean | undefined,
           section: args.section as string | undefined,
           sort_by: args.sort_by as string | undefined,
@@ -516,7 +516,7 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       // baseline tier (2) and the build-time schema check arrive in follow-up
       // work; the manifest + baseline directory are not yet in place.
       const startTime = Date.now();
-      const fetcher = new ZipBaselineFetcher(env);
+      const fetcher = new KnowledgeBaseFetcher(env);
       let policyContent: string | null = null;
       let selfReportHeaders: Record<string, string> | null = null;
       let governanceSource: "knowledge_base" | "bundled" | "minimal" = "minimal";
@@ -705,9 +705,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
     }),
   );
 
-  // ── Prompts (from baseline registry via ZipBaselineFetcher, cached at module scope)
+  // ── Prompts (from baseline registry via KnowledgeBaseFetcher, cached at module scope)
   //
-  // Registry is fetched via ZipBaselineFetcher (R2-cached, content-addressed).
+  // Registry is fetched via KnowledgeBaseFetcher (R2-cached, content-addressed).
   // Module-level cache (5-min TTL) avoids re-fetching on every MCP request.
   // Prompt content is fetched lazily on prompts/get via the same R2 pipeline.
 
