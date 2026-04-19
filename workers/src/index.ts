@@ -22,11 +22,56 @@ import { ZipBaselineFetcher } from "./zip-baseline-fetcher";
 import { RequestTracer } from "./tracing";
 import { parseConsumerLabel } from "./telemetry";
 import { renderNotFoundPage } from "./not-found-ui";
+import { parseTableRow } from "./markdown-utils";
 import pkg from "../package.json";
 
 export type { Env };
 
 const BUILD_VERSION = pkg.version;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Canon-table parsing helper.
+//
+// parseSelfReportHeadersTable extracts the self-report header contract from
+// canon/constraints/telemetry-governance.md. The table format is governed by
+// the canon doc itself; this parser is deliberately permissive (whitespace,
+// backticks around header name) and fails closed to null so the caller can
+// fall back to the minimal baseline without hiding the degradation.
+// ──────────────────────────────────────────────────────────────────────────────
+
+function parseSelfReportHeadersTable(markdown: string): Record<string, string> | null {
+  // Target section: "### Self-Report Fields" — grab the table that follows.
+  // Stop at the next `###` or `##` heading, whichever comes first.
+  //
+  // Expected table schema (governed by canon/constraints/telemetry-governance):
+  //   | Field | Header | Source | Description |
+  //   cols[0]  cols[1]  cols[2]  cols[3]
+  //
+  // We key on the Header (col 1, with backticks stripped) and use the
+  // Description (col 3) as the value. The parser is deliberately permissive
+  // on whitespace and fails closed to null so the caller falls back to the
+  // minimal baseline rather than hiding the degradation.
+  const section = markdown.match(
+    /###\s+Self-Report Fields[^\n]*\n([\s\S]*?)(?=\n###|\n##|$)/,
+  );
+  if (!section) return null;
+
+  const headers: Record<string, string> = {};
+  for (const raw of section[1].split("\n")) {
+    if (!raw.includes("|")) continue;
+    const cols = parseTableRow(raw);
+    // Need at least 4 cols (Field, Header, Source, Description).
+    // Skip header row, separator row, and any malformed row.
+    if (cols.length < 4) continue;
+    const headerName = cols[1].replace(/`/g, "").trim();
+    if (!headerName.startsWith("x-oddkit-")) continue; // skip header/separator
+    const description = cols[3].trim();
+    if (!description) continue;
+    headers[headerName] = description;
+  }
+
+  return Object.keys(headers).length > 0 ? headers : null;
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Consumer identification nudge
@@ -451,7 +496,7 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
 
   server.tool(
     "telemetry_policy",
-    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime.",
+    "Return oddkit telemetry and sharing policy guidance. What is tracked, what is excluded, and why. Fetched from canonical governance document at runtime. Response envelope declares governance_source (canon|baseline|minimal) per canon/constraints/core-governance-baseline.",
     {},
     {
       readOnlyHint: true,
@@ -460,15 +505,50 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       openWorldHint: true,
     },
     async () => {
-      // Fetch the governance doc from canon
+      // Governance resolution per canon/constraints/core-governance-baseline:
+      //   1. Live canon fetch (preferred) → governance_source: "canon"
+      //   2. Minimal baseline (shipped in code) → governance_source: "minimal"
+      //
+      // This canary refactor implements tiers 1 and 3 only. The bundled
+      // baseline tier (2) and the build-time schema check arrive in follow-up
+      // work; the manifest + baseline directory are not yet in place.
       const fetcher = new ZipBaselineFetcher(env);
-      let policyContent = "Governance document not found. See https://github.com/klappy/klappy.dev/blob/main/canon/constraints/telemetry-governance.md";
+      let policyContent: string | null = null;
+      let selfReportHeaders: Record<string, string> | null = null;
+      let governanceSource: "canon" | "baseline" | "minimal" = "minimal";
 
       try {
         const content = await fetcher.getFile("canon/constraints/telemetry-governance.md");
-        if (content) policyContent = content;
+        if (content) {
+          policyContent = content;
+          const parsed = parseSelfReportHeadersTable(content);
+          if (parsed && Object.keys(parsed).length > 0) {
+            selfReportHeaders = parsed;
+            governanceSource = "canon";
+          }
+        }
       } catch {
-        // Fall through to default message
+        // Fall through to minimal tier below
+      }
+
+      if (governanceSource === "minimal") {
+        // Minimal baseline — the tool remains useful when canon is unreachable
+        // or the table cannot be parsed. These eight headers are the stable
+        // self-report contract; if canon adds a 9th, the "canon" tier delivers
+        // it and this list stays as the floor.
+        selfReportHeaders = {
+          "x-oddkit-client": "Your client name (highest priority identifier)",
+          "x-oddkit-client-version": "Your client version",
+          "x-oddkit-agent-name": "The AI agent name",
+          "x-oddkit-agent-version": "The AI agent version",
+          "x-oddkit-surface": "Where this is running (e.g. claude.ai, vscode)",
+          "x-oddkit-contact-url": "URL for your project or org",
+          "x-oddkit-policy-url": "Your privacy/telemetry policy URL",
+          "x-oddkit-capabilities": "Comma-separated capability list",
+        };
+        if (!policyContent) {
+          policyContent = "Governance document not reachable. See https://github.com/klappy/klappy.dev/blob/main/canon/constraints/telemetry-governance.md";
+        }
       }
 
       return {
@@ -479,16 +559,8 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
             result: {
               policy: policyContent,
               governance_uri: "klappy://canon/constraints/telemetry-governance",
-              self_report_headers: {
-                "x-oddkit-client": "Your client name (highest priority identifier)",
-                "x-oddkit-client-version": "Your client version",
-                "x-oddkit-agent-name": "The AI agent name",
-                "x-oddkit-agent-version": "The AI agent version",
-                "x-oddkit-surface": "Where this is running (e.g. claude.ai, vscode)",
-                "x-oddkit-contact-url": "URL for your project or org",
-                "x-oddkit-policy-url": "Your privacy/telemetry policy URL",
-                "x-oddkit-capabilities": "Comma-separated capability list",
-              },
+              governance_source: governanceSource,
+              self_report_headers: selfReportHeaders,
               generated_at: new Date().toISOString(),
             },
           }, null, 2),
