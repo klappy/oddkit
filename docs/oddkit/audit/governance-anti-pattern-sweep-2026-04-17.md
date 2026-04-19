@@ -106,11 +106,31 @@ Revised during planning after the canary was selected and the `core-governance-b
 
 ## Constraints for future refactors
 
-- **Public-contract verification is mandatory.** Every refactor that touches a tool must include a smoke test that invokes the public MCP API with a canon change loaded but no worker redeploy. Internal tests passing is the exact failure mode that caused PR #100.
+- **Public-contract verification is mandatory.** Every refactor that touches a tool must include a live-smoke test that invokes the public MCP API and asserts the full response envelope. Internal parser tests are necessary but not sufficient — they passed for the telemetry_policy canary while the tool shipped a broken envelope. See `workers/test/canon-tool-envelope.smoke.mjs` for the template.
+
+- **Response envelope is load-bearing.** Every canon-driven tool must return the full envelope: `{action, result, server_time, assistant_text, debug}`. `server_time` is required on every response so the time-discipline system works. `debug.duration_ms` is required for observability. Missing any of these is a regression against the contract, not an omission.
+
+- **`governance_source` signal required.** Every canon-driven tool must return `result.governance_source: "canon" | "baseline" | "minimal"` so callers can detect degradation. Per `canon/constraints/core-governance-baseline`.
+
+- **`canon_url` parameter required.** Every canon-driven tool must accept `canon_url` in its Zod schema and thread it through to `fetcher.getFile(path, canon_url)`. A tool that hardcodes the baseline canon URL defeats the override contract and breaks custom-canon consumers (TruthKit, private KBs, etc.). The telemetry_policy canary shipped with this gap — the schema was `{}` and MCP silently stripped the parameter.
 
 - **Vocabulary sweeps are non-optional.** Any refactor that touches mode/transition/claim-type vocabulary must verify all four declaration sites (`workers/src/index.ts` ×2, `src/core/tool-registry.js`, `orchestrate.ts`) agree, OR collapse them to a single source of truth.
 
-- **`definition-of-done.md` is load-bearing.** Both `preflight` and `validate` should read it. Inconsistency between them is a contract bug.
+- **`definition-of-done.md` is load-bearing.** Both `preflight` and `validate` should read it. Inconsistency between them is a contract bug. The canon doc does not currently exist and must be written as part of the validate+preflight refactor.
+
+## Refactor template (definition of done)
+
+Each tool refactor in this sweep ships when all of the following hold:
+
+1. Canon doc(s) the tool reads are present and parsable (or the tool degrades cleanly with `governance_source: "minimal"`)
+2. Tool's Zod schema accepts `canon_url` (and any other relevant override parameters)
+3. Response envelope includes `{action, result, server_time, assistant_text, debug: {duration_ms}}`
+4. `result.governance_source` is one of `canon | baseline | minimal`
+5. Live smoke test (`canon-tool-envelope.smoke.mjs` or equivalent) passes against Cloudflare preview deploy
+6. Live smoke test passes against prod after promotion
+7. Audit row for the tool gets stamped (this doc)
+
+Canary violated #3, #4 (partial — `governance_source` shipped but envelope missing), and #5/#6 (no live smoke existed until after the fact). The follow-up at `klappy/oddkit#108` closes those gaps and adds the smoke test to the repo.
 
 ## Handoff
 
