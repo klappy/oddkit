@@ -160,8 +160,10 @@ export function parseToolCall(payload: unknown): {
     if (typeof a.input === "string" && a.input.includes("://")) {
       documentUri = a.input;
     }
-    // Extract canon_url from tool arguments
-    if (typeof a.canon_url === "string" && a.canon_url) {
+    // Extract knowledge base URL from tool arguments (accept legacy canon_url alias)
+    if (typeof a.knowledge_base_url === "string" && a.knowledge_base_url) {
+      canonUrl = a.knowledge_base_url;
+    } else if (typeof a.canon_url === "string" && a.canon_url) {
       canonUrl = a.canon_url;
     }
   }
