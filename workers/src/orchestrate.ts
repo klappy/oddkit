@@ -812,7 +812,7 @@ function isStructuredInput(input: string): boolean {
 //   2 — "O" letter when the O branch matches (with optional facet/band)
 //   3 — "open" facet (only on O)
 //   4 — priority band "P1" / "P2.1" (only on O)
-const PREFIX_TAG_REGEX = /^\[(?:([DLCHE])|(O)(?:-(open))?(?:\s+(P\d+(?:\.\d+)?))?)\]\s*/;
+const PREFIX_TAG_REGEX = /^\[(?:([DLCHE])|(O)(?:-(open)(?:\s+(P\d+(?:\.\d+)?))?)?)\]\s*/;
 
 function isPrefixedBatchInput(input: string): boolean {
   const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
