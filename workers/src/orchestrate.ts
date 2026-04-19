@@ -799,8 +799,20 @@ function isStructuredInput(input: string): boolean {
 // prefix are left for the unstructured trigger-word fallback.
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Matches [LETTER] or [O-open] or [O-open P1] / [O-open P2.1] at paragraph start.
-const PREFIX_TAG_REGEX = /^\[([A-Z])(?:-(open))?(?:\s+(P\d+(?:\.\d+)?))?\]\s*/;
+// Matches [LETTER] for any DOLCHEO letter (D/O/L/C/H/E), or [O-open] /
+// [O-open P1] / [O-open P2.1] at paragraph start. The -open facet and the
+// priority band are exclusive to the O (Observation) letter per
+// canon/definitions/dolcheo-vocabulary — they are not accepted on other
+// letters. Restricting the letter set to the six DOLCHEO letters also
+// prevents misrouting unstructured input that happens to begin a paragraph
+// with an unrelated bracketed letter (e.g. enumerated points like "[A] ...").
+//
+// Capture groups:
+//   1 — non-O DOLCHEO letter ([DLCHE]) when no facet/band applies
+//   2 — "O" letter when the O branch matches (with optional facet/band)
+//   3 — "open" facet (only on O)
+//   4 — priority band "P1" / "P2.1" (only on O)
+const PREFIX_TAG_REGEX = /^\[(?:([DLCHE])|(O)(?:-(open))?(?:\s+(P\d+(?:\.\d+)?))?)\]\s*/;
 
 function isPrefixedBatchInput(input: string): boolean {
   const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
@@ -819,9 +831,11 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
   for (const para of paragraphs) {
     const match = para.match(PREFIX_TAG_REGEX);
     if (match) {
-      const letter = match[1];
-      const facet = match[2]; // "open" | undefined
-      const band = match[3];  // "P1" | "P2.1" | undefined
+      // match[1]: non-O letter ([DLCHE]); match[2]: "O" when O branch matched.
+      // Facet and band are only captured on the O branch — enforced by regex.
+      const letter = match[1] || match[2];
+      const facet = match[3]; // "open" | undefined (O only)
+      const band = match[4];  // "P1" | "P2.1" | undefined (O only)
       const body = para.slice(match[0].length).trim();
       const first = body.split(/[.!?\n]/)[0]?.trim() || body.slice(0, 60);
       const title = first.split(/\s+/).length <= 12
