@@ -1,5 +1,5 @@
 /**
- * ZipBaselineFetcher - Content-addressed caching for baseline repos
+ * KnowledgeBaseFetcher - Content-addressed caching for baseline repos
  *
  * Architecture (E0008 — observability + performance):
  *   Three-tier storage: Module Memory → Cache API → R2
@@ -30,7 +30,7 @@ import { RequestTracer, shortKey } from "./tracing";
 const INDEX_VERSION = "2.4"; // 2.4: Cache API migration, KV removal, x-ray tracing (E0008)
 
 export interface Env {
-  BASELINE_URL: string;
+  DEFAULT_KNOWLEDGE_BASE_URL: string;
   ODDKIT_VERSION: string;
   BASELINE_CACHE?: KVNamespace; // Legacy — no longer used on hot path
   BASELINE?: R2Bucket;
@@ -87,7 +87,7 @@ export interface IndexEntry {
 export interface BaselineIndex {
   version: string;
   generated_at: string;
-  canon_url?: string;
+  knowledge_base_url?: string;
   baseline_url: string;
   entries: IndexEntry[];
   stats: {
@@ -477,7 +477,7 @@ function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
   return null;
 }
 
-export class ZipBaselineFetcher {
+export class KnowledgeBaseFetcher {
   private env: Env;
   private tracer?: RequestTracer;
   private zipCache: Map<string, Uint8Array> = new Map();
@@ -850,11 +850,11 @@ export class ZipBaselineFetcher {
    * removing one KV read). Content-addressed by SHA — no TTL needed
    * for correctness. Module cache uses 5-min TTL for freshness.
    */
-  async getIndex(canonUrl?: string): Promise<BaselineIndex> {
+  async getIndex(knowledgeBaseUrl?: string): Promise<BaselineIndex> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
     // Step 0: Module-level memory cache (0ms, 5-min TTL)
-    const expectedKey = `v${INDEX_VERSION}/${getCacheKey(canonUrl || "default")}`;
+    const expectedKey = `v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}`;
     if (cachedIndex && cachedIndexKey === expectedKey && Date.now() - indexCachedAt < MODULE_CACHE_TTL_MS) {
       this.tracer?.addSpan("index", 0, "memory");
       return cachedIndex;
@@ -862,12 +862,12 @@ export class ZipBaselineFetcher {
 
     // Step 1: Resolve current commit SHAs
     const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
-    const canonRef = canonUrl ? extractBranchRef(canonUrl) : undefined;
-    const canonSha = canonUrl ? await this.getLatestCommitSha(canonUrl, canonRef) : undefined;
+    const canonRef = knowledgeBaseUrl ? extractBranchRef(knowledgeBaseUrl) : undefined;
+    const canonSha = knowledgeBaseUrl ? await this.getLatestCommitSha(knowledgeBaseUrl, canonRef) : undefined;
 
     // Content-addressed cache key: SHA + version
     const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
-    const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(canonUrl || "default")}_${shaKey}`;
+    const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}_${shaKey}`;
 
     // Step 2: Cache API (~1ms edge read)
     const cacheStart = performance.now();
@@ -914,7 +914,7 @@ export class ZipBaselineFetcher {
 
     // Step 4: Build fresh from ZIP
     const buildStart = performance.now();
-    const baselineUrl = this.env.BASELINE_URL;
+    const baselineUrl = this.env.DEFAULT_KNOWLEDGE_BASE_URL;
     const skipCache = true; // Always fetch fresh ZIP when building new index
 
     const baselineEntries = await this.buildIndexFromRepo(
@@ -926,8 +926,8 @@ export class ZipBaselineFetcher {
     );
 
     let canonEntries: IndexEntry[] = [];
-    if (canonUrl) {
-      canonEntries = await this.buildIndexFromRepo(canonUrl, "canon", skipCache);
+    if (knowledgeBaseUrl) {
+      canonEntries = await this.buildIndexFromRepo(knowledgeBaseUrl, "canon", skipCache);
     }
 
     // Arbitrate — canon overrides baseline
@@ -936,7 +936,7 @@ export class ZipBaselineFetcher {
     const index: BaselineIndex = {
       version: INDEX_VERSION,
       generated_at: new Date().toISOString(),
-      canon_url: canonUrl,
+      knowledge_base_url: knowledgeBaseUrl,
       baseline_url: baselineUrl,
       entries: allEntries,
       stats: {
@@ -981,40 +981,40 @@ export class ZipBaselineFetcher {
    *
    * When `options.skipBaselineFallback` is true, the baseline repo is not
    * appended to the search sources. Callers that need to distinguish between
-   * "file found in the canon_url override" and "file found in the baseline
+   * "file found in the knowledge_base_url override" and "file found in the baseline
    * fallback" can pass this flag so a null return unambiguously means the
    * override canon lacks the file.
    */
   async getFile(
     path: string,
-    canonUrl?: string,
+    knowledgeBaseUrl?: string,
     options?: { skipBaselineFallback?: boolean },
   ): Promise<string | null> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
     const skipBaselineFallback = options?.skipBaselineFallback === true;
 
     // Resolve SHA for the baseline only when it will actually be searched.
-    const baselineSha = skipBaselineFallback && canonUrl
+    const baselineSha = skipBaselineFallback && knowledgeBaseUrl
       ? null
       : await this.getLatestCommitSha(baselineRepoUrl);
 
     // Build the list of repos to search, each with its own SHA
     const sources: Array<{ url: string; repoKey: string; sha: string }> = [];
 
-    if (canonUrl) {
-      const canonRef = extractBranchRef(canonUrl);
-      const canonSha = await this.getLatestCommitSha(canonUrl, canonRef);
+    if (knowledgeBaseUrl) {
+      const canonRef = extractBranchRef(knowledgeBaseUrl);
+      const canonSha = await this.getLatestCommitSha(knowledgeBaseUrl, canonRef);
       sources.push({
-        url: canonUrl,
-        repoKey: getCacheKey(canonUrl),
+        url: knowledgeBaseUrl,
+        repoKey: getCacheKey(knowledgeBaseUrl),
         sha: canonSha || "unknown",
       });
     }
 
-    if (!(skipBaselineFallback && canonUrl)) {
+    if (!(skipBaselineFallback && knowledgeBaseUrl)) {
       sources.push({
-        url: this.env.BASELINE_URL.includes("raw.githubusercontent.com")
-          ? this.env.BASELINE_URL.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
+        url: this.env.DEFAULT_KNOWLEDGE_BASE_URL.includes("raw.githubusercontent.com")
+          ? this.env.DEFAULT_KNOWLEDGE_BASE_URL.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
           : baselineRepoUrl,
         repoKey: getCacheKey("baseline"),
         sha: baselineSha || "unknown",
