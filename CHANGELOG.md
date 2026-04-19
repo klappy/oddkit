@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **0.17.0 release note correction: `governance_source` on encode and challenge.** The 0.17.0 entry for "`governance_source` on refactored tool envelopes" claimed challenge, encode, and telemetry_policy all declared the tier signal. In practice only telemetry_policy did at HEAD — challenge and encode's envelopes were silent. This release retrofits encode's envelope to declare it. Challenge remains to be fixed in the P1.3 sweep.
 
+### Known limitations
+
+- **Encode does not yet implement strict-mode at the index layer.** Passing `knowledge_base_url` to `oddkit_encode` echoes the override in `debug.knowledge_base_url` and honors canon overrides when the target repo has encoding-type docs, but `getIndex` merges baseline entries by design (`arbitrateEntries`: canon overrides baseline, baseline is the floor). A custom `knowledge_base_url` pointing at a repo without encoding-type docs will still return `governance_source: "knowledge_base"` via the default baseline rather than falling through to `"minimal"`. Telemetry_policy's strict mode (via `getFile`'s `skipBaselineFallback` option) is not yet available on `getIndex`. Tracked for the P1.3 sweep.
+
 ## [0.17.0] - 2026-04-19
 
 ### Added
