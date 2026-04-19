@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 /**
- * Live smoke test for canon-driven MCP tool envelope contracts.
+ * Live smoke test for knowledge-base-driven MCP tool envelope contracts.
  *
  * Exercises the actual MCP endpoint (preview or prod) and verifies that
  * every canon-driven tool returns the full envelope shape:
  *
  *   { action, result, server_time, assistant_text, debug, ... }
  *
- * AND that canon-driven tools surface `governance_source` inside `result`.
+ * AND that knowledge-base-driven tools surface `governance_source` inside `result` with one of: knowledge_base | bundled | minimal.
  *
  * Why this exists: parser tests (workers/test/governance-parser.test.mjs)
  * exercise parser logic in isolation. They passed for the telemetry_policy
- * canary, but the canary shipped with a broken envelope (missing server_time,
- * assistant_text, debug) and silently ignored the canon_url parameter because
- * the Zod schema was {}. Parser tests cannot catch the tool's response
- * contract — only live smoke against the MCP endpoint can.
+ * canary, but the canary shipped with a broken envelope and silent
+ * knowledge_base_url fallback because no test invoked the MCP tool end-to-end.
+ * Parser tests cannot catch the tool's response contract — only live smoke
+ * against the MCP endpoint can. This test also verifies the strict-override
+ * contract: when knowledge_base_url points at a repo lacking the file, the
+ * response must surface governance_source: 'minimal', not silently substitute
+ * from the default knowledge base.
  *
  * Usage:
  *   node workers/test/canon-tool-envelope.smoke.mjs
@@ -79,8 +82,8 @@ function expectGovernanceSource(toolName, inner, expectedTier) {
   console.log(`\n─── Governance source: ${toolName} ───`);
   const source = inner.result?.governance_source;
   ok(`${toolName}: result.governance_source present`, typeof source === "string", `got: ${source}`);
-  ok(`${toolName}: result.governance_source is one of canon|baseline|minimal`,
-    ["canon", "baseline", "minimal"].includes(source),
+  ok(`${toolName}: result.governance_source is one of knowledge_base|bundled|minimal`,
+    ["knowledge_base", "bundled", "minimal"].includes(source),
     `got: ${source}`);
   if (expectedTier) {
     ok(`${toolName}: result.governance_source == "${expectedTier}"`,
@@ -98,18 +101,20 @@ async function run() {
 
   // Tool 2: telemetry_policy — canon-driven, should have full envelope + governance_source
   const policyDefault = await callTool("telemetry_policy");
-  expectFullEnvelope("telemetry_policy (default canon)", policyDefault);
-  expectGovernanceSource("telemetry_policy (default canon)", policyDefault, "canon");
+  expectFullEnvelope("telemetry_policy (default knowledge_base)", policyDefault);
+  expectGovernanceSource("telemetry_policy (default knowledge_base)", policyDefault, "knowledge_base");
 
-  // Tool 3: telemetry_policy with canon_url override pointing at a repo that
-  // doesn't have the governance file — should fall back to minimal
-  console.log(`\n─── canon_url override: telemetry_policy ───`);
+  // Tool 3: telemetry_policy with knowledge_base_url override pointing at a repo
+  // that doesn't have the governance file — should fall back to minimal.
+  // This verifies the strict-override contract: when knowledge_base_url is set,
+  // the bundled fallback is suppressed so a missing file surfaces as "minimal".
+  console.log(`\n─── knowledge_base_url override: telemetry_policy ───`);
   const policyOverride = await callTool("telemetry_policy", {
-    canon_url: "https://github.com/torvalds/linux",
+    knowledge_base_url: "https://github.com/torvalds/linux",
   });
-  expectFullEnvelope("telemetry_policy (canon_url override)", policyOverride);
+  expectFullEnvelope("telemetry_policy (knowledge_base_url override)", policyOverride);
   ok(
-    "telemetry_policy: canon_url override falls back to minimal when file missing",
+    "telemetry_policy: knowledge_base_url override falls back to minimal when file missing (strict mode)",
     policyOverride.result?.governance_source === "minimal",
     `got: ${policyOverride.result?.governance_source}`,
   );
@@ -119,9 +124,9 @@ async function run() {
     `got: ${Object.keys(policyOverride.result?.self_report_headers ?? {}).length}`,
   );
   ok(
-    "telemetry_policy: debug.canon_url echoes the override",
-    policyOverride.debug?.canon_url === "https://github.com/torvalds/linux",
-    `got: ${policyOverride.debug?.canon_url}`,
+    "telemetry_policy: debug.knowledge_base_url echoes the override",
+    policyOverride.debug?.knowledge_base_url === "https://github.com/torvalds/linux",
+    `got: ${policyOverride.debug?.knowledge_base_url}`,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);
