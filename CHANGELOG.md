@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-19
+
+### Added
+
+- **`oddkit_time` — stateless time utility (E0008.2)** — New standalone tool with three modes: no params returns current UTC; one timestamp returns elapsed since reference; two timestamps return delta. Resolves the "time-blindness" axiom violation where the LLM had to infer elapsed time from context clues. Pass the prior response's `server_time` as `reference` to get both current time and elapsed-since-last-turn in one call.
+
+- **`server_time` in every response envelope (E0008.2)** — Every oddkit tool response now carries a `server_time` ISO 8601 string in the top-level envelope. Gives every LLM turn a ground-truth clock reading as a side effect of normal tool use — no extra call required.
+
+- **X-ray tracing on tool responses (E0008.1)** — `debug.trace` now lists every resolution span (sha lookup, file fetch, zip extract, action timing) with per-span duration and source (`github`, `r2`, `build`, etc.). Gives transparent latency attribution without separate observability tooling.
+
+- **Governance-driven `oddkit_challenge` (E0008)** — Challenge now reads its vocabulary (claim types, mode rules, stop words, prohibitions) from canon at runtime instead of hardcoded constants. Uses BM25 + stemming over governance documents for detection. Canon changes propagate without code redeploy.
+
+- **Governance-driven `oddkit_encode`** — Encode's type recognition now reads from canon's encoding-type vocabulary at runtime. Honors the context-vs-input governance distinction (negative/positive criteria scope to artifact body, not context).
+
+- **Governance-driven `telemetry_policy` (canary)** — `self_report_headers` section now built from canon at runtime via three-tier resolution: live canon → bundled baseline → fail-loud error envelope. Reference pattern for the remaining prompt-over-code refactor arc.
+
+- **`governance_source` on refactored tool envelopes** — Challenge, encode, and telemetry_policy responses now declare which tier served their governance vocabulary: `"knowledge_base"` (live canon read), `"bundled"` (baseline fallback), or `"minimal"` (hardcoded last resort).
+
+- **`?consumer=yourname` query parameter** — Highest-priority consumer identification method, platform-agnostic. Works where headers don't (Lovable edge functions, Claude.ai connectors, etc.). Unidentified consumers now receive a one-time nudge in responses to add the parameter.
+
+- **Governance anti-pattern audit** — Full code audit of all 11 oddkit tools against the vodka anti-pattern (canon defines vocabulary; code must not hardcode interpretation). Documented at `docs/oddkit/audit/governance-anti-pattern-sweep-2026-04-17.md`. Priority-ordered sweep list for remaining tools.
+
+### Changed
+
+- **`canon_url` → `knowledge_base_url` (user-facing contract rename)** — The override argument accepted by `search`, `get`, `catalog`, `challenge`, `encode`, and other tools renamed from `canon_url` to `knowledge_base_url`. Semantic: the URL points to any knowledge base, not only the klappy.dev canon repo. **BREAKING:** legacy `canon_url` accept stripped from `parseToolCall`. Callers must use the new name. The telemetry `blob6` field now carries `knowledge_base_url` as the rendered field name.
+
+- **Internal rename: `canon*` → `knowledge_base*`** — `canonUrl`, `ZipBaselineFetcher`, `BASELINE_URL`, and related internal symbols renamed to match the user-facing contract. Filename `workers/src/zip-baseline-fetcher.ts` retained for diff minimality.
+
+- **Challenge mode enum accepts all nine modes** — Previously only three of the nine execution/writing-canon modes were accepted; the remaining six returned schema errors. All nine now parse correctly.
+
+### Fixed
+
+- **Branch ref extraction with slashes** — Branch names containing slashes (e.g. `feat/thing`) now survive `extractBranchRef` and `getZipUrl` intact. Previously lost the segment after the slash.
+
+- **Isolate cross-contamination in BM25 index cache** — Cached BM25 index now guarded by `canonUrl` key. Previously a second request with a different canon override could receive the first caller's index.
+
+- **Suppression envelope completeness** — `SUPPRESSED` challenge responses now include the `governance` field alongside the suppression reason, matching the non-suppressed response shape.
+
+- **First-reframing surfacing** — `first_1` reframings now return a single reframing total, not a singleton wrapped in an array.
+
+- **Articles type annotation** — Missing `title` field added to the articles type (unblocks a silent TypeScript narrowing regression).
+
+- **Encode context-vs-input scoping** — Keyword-pattern criteria in encode now scope to `artifact.body` rather than the whole context, preventing user context from corrupting positive/negative criterion checks.
+
+- **Local `kb://` compound file suffix resolution** — `findDocPath` now scans for files with compound extensions (`.surface.md`, `.full.md`) on the local/CLI path, matching the worker path's index-lookup behavior.
+
+- **Challenge BM25 governance fixes** — Stop words moved from hardcoded constant into governance. Empty middle cells preserved in the governance table parser. Mode casing normalized and sort directive regex ordered by length. Claim-type alias restored in response envelope.
+
+- **Time utility edge cases** — `compare` without `reference` now validates. `-r` flag collision and numeric epoch string parsing resolved. Standalone tools excluded from the orchestrator action enum.
+
+- **Index source telemetry** — Corrected `checkForChanges` tautology and `invalidateCache` coverage. Expired file cache entries now evicted before size-cap check. CI preview URL sanitization replaces dots with hyphens.
+
+### Notes
+
+- **Epoch progression since 0.16.0:** E0008 (governance-driven challenge), E0008.1 (x-ray tracing + KV elimination), E0008.2 (`server_time` + `oddkit_time`), E0008.3 (validation as fourth epistemic mode; canon-side — no tool changes).
+
+- **Prompt-over-code refactor arc opened.** `oddkit_challenge`, `oddkit_encode`, and `telemetry_policy` now fetch their governance vocabulary from canon at runtime. Remaining tools (`oddkit_gate`, `oddkit_preflight`, `oddkit_validate`, `oddkit_orient`, `oddkit_search`, `oddkit_catalog`) queued for the same refactor template.
+
 ## [0.16.0] - 2026-04-03
 
 ### Added
