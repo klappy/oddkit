@@ -978,12 +978,25 @@ export class ZipBaselineFetcher {
    * Get a specific file from the baseline or canon.
    * Content-addressed: file cache is keyed to each repo's own commit SHA.
    * Three-tier: module memory → R2 → ZIP extraction.
+   *
+   * When `options.skipBaselineFallback` is true, the baseline repo is not
+   * appended to the search sources. Callers that need to distinguish between
+   * "file found in the canon_url override" and "file found in the baseline
+   * fallback" can pass this flag so a null return unambiguously means the
+   * override canon lacks the file.
    */
-  async getFile(path: string, canonUrl?: string): Promise<string | null> {
+  async getFile(
+    path: string,
+    canonUrl?: string,
+    options?: { skipBaselineFallback?: boolean },
+  ): Promise<string | null> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
+    const skipBaselineFallback = options?.skipBaselineFallback === true;
 
-    // Resolve SHA for each repo independently
-    const baselineSha = await this.getLatestCommitSha(baselineRepoUrl);
+    // Resolve SHA for the baseline only when it will actually be searched.
+    const baselineSha = skipBaselineFallback && canonUrl
+      ? null
+      : await this.getLatestCommitSha(baselineRepoUrl);
 
     // Build the list of repos to search, each with its own SHA
     const sources: Array<{ url: string; repoKey: string; sha: string }> = [];
@@ -998,13 +1011,15 @@ export class ZipBaselineFetcher {
       });
     }
 
-    sources.push({
-      url: this.env.BASELINE_URL.includes("raw.githubusercontent.com")
-        ? this.env.BASELINE_URL.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
-        : baselineRepoUrl,
-      repoKey: getCacheKey("baseline"),
-      sha: baselineSha || "unknown",
-    });
+    if (!(skipBaselineFallback && canonUrl)) {
+      sources.push({
+        url: this.env.BASELINE_URL.includes("raw.githubusercontent.com")
+          ? this.env.BASELINE_URL.replace("/main", "").replace("raw.githubusercontent.com", "github.com")
+          : baselineRepoUrl,
+        repoKey: getCacheKey("baseline"),
+        sha: baselineSha || "unknown",
+      });
+    }
 
     for (const source of sources) {
       // Content-addressed cache key: repo identity + repo SHA + file path

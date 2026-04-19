@@ -521,7 +521,14 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       let governanceSource: "canon" | "baseline" | "minimal" = "minimal";
 
       try {
-        const content = await fetcher.getFile("canon/constraints/telemetry-governance.md", canon_url);
+        // When a canon_url override is provided, suppress the baseline fallback
+        // so a missing file in the override canon surfaces as "minimal" rather
+        // than silently serving the klappy.dev baseline.
+        const content = await fetcher.getFile(
+          "canon/constraints/telemetry-governance.md",
+          canon_url,
+          canon_url ? { skipBaselineFallback: true } : undefined,
+        );
         if (content) {
           policyContent = content;
           const parsed = parseSelfReportHeadersTable(content);
