@@ -280,6 +280,42 @@ async function run() {
     `got length: ${batchArtifacts.length}; types: ${batchArtifacts.map((a) => a.type).join(",")}`,
   );
 
+  console.log(`\n─── oddkit_encode: (16) phrase-subset regression anchor (Bugbot PR #126) ───`);
+  // Pre-Bugbot-fix the matcher used a flat stemmedTokens: Set<string> where
+  // multi-word canon phrases like `committed to` (Decision) and `next step`
+  // (Handoff) were flattened into individual stems and each was added as a
+  // standalone singleton. Stop-word filtering is disabled by design (P1.3.3
+  // C-04), so function-word stems like `to`, `with`, `by`, `up`, `out`
+  // became universal match triggers — virtually every English paragraph
+  // would fire Decision and Handoff and more. Autofix commit 113ba11
+  // adopted a phrase-subset match: a phrase matches only when ALL of its
+  // stems appear in the input stem set. Single-stem phrases degenerate to
+  // set membership (inflection matching still works); multi-stem phrases
+  // require conjunction. The input below contains stems `need`, `to`,
+  // `wait`, `until`, `tomorrow`, `for`, `the`, `review` — no Decision
+  // phrase has ALL its stems present (`decid` / `decis` / `chose` / `choos`
+  // / `select` all absent; `[committ, to]` fails on `committ`; `[go, with]`
+  // fails on both), and no Handoff phrase has ALL its stems present
+  // (`[next, session]` / `[next, step]` / `[follow, up]` / `[block, by]`
+  // / `[wait, on]` all fail on their second stem; `todo` / `continu` /
+  // `remain` / `handoff` singletons all absent). A revision that
+  // re-flattens the matcher would spuriously fire D and H on this input.
+  const encodePhraseSubset = await callTool("oddkit_encode", {
+    input: "I need to wait until tomorrow for the review",
+  });
+  expectFullEnvelope("oddkit_encode (phrase-subset regression)", encodePhraseSubset);
+  const phraseSubsetTypes = (encodePhraseSubset.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: (16) `to` inside phrasal canon vocab does NOT fire Decision as a standalone trigger",
+    !phraseSubsetTypes.includes("D"),
+    `got artifact types: ${phraseSubsetTypes.join(",")}`,
+  );
+  ok(
+    "oddkit_encode: (16) `to` inside phrasal canon vocab does NOT fire Handoff as a standalone trigger",
+    !phraseSubsetTypes.includes("H"),
+    `got artifact types: ${phraseSubsetTypes.join(",")}`,
+  );
+
   // Tool 5: oddkit_challenge — canon-driven, four governance surfaces.
   // Full envelope + governance_source + governance_uris (plural, per PRD D4 —
   // shape diverges from encode by design because challenge reads four peer
