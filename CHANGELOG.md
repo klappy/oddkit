@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-04-20
+
+### Changed
+
+- **`oddkit_challenge` prerequisite evaluation migrated from regex-per-check to stemmed set intersection** (per PRD D5 from P1.3.2 — split-by-fit). Each prereq now evaluates via `Array.from(prereq.stemmedTokens).some(s => inputStems.has(s))` over a Set computed once at canon-fetch time, with `tokenize(input)` hoisted out of the per-prereq loop. **Strictly additive**: every input that matched the prior regex still matches, plus stemmed variations now do too — `problems identified` satisfies `evidence-cited` (stems `problem` + `identif`), `considered alternatives` satisfies `alternatives-considered` (stems `consid` + `altern`), `acknowledged the risks` satisfies `risk-acknowledged` (stems `acknowledg` + `risk`). The four structural side-tests (URL / numeric / proper-noun / citation) preserved verbatim from the pre-refactor evaluator because they cover cases the keyword vocabulary cannot — `source-named` inputs like `"here's the URL: https://..."` have no stemmed overlap with the vocab `per / according to / from / source: / who said / where i read` but the URL structural test catches them. The conservative no-keyword-no-flag fallback (pass on `input.trim().length >= 20`) also preserved. Same matcher gate shipped in 0.20.0.
+
+- **`oddkit_challenge` type-detection BM25 index cache removed** (per PRD D9 from P1.3.2 — don't cache microsecond derivations). `cachedChallengeTypeIndex` and `cachedChallengeTypeIndexKnowledgeBaseUrl` module-level fields deleted; `getOrBuildChallengeTypeIndex` function deleted; `cleanup_storage` resets deleted; the call site in `runChallengeAction` rebuilds the BM25 index inline per request via `buildBM25Index(types.map(t => ({id: t.slug, text: t.detectionText})), vocab.stopWords)`. Same pattern gate shipped in 0.20.0. Removes module-level cache state, URL-keyed invalidation logic, cleanup_storage wiring, and drift risk when source data changes — the four hidden costs enumerated in the new canon principle. Parse-product caches (`cachedChallengeTypes`, `cachedBasePrerequisites`, `cachedNormativeVocabulary`, `cachedStakesCalibration`) remain — those are actual parse work.
+
+### Added
+
+- **New canon principle:** `klappy://canon/principles/cache-fetches-and-parses` (klappy.dev#125, merged `3726073`). Graduates the "cache fetches and parses, not microsecond derivations" pattern to canon as a tier-2 principle after its third deciding-argument recurrence across the tool sweep: 0.18.0 encode parse-product caching (implicit), 0.20.0 gate D9 (first explicit), 0.21.0 challenge `cachedChallengeTypeIndex` removal (second explicit). Names the two halves of the principle, enumerates the four-cost plumbing tax, and anchors the threshold to current corpus sizes (6–9 challenge types, 4 gate transitions, 8 base prereqs).
+
+- **New shared interface `PrereqMatchVocab`** in `workers/src/orchestrate.ts` capturing `stemmedTokens: Set<string>` plus four boolean structural-test flags (`hasURLCheck`, `hasNumericCheck`, `hasProperNounCheck`, `hasCitationCheck`). Mixed into both `BasePrerequisite` and the inline type on `ChallengeTypeDef.prerequisiteOverlays[]` to keep per-type and base-prereq structs in sync. Populated by the new `parseCheckColumn(check: string)` helper at canon-fetch time in both `discoverChallengeTypes` and `fetchBasePrerequisites`.
+
+### Known limitations
+
+- Same as 0.20.0 — Porter-style stemmer does not reverse consonant gemination (`shipping` → `shipp`, not `ship`); affected vocabulary is fixed at canon tier per `klappy.dev#122` precedent. `getIndex` strict-mode (`skipBaselineFallback`) still pending across encode/challenge/gate (carry-forward O-open P2).
+
 ## [0.20.0] - 2026-04-20
 
 ### Added

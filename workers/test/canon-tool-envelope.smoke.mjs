@@ -321,6 +321,139 @@ async function run() {
     }
   }
 
+  // P1.3.3 — stemmed set intersection assertions (challenge prereq evaluator).
+  // Per PRD D5 (split-by-fit): prereq evaluation is independent gap-or-not per
+  // prereq, not ranked; stemmed Set intersection over canon-quoted vocabulary
+  // catches morphological variations the prior regex missed. Strictly additive
+  // over the pre-refactor evaluator. Structural side-tests (URL, numeric,
+  // proper-noun, citation) preserved. See klappy://canon/principles/cache-fetches-and-parses.
+  console.log(`\n─── oddkit_challenge: P1.3.3 stemmed prereq evaluator ───`);
+
+  // Helper: derive the missing-prereq list from a challenge response. The
+  // gap-message strings come from canon (base-prerequisites.md and per-type
+  // articles); we test by substring on canon-stable phrases.
+  const challengeMissing = async (text, mode = "execution") => {
+    const r = await callTool("oddkit_challenge", { input: text, mode });
+    return r.result?.missing_prerequisites || [];
+  };
+  const includesGap = (missing, phrase) =>
+    missing.some((g) => typeof g === "string" && g.toLowerCase().includes(phrase.toLowerCase()));
+
+  // (1) Stemmed match on inflected base-prereq vocab — `observed` is in canon
+  // for evidence-cited; `noticed` and `measured` also. Stemmed Set intersection
+  // means inflected forms (e.g. "I'm noticing") all share the stem `notic`.
+  const stemmedBaseInputs = [
+    "I observed a problem in production today, per the logs at https://example.com/log",
+    "I'm noticing an issue per the reports we collected from the field engineers",
+    "I read about this case in the article from John Smith yesterday",
+  ];
+  for (const txt of stemmedBaseInputs) {
+    const missing = await challengeMissing(txt);
+    ok(
+      `oddkit_challenge: P1.3.3 base-prereq evidence-cited passes for stemmed input "${txt.slice(0, 40)}…"`,
+      !includesGap(missing, "no evidence cited"),
+      `missing: ${JSON.stringify(missing)}`,
+    );
+  }
+
+  // (2) Stemmed per-type prereq match — proposal type's `alternatives-considered`
+  // canon vocab is `alternative, instead, option, considered, rejected`; stemmed
+  // forms of `considered` and `alternatives` should pass.
+  const proposalText =
+    "I propose we ship the new auth flow. I considered alternatives like SSO and OAuth, " +
+    "but rejected those options due to risk and tradeoff cost. The rollout is reversible " +
+    "and we know it succeeded when login latency drops below 200ms per Stripe's data.";
+  const proposalMissing = await challengeMissing(proposalText);
+  ok(
+    `oddkit_challenge: P1.3.3 proposal alternatives-considered passes via stemmed match`,
+    !includesGap(proposalMissing, "no alternatives mentioned"),
+    `missing: ${JSON.stringify(proposalMissing)}`,
+  );
+  ok(
+    `oddkit_challenge: P1.3.3 proposal risk-acknowledged passes via stemmed match`,
+    !includesGap(proposalMissing, "no risks or costs"),
+    `missing: ${JSON.stringify(proposalMissing)}`,
+  );
+
+  // (3) Non-match: input with no keyword overlap and no structural hints
+  // surfaces base prereqs (evidence + source + confidence) in missing list.
+  const noMatchText = "Let me think about this problem space for a while in abstract terms.";
+  const noMatchMissing = await challengeMissing(noMatchText);
+  ok(
+    `oddkit_challenge: P1.3.3 non-matching input surfaces evidence-cited gap`,
+    includesGap(noMatchMissing, "no evidence cited"),
+    `missing: ${JSON.stringify(noMatchMissing)}`,
+  );
+
+  // (4) URL structural test preservation: source-named passes via the URL
+  // structural path even though the input has no quoted-vocab overlap with
+  // `per / according to / from / source: / who said / where i read`.
+  const urlOnlyText = "I think this works, see https://docs.example.com/auth-flow for the design.";
+  const urlMissing = await challengeMissing(urlOnlyText);
+  ok(
+    `oddkit_challenge: P1.3.3 source-named passes via URL structural test (no keyword overlap)`,
+    !includesGap(urlMissing, "no source named"),
+    `missing: ${JSON.stringify(urlMissing)}`,
+  );
+
+  // (5) Proper-noun structural test preservation: source-named passes via
+  // the proper-noun pattern (`per <Capitalized> <Capitalized>`).
+  const properNounText =
+    "I believe the auth flow needs revisiting based on what I observed per Jane Smith yesterday.";
+  const pnMissing = await challengeMissing(properNounText);
+  ok(
+    `oddkit_challenge: P1.3.3 source-named passes via proper-noun structural test`,
+    !includesGap(pnMissing, "no source named"),
+    `missing: ${JSON.stringify(pnMissing)}`,
+  );
+
+  // (6) Citation structural test preservation: `\baccording to\b` triggers
+  // the citation path on a source-named-relevant phrase.
+  const citationText =
+    "I observed a regression in the deploy pipeline according to Tuesday's measurements [3].";
+  const citMissing = await challengeMissing(citationText);
+  ok(
+    `oddkit_challenge: P1.3.3 source-named passes via citation structural test`,
+    !includesGap(citMissing, "no source named"),
+    `missing: ${JSON.stringify(citMissing)}`,
+  );
+
+  // (7) Rebuild stability — Item 2's inline BM25 type index build per request
+  // produces deterministic results across consecutive calls with identical input.
+  // (Proxy: same `prerequisites_missing` list across two calls.)
+  const stabilityText =
+    "I observed a problem with the deploy. According to Jane Smith we should ship the fix.";
+  const run1 = await challengeMissing(stabilityText);
+  const run2 = await challengeMissing(stabilityText);
+  ok(
+    `oddkit_challenge: P1.3.3 inline rebuild produces stable results across consecutive calls`,
+    JSON.stringify(run1) === JSON.stringify(run2),
+    `run1: ${JSON.stringify(run1)}\n           run2: ${JSON.stringify(run2)}`,
+  );
+
+  // (8) Backward-compat: pre-refactor regex evaluator passed on inputs containing
+  // any quoted keyword (case-insensitive word-boundary). Confirm a literal-keyword
+  // input still passes — `"observed"` is in evidence-cited's canon vocab.
+  const literalText = "I observed nothing remarkable here per Alice Johnson.";
+  const literalMissing = await challengeMissing(literalText);
+  ok(
+    `oddkit_challenge: P1.3.3 backward-compat — literal canon keyword "observed" still passes evidence-cited`,
+    !includesGap(literalMissing, "no evidence cited"),
+    `missing: ${JSON.stringify(literalMissing)}`,
+  );
+
+  // (9) Confidence-signaled stemmed match — canon vocab includes `believe,
+  // think, know, suspect, certain, tentative, confident, unsure`. Stemmed
+  // form `believ` matches `I believe` and `believing`.
+  const confidenceText =
+    "I believe we observed a stable pattern per the measurements from Jane Smith last week.";
+  const confMissing = await challengeMissing(confidenceText);
+  ok(
+    `oddkit_challenge: P1.3.3 confidence-signaled passes via stemmed match on "believe"`,
+    !includesGap(confMissing, "confidence level not signaled"),
+    `missing: ${JSON.stringify(confMissing)}`,
+  );
+
   // Tool 6: oddkit_gate — canon-driven, two governance surfaces. Full envelope +
   // governance_source + governance_uris (plural array of 2 — shape diverges
   // from encode's singular governance_uri, matches challenge's plural shape,
