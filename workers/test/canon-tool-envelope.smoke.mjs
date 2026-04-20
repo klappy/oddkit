@@ -224,6 +224,98 @@ async function run() {
     `got: ${encodeOverride.result?.governance_source}`,
   );
 
+  // P1.3.4 D5 regression anchors — stemmed set intersection replaces regex
+  // alternation on the encode classifier. These assertions exist because
+  // the pre-refactor literal regex path could not match inflections of
+  // canon vocab (`deciding` does not match `decided` under `\bdecided\b`),
+  // and the P1.3.3 Bug #1 precedent showed that tokenize()'s default
+  // stop-word filter silently breaks multi-word canon vocab (`going with`,
+  // `committed to`, `must not`). The assertions are numbered (12)–(15) to
+  // continue the sequence P1.3.3 established at (10)/(11).
+  console.log(`\n─── oddkit_encode: (12) stemmed inflection match (D5 landed) ───`);
+  const encodeInflection = await callTool("oddkit_encode", {
+    input: "I'm deciding to ship the two-tier cascade",
+  });
+  expectFullEnvelope("oddkit_encode (inflection match)", encodeInflection);
+  const inflectionTypes = (encodeInflection.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: (12) `deciding` (inflection of `decided`) classifies as Decision via stem intersection",
+    inflectionTypes.includes("D"),
+    `got artifact types: ${inflectionTypes.join(",")}`,
+  );
+
+  console.log(`\n─── oddkit_encode: (13) stop-word canon vocab survives tokenize (P1.3.3 C-04 ported) ───`);
+  const encodeStopWord = await callTool("oddkit_encode", {
+    input: "we're going with option B after the review",
+  });
+  expectFullEnvelope("oddkit_encode (stop-word survival)", encodeStopWord);
+  const stopWordTypes = (encodeStopWord.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: (13) `going with` (multi-word canon vocab containing stop-word `with`) matches Decision",
+    stopWordTypes.includes("D"),
+    `got artifact types: ${stopWordTypes.join(",")}`,
+  );
+
+  console.log(`\n─── oddkit_encode: (14) multi-type no-break preservation (L1161 design comment) ───`);
+  const encodeMultiType = await callTool("oddkit_encode", {
+    input: "We must never deploy without tests because we decided this last week",
+  });
+  expectFullEnvelope("oddkit_encode (multi-type)", encodeMultiType);
+  const multiTypeTypes = (encodeMultiType.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: (14) paragraph matching both Constraint and Decision emits both artifact types (no-break path)",
+    multiTypeTypes.includes("C") && multiTypeTypes.includes("D"),
+    `got artifact types: ${multiTypeTypes.join(",")}`,
+  );
+
+  console.log(`\n─── oddkit_encode: (15) first-match preservation in batch-untagged path ───`);
+  const encodeBatchUntagged = await callTool("oddkit_encode", {
+    input: "[D] explicit decision tag on first paragraph\n\nwe must always write tests before we decided on TDD",
+  });
+  expectFullEnvelope("oddkit_encode (batch first-match)", encodeBatchUntagged);
+  const batchArtifacts = encodeBatchUntagged.result?.artifacts ?? [];
+  ok(
+    "oddkit_encode: (15) batch with tagged + untagged paragraphs emits exactly 2 artifacts (first-match path picks one type per untagged paragraph)",
+    batchArtifacts.length === 2,
+    `got length: ${batchArtifacts.length}; types: ${batchArtifacts.map((a) => a.type).join(",")}`,
+  );
+
+  console.log(`\n─── oddkit_encode: (16) phrase-subset regression anchor (Bugbot PR #126) ───`);
+  // Pre-Bugbot-fix the matcher used a flat stemmedTokens: Set<string> where
+  // multi-word canon phrases like `committed to` (Decision) and `next step`
+  // (Handoff) were flattened into individual stems and each was added as a
+  // standalone singleton. Stop-word filtering is disabled by design (P1.3.3
+  // C-04), so function-word stems like `to`, `with`, `by`, `up`, `out`
+  // became universal match triggers — virtually every English paragraph
+  // would fire Decision and Handoff and more. Autofix commit 113ba11
+  // adopted a phrase-subset match: a phrase matches only when ALL of its
+  // stems appear in the input stem set. Single-stem phrases degenerate to
+  // set membership (inflection matching still works); multi-stem phrases
+  // require conjunction. The input below contains stems `need`, `to`,
+  // `wait`, `until`, `tomorrow`, `for`, `the`, `review` — no Decision
+  // phrase has ALL its stems present (`decid` / `decis` / `chose` / `choos`
+  // / `select` all absent; `[committ, to]` fails on `committ`; `[go, with]`
+  // fails on both), and no Handoff phrase has ALL its stems present
+  // (`[next, session]` / `[next, step]` / `[follow, up]` / `[block, by]`
+  // / `[wait, on]` all fail on their second stem; `todo` / `continu` /
+  // `remain` / `handoff` singletons all absent). A revision that
+  // re-flattens the matcher would spuriously fire D and H on this input.
+  const encodePhraseSubset = await callTool("oddkit_encode", {
+    input: "I need to wait until tomorrow for the review",
+  });
+  expectFullEnvelope("oddkit_encode (phrase-subset regression)", encodePhraseSubset);
+  const phraseSubsetTypes = (encodePhraseSubset.result?.artifacts ?? []).map((a) => a.type);
+  ok(
+    "oddkit_encode: (16) `to` inside phrasal canon vocab does NOT fire Decision as a standalone trigger",
+    !phraseSubsetTypes.includes("D"),
+    `got artifact types: ${phraseSubsetTypes.join(",")}`,
+  );
+  ok(
+    "oddkit_encode: (16) `to` inside phrasal canon vocab does NOT fire Handoff as a standalone trigger",
+    !phraseSubsetTypes.includes("H"),
+    `got artifact types: ${phraseSubsetTypes.join(",")}`,
+  );
+
   // Tool 5: oddkit_challenge — canon-driven, four governance surfaces.
   // Full envelope + governance_source + governance_uris (plural, per PRD D4 —
   // shape diverges from encode by design because challenge reads four peer

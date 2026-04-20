@@ -56,12 +56,23 @@ export interface OddkitEnvelope {
 /** Internal type — handlers return this, handleUnifiedAction stamps server_time */
 type ActionResult = Omit<OddkitEnvelope, "server_time">;
 
-// Governance-driven encoding types
+// Governance-driven encoding types. Trigger-word classification is stemmed
+// phrase-subset matching per klappy://canon/principles/vodka-architecture
+// (fit the matcher to the problem) — same D5 shape applied to challenge
+// prereqs in 0.21.0 and gate prereqs in 0.20.0. triggerWords kept for
+// debugging only; stemmedPhrases is the parse product the runtime evaluates
+// against. Each inner array is the ordered stem sequence of a single
+// trigger word or phrase; a type matches an input when ALL stems of at
+// least one phrase are present in the input's stem set. This preserves
+// phrase-level semantics (`committed to`, `going with`, `must not`,
+// `next step`, `follow up`, `blocked by`, `turns out`) so common function
+// words (`to`, `with`, `by`, `up`, `out`, `not`) do not become standalone
+// match triggers on every English paragraph.
 interface EncodingTypeDef {
   letter: string;
   name: string;
   triggerWords: string[];
-  triggerRegex: RegExp | null;
+  stemmedPhrases: string[][];
   qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }>;
 }
 
@@ -79,9 +90,12 @@ interface ParsedArtifact {
   priority_band?: string;
 }
 
-let cachedEncodingTypes: EncodingTypeDef[] | null = null;
-let cachedEncodingTypesKnowledgeBaseUrl: string | undefined = undefined;
-let cachedEncodingTypesSource: "knowledge_base" | "minimal" = "minimal";
+// D9 / klappy://canon/principles/cache-fetches-and-parses — no module-level
+// cache on the parse product. fetcher.getFile / fetcher.getIndex already cache
+// the canon read (Module Memory → Cache API → R2, 5-min TTL). Re-running the
+// parse loop per request is sub-millisecond derivation work, not worth the
+// plumbing tax of a keyed cache. Same pattern challenge (0.21.0) and gate
+// (0.20.0) already applied.
 
 // Governance-driven challenge types (E0008 — mirrors encode pattern from PR #96)
 interface ChallengeTypeDef {
@@ -409,10 +423,6 @@ async function discoverEncodingTypes(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
 ): Promise<{ types: EncodingTypeDef[]; source: "knowledge_base" | "minimal" }> {
-  if (cachedEncodingTypes && cachedEncodingTypesKnowledgeBaseUrl === knowledgeBaseUrl) {
-    return { types: cachedEncodingTypes, source: cachedEncodingTypesSource };
-  }
-
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const typeArticles = index.entries.filter(
     (entry: IndexEntry) => entry.tags?.includes("encoding-type") && entry.path.includes("encoding-types/"),
@@ -437,10 +447,28 @@ async function discoverEncodingTypes(
       const triggerWords = triggerSection
         ? triggerSection[1].split(",").map((w: string) => w.trim()).filter((w: string) => w.length > 0)
         : [];
-      const triggerRegex =
-        triggerWords.length > 0
-          ? new RegExp("\\b(" + triggerWords.map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b", "i")
-          : null;
+      // D5 / klappy://canon/principles/vodka-architecture — classification is
+      // stemmed phrase-subset matching, not regex alternation. Each canon
+      // trigger word/phrase is parsed once into its ordered stem sequence;
+      // runtime tokenizes input once and a type matches when ALL stems of
+      // at least one phrase are present. Inflected forms (deciding → decid,
+      // realizing → realiz) match their canonical stems without canon having
+      // to list each inflection. Stop-word filtering is disabled (empty Set)
+      // on both the parse-time and runtime tokenize() calls — canon vocab
+      // includes stop-word-adjacent phrases (`going with`, `committed to`,
+      // `must not`, `turns out`, `next step`, `blocked by`, `found that`)
+      // and dropping them would silently break the strictly-additive
+      // invariant, the same failure mode P1.3.3 hit on challenge's
+      // `from`-in-source-named vocab. Phrase-level conjunction (all stems
+      // of a phrase must match) is the precision floor: without it,
+      // ubiquitous function words like `to`/`with`/`by`/`up`/`out`/`not`
+      // would become standalone triggers on every English paragraph.
+      // Per canon/constraints/release-validation-gate and P1.3.3 C-04.
+      const stemmedPhrases: string[][] = [];
+      for (const word of triggerWords) {
+        const stems = tokenize(word, new Set());
+        if (stems.length > 0) stemmedPhrases.push(stems);
+      }
 
       const criteriaSection = content.match(
         /## Quality Criteria[\s\S]*?\| Criterion[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
@@ -459,7 +487,7 @@ async function discoverEncodingTypes(
         }
       }
 
-      types.push({ letter, name, triggerWords, triggerRegex, qualityCriteria });
+      types.push({ letter, name, triggerWords, stemmedPhrases, qualityCriteria });
     } catch {
       continue;
     }
@@ -495,17 +523,21 @@ async function discoverEncodingTypes(
       ["H", "Handoff",     ["next session", "next step", "todo", "follow up", "blocked by"]],
       ["E", "Encode",      ["encoded", "captured", "crystallized", "persisted", "artifact"]],
     ];
-    resolved = defaults.map(([letter, name, words]) => ({
-      letter, name, triggerWords: words,
-      triggerRegex: new RegExp("\\b(" + words.join("|") + ")\\b", "i"),
-      qualityCriteria: [],
-    }));
+    resolved = defaults.map(([letter, name, words]) => {
+      const stemmedPhrases: string[][] = [];
+      for (const word of words) {
+        const stems = tokenize(word, new Set());
+        if (stems.length > 0) stemmedPhrases.push(stems);
+      }
+      return {
+        letter, name, triggerWords: words,
+        stemmedPhrases,
+        qualityCriteria: [],
+      };
+    });
     source = "minimal";
   }
 
-  cachedEncodingTypes = resolved;
-  cachedEncodingTypesKnowledgeBaseUrl = knowledgeBaseUrl;
-  cachedEncodingTypesSource = source;
   return { types: resolved, source };
 }
 
@@ -1084,6 +1116,25 @@ function isPrefixedBatchInput(input: string): boolean {
   return paragraphs.some((p) => PREFIX_TAG_REGEX.test(p));
 }
 
+// Phrase-subset match — a phrase matches when ALL of its stems appear in the
+// input stem set. Short-circuits on the first phrase that matches. The D5
+// matcher shape for encode trigger-word classification, mirroring the shape
+// used by evaluatePrerequisiteCheck in the P1.3.3 challenge evaluator:
+// single-stem phrases degenerate to set membership (identical to the old
+// single-token behavior), while multi-stem phrases like
+// `committed to` → ["committ","to"] require both stems to co-occur, so
+// ubiquitous function words cannot match on their own.
+function matchesStemmedPhrases(phrases: string[][], input: Set<string>): boolean {
+  for (const phrase of phrases) {
+    let allPresent = true;
+    for (const stem of phrase) {
+      if (!input.has(stem)) { allPresent = false; break; }
+    }
+    if (allPresent) return true;
+  }
+  return false;
+}
+
 function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
   const typeMap = new Map(types.map((t) => [t.letter, t.name]));
   const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
@@ -1118,9 +1169,16 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
       // Untagged paragraph in a batch that contains tags: classify via trigger
       // words like parseUnstructuredInput, but emit one artifact per paragraph
       // (not one-per-match) to preserve the author's paragraph boundaries.
+      // Stemmed set intersection mirrors parseUnstructuredInput — stop-words
+      // disabled on tokenize() both sides per P1.3.3 C-04 (canon vocab
+      // includes stop-word phrases like `going with` / `must not`).
       let matched: EncodingTypeDef | null = null;
+      const inputStems = new Set(tokenize(para, new Set()));
       for (const t of types) {
-        if (t.triggerRegex && t.triggerRegex.test(para)) { matched = t; break; }
+        // Break on first match: this path picks one type per paragraph by
+        // design (paragraph boundaries are the author's). Unlike
+        // parseUnstructuredInput which emits one artifact per matching type.
+        if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) { matched = t; break; }
       }
       const pick = matched ?? types[0] ?? { letter: "D", name: "Decision" };
       const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
@@ -1157,12 +1215,19 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
   const artifacts: ParsedArtifact[] = [];
   for (const para of paragraphs) {
     let matched = false;
+    // Hoist tokenize(para) out of the per-type loop — para is constant across
+    // the loop, stemmedTokens differ per type. Mirrors the P1.3.3 challenge
+    // prereq evaluator shape. Stop-words disabled (empty Set) on both parse-
+    // time and runtime tokenize() calls so canon vocab like `going with`,
+    // `must not`, `turns out`, `found that` survives on both sides. Per
+    // canon/constraints/release-validation-gate and P1.3.3 Bug #1 precedent.
+    const inputStems = new Set(tokenize(para, new Set()));
     for (const t of types) {
       // DESIGN: no break — a paragraph can match multiple types intentionally.
       // "We must never deploy without tests" is both Decision and Constraint.
       // Multi-typing at the server level mirrors what the model would do with
       // separate TSV rows. Do not add a break here.
-      if (t.triggerRegex && t.triggerRegex.test(para)) {
+      if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) {
         const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
         artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
@@ -1518,9 +1583,10 @@ async function runCleanupStorage(
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
-  cachedEncodingTypes = null;
-  cachedEncodingTypesKnowledgeBaseUrl = undefined;
-  cachedEncodingTypesSource = "minimal";
+  // cachedEncodingTypes removed in 0.23.0 per cache-fetches-and-parses —
+  // encode's parse product is no longer cached in-process. The fetch tier
+  // (Cache API, R2) already handles canon file caching; the derivation is
+  // sub-millisecond. No reset needed here.
   // E0008 — governance-driven challenge caches (mirror PR #96 fix)
   cachedChallengeTypes = null;
   cachedChallengeTypesKnowledgeBaseUrl = undefined;
