@@ -129,7 +129,14 @@ async function run() {
     `got: ${policyOverride.debug?.knowledge_base_url}`,
   );
 
-  // Tool 4: oddkit_encode — canon-driven, DOLCHEO-aware. Full envelope +
+  // Tool 4: telemetry_public — should have full envelope (no governance_source)
+  console.log("\n─── Testing: telemetry_public ───");
+  const telemetryPublicResult = await callTool("telemetry_public", {
+    sql: "SELECT 1 AS probe FROM oddkit_telemetry WHERE timestamp > NOW() - INTERVAL '1' HOUR LIMIT 1"
+  });
+  expectFullEnvelope("telemetry_public", telemetryPublicResult);
+
+  // Tool 5: oddkit_encode — canon-driven, DOLCHEO-aware. Full envelope +
   // governance_source + DOLCHEO prefix-tag batch mode + Open facet + back-
   // compat for unprefixed input.
   console.log(`\n─── oddkit_encode: envelope + governance_source ───`);

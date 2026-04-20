@@ -449,6 +449,8 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
       openWorldHint: true,
     },
     async ({ sql }) => {
+      const startTime = Date.now();
+
       if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
         return {
           content: [{
@@ -456,6 +458,9 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
             text: JSON.stringify({
               action: "telemetry_public",
               result: { error: "Telemetry queries not configured. CF_ACCOUNT_ID and CF_API_TOKEN required." },
+              server_time: new Date().toISOString(),
+              assistant_text: "Telemetry queries not configured. Set CF_ACCOUNT_ID and CF_API_TOKEN.",
+              debug: { duration_ms: Date.now() - startTime },
             }, null, 2),
           }],
         };
@@ -482,12 +487,26 @@ Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
         result = { error: "Query execution failed." };
       }
 
+      // Derive row count for assistant_text when the result carries data rows
+      let assistantText = "Telemetry query completed.";
+      if (typeof result === 'object' && result !== null) {
+        if ('error' in result) {
+          assistantText = "Telemetry query completed with errors.";
+        } else if ('data' in result && Array.isArray((result as Record<string, unknown>).data)) {
+          const rows = ((result as Record<string, unknown>).data as unknown[]).length;
+          assistantText = `Telemetry query returned ${rows} row${rows === 1 ? "" : "s"}.`;
+        }
+      }
+
       return {
         content: [{
           type: "text" as const,
           text: JSON.stringify({
             action: "telemetry_public",
             result: { data: result, generated_at: new Date().toISOString() },
+            server_time: new Date().toISOString(),
+            assistant_text: assistantText,
+            debug: { duration_ms: Date.now() - startTime },
           }, null, 2),
         }],
       };
