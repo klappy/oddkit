@@ -2145,7 +2145,10 @@ async function runChallengeAction(
   // the loop, stemmedTokens differ per prereq. Per PRD D3 (P1.3.3): stemmed
   // set intersection at runtime, structural tests preserved, no regex compile
   // per check. This is the fit-to-problem matcher per D5.
-  const inputStems = new Set(tokenize(input));
+  // Disable stop-word filtering to preserve canon keywords that happen to be
+  // stop words (e.g. `from` in source-named vocab). Must match the tokenize()
+  // call in parseCheckColumn so vocab and input stems share the same shape.
+  const inputStems = new Set(tokenize(input, new Set()));
   const missing: string[] = [];
   for (const p of prereqMap.values()) {
     const passed = evaluatePrerequisiteCheck(inputStems, input, p);
@@ -2323,10 +2326,16 @@ function parseCheckColumn(check: string): PrereqMatchVocab {
   let m: RegExpExecArray | null;
   while ((m = quotedRegex.exec(check)) !== null) {
     // Tokenize each quoted keyword or phrase — multi-word phrases like
-    // "according to" contribute multiple stems; stop-words are dropped
-    // by tokenize(). This preserves semantic coverage while normalizing
-    // morphology (problems → problem, considered → consid, etc.).
-    for (const stem of tokenize(m[1])) {
+    // "according to" contribute multiple stems. Disable stop-word filtering
+    // (empty Set) because canon vocab includes stop-word keywords — e.g.
+    // `from` in the source-named prereq, `by` / `as` / `with` elsewhere —
+    // and dropping them here would silently remove them from the matcher,
+    // breaking the strictly-additive invariant vs. the prior regex evaluator
+    // which tested each quoted keyword as a raw \b...\b regex against input.
+    // The input side (inputStems) uses the same empty stop-word set so the
+    // two sides share shape. Stemming still applies: morphology is normalized
+    // (problems → problem, considered → consid, etc.).
+    for (const stem of tokenize(m[1], new Set())) {
       stemmedTokens.add(stem);
     }
   }
