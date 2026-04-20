@@ -321,6 +321,118 @@ async function run() {
     }
   }
 
+  // Tool 6: oddkit_gate — canon-driven, two governance surfaces. Full envelope +
+  // governance_source + governance_uris (plural array of 2 — shape diverges
+  // from encode's singular governance_uri, matches challenge's plural shape,
+  // structurally cleaner than challenge because both entries are single-file
+  // peers). Per PRD D5: transitions use BM25 (ranking problem); prereqs use
+  // stemmed set intersection (gap-or-not, avoids BM25 IDF-negative pathology).
+  // Stemming is uniform across knowledge_base and minimal tiers.
+  console.log(`\n─── oddkit_gate: envelope + governance_source + governance_uris ───`);
+  const gateDefault = await callTool("oddkit_gate", {
+    input: "ready to build my feature — decisions locked, done when tests pass, no irreversible changes, all constraints addressed",
+  });
+  expectFullEnvelope("oddkit_gate (default knowledge_base)", gateDefault);
+  expectGovernanceSource("oddkit_gate (default knowledge_base)", gateDefault, "knowledge_base");
+  ok(
+    "oddkit_gate: result.governance_uris is an array of exactly 2 entries",
+    Array.isArray(gateDefault.result?.governance_uris) &&
+      gateDefault.result?.governance_uris.length === 2,
+    `got: ${JSON.stringify(gateDefault.result?.governance_uris)}`,
+  );
+  const expectedGateUris = [
+    "klappy://odd/gate/prerequisites",
+    "klappy://odd/gate/transitions",
+  ];
+  ok(
+    "oddkit_gate: governance_uris matches alphabetical peer set",
+    JSON.stringify(gateDefault.result?.governance_uris) === JSON.stringify(expectedGateUris),
+    `got: ${JSON.stringify(gateDefault.result?.governance_uris)}`,
+  );
+  ok(
+    "oddkit_gate: result.governance_uri (singular) is NOT emitted (divergence from encode by design — PRD D4)",
+    gateDefault.result?.governance_uri === undefined,
+    `got: ${gateDefault.result?.governance_uri}`,
+  );
+
+  console.log(`\n─── oddkit_gate: knowledge_base_url override ───`);
+  const gateOverride = await callTool("oddkit_gate", {
+    input: "ready to build",
+    knowledge_base_url: "https://github.com/torvalds/linux",
+  });
+  expectFullEnvelope("oddkit_gate (override → linux)", gateOverride);
+  ok(
+    "oddkit_gate: debug.knowledge_base_url echoed on override",
+    gateOverride.debug?.knowledge_base_url === "https://github.com/torvalds/linux",
+    `got: ${gateOverride.debug?.knowledge_base_url}`,
+  );
+  // Known limitation inherited from 0.18.0/0.19.0: getIndex merges baseline
+  // entries into the override result, so overrides to repos that lack the
+  // expected governance files may still resolve via the baseline tier rather
+  // than falling through to minimal. Same assertion pattern as encode's
+  // override test — accept either tier rather than forcing "minimal".
+  ok(
+    "oddkit_gate: governance_source is a valid tier on override",
+    ["knowledge_base", "minimal"].includes(gateOverride.result?.governance_source),
+    `got: ${gateOverride.result?.governance_source}`,
+  );
+
+  console.log(`\n─── oddkit_gate: BM25 transition detection — literal + stemmed variants ───`);
+  const transitionCases = [
+    { input: "ready to build", expected: "execution", label: "literal planning→execution" },
+    { input: "started building the feature", expected: "execution", label: "stemmed: started building → start build" },
+    { input: "start planning", expected: "planning", label: "literal exploration→planning" },
+    { input: "we're planning the approach", expected: "planning", label: "stemmed: planning → plan" },
+    { input: "ship it", expected: "completion", label: "literal execution→completion" },
+    { input: "shipping this now", expected: "completion", label: "stemmed: shipping → ship" },
+    { input: "step back", expected: "exploration", label: "literal execution→exploration" },
+    { input: "stepped back to reconsider", expected: "exploration", label: "stemmed: stepped back → step back" },
+    { input: "hello there", expected: "unknown", label: "default guard: no match" },
+  ];
+  for (const tc of transitionCases) {
+    const r = await callTool("oddkit_gate", { input: tc.input });
+    ok(
+      `oddkit_gate[${tc.label}]: transition.to === "${tc.expected}"`,
+      r.result?.transition?.to === tc.expected,
+      `input: "${tc.input}" got: ${r.result?.transition?.to}`,
+    );
+  }
+
+  console.log(`\n─── oddkit_gate: BM25 priority resolution (specific phrase beats bare word) ───`);
+  // "ready to build my feature" — "ready" appears in both planning-to-execution
+  // and exploration-to-planning vocabularies; "build" only appears in the
+  // former. BM25 should score the 2-term match (ready + build) above the
+  // 1-term match (ready alone), yielding planning-to-execution. This tests
+  // that BM25 scoring replaces the old regex cascade's fragile order-dependent
+  // priority resolution.
+  const priorityCase = await callTool("oddkit_gate", { input: "ready to build my feature" });
+  ok(
+    "oddkit_gate: BM25 scoring picks planning-to-execution (specific phrase) over exploration-to-planning (bare 'ready')",
+    priorityCase.result?.transition?.to === "execution",
+    `got: ${priorityCase.result?.transition?.to}`,
+  );
+
+  console.log(`\n─── oddkit_gate: stemmed prereq set-intersection ───`);
+  // Prereq check uses stemmed set intersection (not BM25). Input contains:
+  // "locked" (→ decisions_locked check vocab "locked"), "done" (→ dod_defined
+  // and dod_met), "irreversible" (→ irreversibility_assessed), "addressed"
+  // (→ constraints_satisfied check vocab stemmed from "addressed"). With
+  // planning→execution transition, all four required prereqs pass.
+  const prereqPass = await callTool("oddkit_gate", {
+    input: "ready to build — decisions locked, done when tests pass, no irreversible changes, all constraints addressed",
+  });
+  ok(
+    "oddkit_gate: stemmed prereq match produces PASS status",
+    prereqPass.result?.status === "PASS",
+    `got: ${prereqPass.result?.status} | unmet: ${JSON.stringify(prereqPass.result?.prerequisites?.unmet)}`,
+  );
+  ok(
+    "oddkit_gate: all 4 planning→execution prereqs marked met",
+    prereqPass.result?.prerequisites?.required_met === 4 &&
+      prereqPass.result?.prerequisites?.required_total === 4,
+    `got: met=${prereqPass.result?.prerequisites?.required_met} total=${prereqPass.result?.prerequisites?.required_total}`,
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }
