@@ -659,14 +659,10 @@ async function fetchNormativeVocabulary(
   const caseInsensitiveWords: string[] = [];
   const directiveTypes = new Map<string, string>();
   const stopWords = new Set<string>();
-  // Track whether canon parse produced anything. Left-falling to the hardcoded
-  // RFC 2119 fallback below is the "minimal" tier for this dimension.
-  let parsedFromCanon = false;
 
   try {
     const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", knowledgeBaseUrl);
     if (content) {
-      parsedFromCanon = true;
       // ── Surface 1: Normative Vocabulary (signal in canon quotes) ──
       // Two subsections under "## Normative Vocabulary": one keyed by "RFC 2119"
       // or "Directive Language" (case-sensitive), one for architectural-writing
@@ -708,8 +704,12 @@ async function fetchNormativeVocabulary(
     // Graceful degradation below
   }
 
-  // Fallback: minimal built-in RFC 2119 if article missing
-  if (caseSensitiveWords.length === 0 && caseInsensitiveWords.length === 0) {
+  // Fallback: minimal built-in RFC 2119 if article missing or parsed zero rows.
+  // Track whether the hardcoded fallback ran so the dimension's source is
+  // classified based on parse success (parity with the other three helpers),
+  // not merely on canon article availability.
+  const parsedFromCanon = caseSensitiveWords.length > 0 || caseInsensitiveWords.length > 0;
+  if (!parsedFromCanon) {
     for (const w of ["MUST", "MUST NOT", "SHOULD", "SHOULD NOT"]) {
       caseSensitiveWords.push(w);
       directiveTypes.set(w, w.includes("NOT") ? "prohibition" : "requirement");
@@ -744,10 +744,11 @@ async function fetchNormativeVocabulary(
   };
   cachedNormativeVocabulary = vocab;
   cachedNormativeVocabularyKnowledgeBaseUrl = knowledgeBaseUrl;
-  // Source classification per PRD D3: parsedFromCanon is true iff the canon article
-  // returned content; false means the hardcoded RFC 2119 fallback took over. The
-  // vocab article having content but parsing zero rows is still "knowledge_base"
-  // (canon authoritatively said the lists are empty), not "minimal".
+  // Source classification per PRD D3: parsedFromCanon is true iff the canon
+  // article parsed at least one vocabulary row. Empty result — whether the
+  // article was missing, unreadable, or present but contained no parseable
+  // tables — means the hardcoded RFC 2119 fallback took over, which is the
+  // "minimal" tier for this dimension. Parity with the other three helpers.
   const source: "knowledge_base" | "minimal" = parsedFromCanon ? "knowledge_base" : "minimal";
   cachedNormativeVocabularySource = source;
   return { vocabulary: vocab, source };
