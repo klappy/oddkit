@@ -1583,7 +1583,7 @@ async function runCleanupStorage(
   // Also clear the in-memory BM25 index
   cachedBM25Index = null;
   cachedBM25Entries = null;
-  // cachedEncodingTypes removed in 0.22.0 per cache-fetches-and-parses —
+  // cachedEncodingTypes removed in 0.23.0 per cache-fetches-and-parses —
   // encode's parse product is no longer cached in-process. The fetch tier
   // (Cache API, R2) already handles canon file caching; the derivation is
   // sub-millisecond. No reset needed here.
