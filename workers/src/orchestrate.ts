@@ -126,14 +126,18 @@ interface StakesCalibration {
 
 let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
 let cachedChallengeTypesKnowledgeBaseUrl: string | undefined = undefined;
+let cachedChallengeTypesSource: "knowledge_base" | "minimal" = "minimal";
 let cachedChallengeTypeIndex: BM25Index | null = null;
 let cachedChallengeTypeIndexKnowledgeBaseUrl: string | undefined = undefined;
 let cachedBasePrerequisites: BasePrerequisite[] | null = null;
 let cachedBasePrerequisitesKnowledgeBaseUrl: string | undefined = undefined;
+let cachedBasePrerequisitesSource: "knowledge_base" | "minimal" = "minimal";
 let cachedNormativeVocabulary: NormativeVocabulary | null = null;
 let cachedNormativeVocabularyKnowledgeBaseUrl: string | undefined = undefined;
+let cachedNormativeVocabularySource: "knowledge_base" | "minimal" = "minimal";
 let cachedStakesCalibration: StakesCalibration | null = null;
 let cachedStakesCalibrationKnowledgeBaseUrl: string | undefined = undefined;
+let cachedStakesCalibrationSource: "knowledge_base" | "minimal" = "minimal";
 
 export interface UnifiedParams {
   action: string;
@@ -442,8 +446,10 @@ async function discoverEncodingTypes(
 async function discoverChallengeTypes(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
-): Promise<ChallengeTypeDef[]> {
-  if (cachedChallengeTypes && cachedChallengeTypesKnowledgeBaseUrl === knowledgeBaseUrl) return cachedChallengeTypes;
+): Promise<{ types: ChallengeTypeDef[]; source: "knowledge_base" | "minimal" }> {
+  if (cachedChallengeTypes && cachedChallengeTypesKnowledgeBaseUrl === knowledgeBaseUrl) {
+    return { types: cachedChallengeTypes, source: cachedChallengeTypesSource };
+  }
 
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const typeArticles = index.entries.filter(
@@ -564,11 +570,16 @@ async function discoverChallengeTypes(
 
   cachedChallengeTypes = types;
   cachedChallengeTypesKnowledgeBaseUrl = knowledgeBaseUrl;
+  // Source classification per PRD D3: types.length > 0 from canon = "knowledge_base";
+  // zero docs parsed = "minimal" (challenge preserves current hollow-response behavior
+  // rather than inventing a built-in fallback registry — see PRD D7).
+  const source: "knowledge_base" | "minimal" = types.length > 0 ? "knowledge_base" : "minimal";
+  cachedChallengeTypesSource = source;
   // Index build deferred — needs vocab.stopWords from fetchNormativeVocabulary,
   // assembled lazily by getOrBuildChallengeTypeIndex below. Both types and the
   // index are deterministic functions of knowledgeBaseUrl, so caching by knowledgeBaseUrl
   // remains safe.
-  return types;
+  return { types, source };
 }
 
 /** Lazily build (or return cached) per-knowledgeBaseUrl BM25 index over the per-type
@@ -598,9 +609,9 @@ function getOrBuildChallengeTypeIndex(
 async function fetchBasePrerequisites(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
-): Promise<BasePrerequisite[]> {
+): Promise<{ prerequisites: BasePrerequisite[]; source: "knowledge_base" | "minimal" }> {
   if (cachedBasePrerequisites && cachedBasePrerequisitesKnowledgeBaseUrl === knowledgeBaseUrl)
-    return cachedBasePrerequisites;
+    return { prerequisites: cachedBasePrerequisites, source: cachedBasePrerequisitesSource };
 
   const result: BasePrerequisite[] = [];
   try {
@@ -628,24 +639,34 @@ async function fetchBasePrerequisites(
 
   cachedBasePrerequisites = result;
   cachedBasePrerequisitesKnowledgeBaseUrl = knowledgeBaseUrl;
-  return result;
+  // Source classification per PRD D3: result.length > 0 when the canon article
+  // parsed at least one overlay row. Empty result = canon unreachable OR article
+  // exists but has no rows — in either case the tool falls back to type overlays
+  // only, which is the "minimal" tier for this dimension.
+  const source: "knowledge_base" | "minimal" = result.length > 0 ? "knowledge_base" : "minimal";
+  cachedBasePrerequisitesSource = source;
+  return { prerequisites: result, source };
 }
 
 async function fetchNormativeVocabulary(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
-): Promise<NormativeVocabulary> {
+): Promise<{ vocabulary: NormativeVocabulary; source: "knowledge_base" | "minimal" }> {
   if (cachedNormativeVocabulary && cachedNormativeVocabularyKnowledgeBaseUrl === knowledgeBaseUrl)
-    return cachedNormativeVocabulary;
+    return { vocabulary: cachedNormativeVocabulary, source: cachedNormativeVocabularySource };
 
   const caseSensitiveWords: string[] = [];
   const caseInsensitiveWords: string[] = [];
   const directiveTypes = new Map<string, string>();
   const stopWords = new Set<string>();
+  // Track whether canon parse produced anything. Left-falling to the hardcoded
+  // RFC 2119 fallback below is the "minimal" tier for this dimension.
+  let parsedFromCanon = false;
 
   try {
     const content = await fetcher.getFile("odd/challenge/normative-vocabulary.md", knowledgeBaseUrl);
     if (content) {
+      parsedFromCanon = true;
       // ── Surface 1: Normative Vocabulary (signal in canon quotes) ──
       // Two subsections under "## Normative Vocabulary": one keyed by "RFC 2119"
       // or "Directive Language" (case-sensitive), one for architectural-writing
@@ -723,15 +744,21 @@ async function fetchNormativeVocabulary(
   };
   cachedNormativeVocabulary = vocab;
   cachedNormativeVocabularyKnowledgeBaseUrl = knowledgeBaseUrl;
-  return vocab;
+  // Source classification per PRD D3: parsedFromCanon is true iff the canon article
+  // returned content; false means the hardcoded RFC 2119 fallback took over. The
+  // vocab article having content but parsing zero rows is still "knowledge_base"
+  // (canon authoritatively said the lists are empty), not "minimal".
+  const source: "knowledge_base" | "minimal" = parsedFromCanon ? "knowledge_base" : "minimal";
+  cachedNormativeVocabularySource = source;
+  return { vocabulary: vocab, source };
 }
 
 async function fetchStakesCalibration(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
-): Promise<StakesCalibration> {
+): Promise<{ calibration: StakesCalibration; source: "knowledge_base" | "minimal" }> {
   if (cachedStakesCalibration && cachedStakesCalibrationKnowledgeBaseUrl === knowledgeBaseUrl)
-    return cachedStakesCalibration;
+    return { calibration: cachedStakesCalibration, source: cachedStakesCalibrationSource };
 
   const byMode = new Map<string, StakesModeConfig>();
   try {
@@ -770,7 +797,12 @@ async function fetchStakesCalibration(
 
   cachedStakesCalibration = { byMode };
   cachedStakesCalibrationKnowledgeBaseUrl = knowledgeBaseUrl;
-  return cachedStakesCalibration;
+  // Source classification per PRD D3: byMode populated from canon = "knowledge_base";
+  // zero modes parsed = "minimal" (runChallengeAction falls to "uniformly loud"
+  // undefined-modeConfig branch at the call site, already handled there).
+  const source: "knowledge_base" | "minimal" = byMode.size > 0 ? "knowledge_base" : "minimal";
+  cachedStakesCalibrationSource = source;
+  return { calibration: cachedStakesCalibration, source };
 }
 
 function isStructuredInput(input: string): boolean {
@@ -1263,14 +1295,18 @@ async function runCleanupStorage(
   // E0008 — governance-driven challenge caches (mirror PR #96 fix)
   cachedChallengeTypes = null;
   cachedChallengeTypesKnowledgeBaseUrl = undefined;
+  cachedChallengeTypesSource = "minimal";
   cachedChallengeTypeIndex = null;
   cachedChallengeTypeIndexKnowledgeBaseUrl = undefined;
   cachedBasePrerequisites = null;
   cachedBasePrerequisitesKnowledgeBaseUrl = undefined;
+  cachedBasePrerequisitesSource = "minimal";
   cachedNormativeVocabulary = null;
   cachedNormativeVocabularyKnowledgeBaseUrl = undefined;
+  cachedNormativeVocabularySource = "minimal";
   cachedStakesCalibration = null;
   cachedStakesCalibrationKnowledgeBaseUrl = undefined;
+  cachedStakesCalibrationSource = "minimal";
 
   return {
     action: "cleanup_storage",
@@ -1715,13 +1751,42 @@ async function runChallengeAction(
   const startMs = Date.now();
   const mode = (modeHint || "planning").toLowerCase();
 
-  // Load governance in parallel
-  const [types, basePrereqs, vocab, calibration] = await Promise.all([
+  // Load governance in parallel. Each helper returns a { <domainNoun>, source }
+  // tuple per PRD D3; aggregate the four source flags into a single envelope
+  // signal per PRD D1 (strict: any helper minimal → aggregate minimal).
+  const [
+    { types, source: typesSource },
+    { prerequisites: basePrereqs, source: basePrereqsSource },
+    { vocabulary: vocab, source: vocabSource },
+    { calibration, source: calibrationSource },
+  ] = await Promise.all([
     discoverChallengeTypes(fetcher, knowledgeBaseUrl),
     fetchBasePrerequisites(fetcher, knowledgeBaseUrl),
     fetchNormativeVocabulary(fetcher, knowledgeBaseUrl),
     fetchStakesCalibration(fetcher, knowledgeBaseUrl),
   ]);
+
+  // Aggregate: strict union per canon/constraints/core-governance-baseline.
+  // Two-tier today (workers/baseline/ not shipped — see PRD §3.2); when the
+  // bundled tier ships later, this union expands additively to include
+  // "bundled" without breaking consumers.
+  const governanceSource: "knowledge_base" | "minimal" =
+    [typesSource, basePrereqsSource, vocabSource, calibrationSource].some((s) => s === "minimal")
+      ? "minimal"
+      : "knowledge_base";
+
+  // Four peer governance URIs per PRD D4 — shape diverges from encode's
+  // singular governance_uri by design. Challenge's governance surfaces are
+  // peers (not a hierarchy), so a single anchor would misrepresent where
+  // base-prerequisites and normative-vocabulary live. Alphabetical by
+  // path-tail for stability; consumers that want a singular anchor can read
+  // governance_uris[0].
+  const governanceUris = [
+    "klappy://odd/challenge/base-prerequisites",
+    "klappy://odd/challenge-types",
+    "klappy://odd/challenge/normative-vocabulary",
+    "klappy://odd/challenge/stakes-calibration",
+  ];
 
   const modeConfig = calibration.byMode.get(mode);
 
@@ -1766,6 +1831,8 @@ async function runChallengeAction(
           name: t.name,
           description: t.blockquote,
         })),
+        governance_source: governanceSource,
+        governance_uris: governanceUris,
         tensions: [],
         missing_prerequisites: [],
         challenges: [],
@@ -1776,7 +1843,11 @@ async function runChallengeAction(
       },
       state: state ? initState(state) : undefined,
       assistant_text: `Challenge suppressed for mode '${mode}'. Raw thought capture protected.`,
-      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+      debug: {
+        duration_ms: Date.now() - startMs,
+        generated_at: new Date().toISOString(),
+        knowledge_base_url: knowledgeBaseUrl,
+      },
     };
   }
 
@@ -1972,6 +2043,8 @@ async function runChallengeAction(
         name: t.name,
         description: t.blockquote,
       })),
+      governance_source: governanceSource,
+      governance_uris: governanceUris,
       tensions,
       missing_prerequisites: missing,
       challenges: surfacedQuestions,
@@ -1981,7 +2054,11 @@ async function runChallengeAction(
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
-    debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    debug: {
+      duration_ms: Date.now() - startMs,
+      generated_at: new Date().toISOString(),
+      knowledge_base_url: knowledgeBaseUrl,
+    },
   };
 }
 
