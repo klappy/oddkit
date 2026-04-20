@@ -292,7 +292,7 @@ Use when:
     },
     {
       name: "oddkit_gate",
-      description: "Check transition prerequisites before changing epistemic modes. Validates readiness and blocks premature convergence. Gate at every implicit mode transition, not just formal ones.",
+      description: "Check transition prerequisites before changing epistemic modes. Reads governance from klappy://odd/gate/transitions (transition keys, from/to, prereq mappings, detection terms) and klappy://odd/gate/prerequisites (prerequisite definitions and check vocabularies) at runtime; falls back to a minimal hardcoded vocabulary snapshot when canon is unreachable. Transition detection uses BM25 stemmed matching — 'deploying', 'started building', 'reconsidering' and other inflected variations match the same canonical transitions as their base forms. Geminating verbs (ship, step) have common inflections listed directly in canon to cover the stemmer's gemination gap. Prereq evaluation uses stemmed set intersection (independent gap-or-not per prereq; no ranking, no BM25 IDF pathology on the small prereq corpus). Response envelope declares governance_source (knowledge_base|minimal) and governance_uris (plural array of 2) per canon/constraints/core-governance-baseline. Accepts knowledge_base_url to read from an alternate canon. Gate at every implicit mode transition, not just formal ones.",
       action: "gate",
       schema: {
         input: z.string().describe("The proposed transition (e.g., 'ready to build', 'moving to planning')."),

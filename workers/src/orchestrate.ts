@@ -17,7 +17,7 @@ import {
   type IndexEntry,
   type SectionResult,
 } from "./zip-baseline-fetcher";
-import { buildBM25Index, searchBM25, type BM25Index } from "./bm25";
+import { buildBM25Index, searchBM25, tokenize, type BM25Index } from "./bm25";
 import { parseTableRow } from "./markdown-utils";
 import type { RequestTracer } from "./tracing";
 import pkg from "../package.json";
@@ -102,6 +102,39 @@ interface BasePrerequisite {
   gapMessage: string;
 }
 
+// Gate governance types — P1.3.2 (0.20.0). Consumed by runGateAction via
+// fetchGateTransitions and fetchGatePrerequisites. Both read from canon
+// at runtime with a hardcoded minimal vocabulary as the fallback tier.
+// See canon/constraints/core-governance-baseline §Canon-Only — odd/gate/
+// is explicitly canon-only with "structural prereqs" as the minimal tier.
+interface TransitionDef {
+  /** Canon key, e.g. "planning-to-execution". Used as BM25 doc id and for tiebreaker lookup. */
+  key: string;
+  /** The mode being exited. */
+  from: string;
+  /** The mode being entered. */
+  to: string;
+  /** Prerequisite ids that must be satisfied. Resolved against GatePrerequisite[]. */
+  prereqIds: string[];
+  /** Comma-separated detection phrases concatenated into one string, fed to buildBM25Index. */
+  detectionText: string;
+  /** Canon table row index (0-based). Deterministic tiebreaker for BM25 score ties. */
+  rowOrder: number;
+}
+
+interface GatePrerequisite {
+  /** Prereq id, e.g. "problem_defined". Referenced by TransitionDef.prereqIds. */
+  id: string;
+  /** Raw comma-separated check vocabulary from canon, preserved for debugging/introspection. */
+  check: string;
+  /** Surfaced to callers when the prereq fails. */
+  gapMessage: string;
+  /** Precomputed stems of the check vocabulary. Populated at parse time in fetchGatePrerequisites;
+   *  reused across requests (cache fetches and parses, not microsecond derivations — per PRD D9).
+   *  Prereq evaluation is stemmed set intersection: inputStems.intersect(prereq.stemmedTokens) non-empty → pass. */
+  stemmedTokens: Set<string>;
+}
+
 interface NormativeVocabulary {
   caseSensitiveRegex: RegExp | null;
   caseInsensitiveRegex: RegExp | null;
@@ -138,6 +171,18 @@ let cachedNormativeVocabularySource: "knowledge_base" | "minimal" = "minimal";
 let cachedStakesCalibration: StakesCalibration | null = null;
 let cachedStakesCalibrationKnowledgeBaseUrl: string | undefined = undefined;
 let cachedStakesCalibrationSource: "knowledge_base" | "minimal" = "minimal";
+
+// Gate governance caches — P1.3.2 (0.20.0). Parsed governance arrays are
+// cached here; BM25 indexes over transitions are built per-request (not
+// cached — see PRD D9). GatePrerequisite.stemmedTokens is a parse product
+// cached inside each struct, which differs from transitions' inline index:
+// cache fetches and parses, not microsecond derivations.
+let cachedGateTransitions: TransitionDef[] | null = null;
+let cachedGateTransitionsKnowledgeBaseUrl: string | undefined = undefined;
+let cachedGateTransitionsSource: "knowledge_base" | "minimal" = "minimal";
+let cachedGatePrerequisites: GatePrerequisite[] | null = null;
+let cachedGatePrerequisitesKnowledgeBaseUrl: string | undefined = undefined;
+let cachedGatePrerequisitesSource: "knowledge_base" | "minimal" = "minimal";
 
 export interface UnifiedParams {
   action: string;
@@ -604,6 +649,180 @@ function getOrBuildChallengeTypeIndex(
   cachedChallengeTypeIndex = bm25Index;
   cachedChallengeTypeIndexKnowledgeBaseUrl = knowledgeBaseUrl;
   return bm25Index;
+}
+
+// Gate minimal-tier vocabulary — P1.3.2 D6. Used when canon is unreachable
+// or missing required sections. Vocabulary mirrors the pre-0.20.0 hardcoded
+// detectTransition regexes (L306–L324 pre-refactor) and checkPatterns map
+// (L2154–L2163 pre-refactor) flattened to comma-separated phrases and
+// words. Algorithm is uniform across tiers (BM25 for transitions, set
+// intersection for prereqs); only the vocabulary source differs.
+const MINIMAL_TRANSITIONS: Array<{
+  key: string;
+  from: string;
+  to: string;
+  prereqIds: string[];
+  detectionText: string;
+}> = [
+  {
+    key: "planning-to-execution",
+    from: "planning",
+    to: "execution",
+    prereqIds: ["decisions_locked", "dod_defined", "irreversibility_assessed", "constraints_satisfied"],
+    detectionText: "ready to build, ready to implement, start building, let's code, start coding, moving to execution, moving to build",
+  },
+  {
+    key: "exploration-to-planning",
+    from: "exploration",
+    to: "planning",
+    prereqIds: ["problem_defined", "constraints_reviewed"],
+    detectionText: "ready to plan, start planning, let's plan, time to plan, move to planning, moving to planning, ready, let's go, proceed, move forward, next step",
+  },
+  {
+    key: "execution-to-exploration",
+    from: "execution",
+    to: "exploration",
+    prereqIds: [],
+    detectionText: "back to exploration, need to rethink, step back, stepped back, stepping back, reconsider",
+  },
+  {
+    key: "execution-to-completion",
+    from: "execution",
+    to: "completion",
+    prereqIds: ["dod_met", "artifacts_present"],
+    detectionText: "ship, shipping, shipped, deploy, release, go live, push to prod",
+  },
+];
+
+const MINIMAL_PREREQUISITES: Array<{ id: string; check: string; gapMessage: string }> = [
+  { id: "problem_defined", check: "problem, goal, objective, need, issue", gapMessage: "Problem statement not defined — the goal or issue being solved is unclear" },
+  { id: "constraints_reviewed", check: "constraint, rule, policy, reviewed, checked", gapMessage: "Relevant constraints have not been reviewed — what MUST-rules apply here?" },
+  { id: "decisions_locked", check: "decided, locked, chosen, selected, committed", gapMessage: "Key decisions are not locked — which options have been closed?" },
+  { id: "dod_defined", check: "definition of done, dod, done when, acceptance criteria", gapMessage: "Definition of done is unclear — what does the finished artifact look like?" },
+  { id: "irreversibility_assessed", check: "irreversible, can't undo, one-way, point of no return", gapMessage: "Irreversibility not assessed — which aspects cannot be undone after execution?" },
+  { id: "constraints_satisfied", check: "constraints met, constraints satisfied, constraints addressed", gapMessage: "Constraints not confirmed satisfied — are all MUST-rules addressable?" },
+  { id: "dod_met", check: "done, complete, finished, all criteria", gapMessage: "DoD not met — the completion claim is missing evidence against the criteria" },
+  { id: "artifacts_present", check: "screenshot, test, log, artifact, evidence, proof", gapMessage: "Required artifacts not present — what observable proof exists?" },
+];
+
+/** Fetch gate transitions from canon at klappy://odd/gate/transitions.
+ *  Parses the `## Transitions` table (columns: Transition Key | From | To | Prerequisites | Detection Terms).
+ *  Empty result → source: "minimal" with MINIMAL_TRANSITIONS vocabulary.
+ *  BM25 index construction is the caller's responsibility and happens per-request per PRD D9
+ *  (microsecond derivation, not worth caching on gate's tiny corpus). */
+async function fetchGateTransitions(
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
+): Promise<{ transitions: TransitionDef[]; source: "knowledge_base" | "minimal" }> {
+  if (cachedGateTransitions && cachedGateTransitionsKnowledgeBaseUrl === knowledgeBaseUrl)
+    return { transitions: cachedGateTransitions, source: cachedGateTransitionsSource };
+
+  const parsed: TransitionDef[] = [];
+  try {
+    const content = await fetcher.getFile("odd/gate/transitions.md", knowledgeBaseUrl);
+    if (content) {
+      const section = content.match(
+        /## Transitions[\s\S]*?\| Transition Key[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      if (section) {
+        let rowOrder = 0;
+        for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = parseTableRow(row);
+          if (cols.length >= 5) {
+            // Column layout: key | from | to | prereq_ids (comma-separated) | detection terms (comma-separated)
+            const key = cols[0].replace(/`/g, "").trim();
+            const from = cols[1].trim();
+            const to = cols[2].trim();
+            const prereqIdsRaw = cols[3].trim();
+            const detectionText = cols[4].trim();
+            if (key.length === 0) continue;
+            const prereqIds = prereqIdsRaw.length > 0
+              ? prereqIdsRaw.split(",").map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+              : [];
+            parsed.push({ key, from, to, prereqIds, detectionText, rowOrder });
+            rowOrder++;
+          }
+        }
+      }
+    }
+  } catch {
+    // Graceful degradation: canon unreachable → minimal fallback below
+  }
+
+  let transitions: TransitionDef[];
+  let source: "knowledge_base" | "minimal";
+  if (parsed.length > 0) {
+    transitions = parsed;
+    source = "knowledge_base";
+  } else {
+    transitions = MINIMAL_TRANSITIONS.map((t, i) => ({ ...t, rowOrder: i }));
+    source = "minimal";
+  }
+
+  cachedGateTransitions = transitions;
+  cachedGateTransitionsKnowledgeBaseUrl = knowledgeBaseUrl;
+  cachedGateTransitionsSource = source;
+  return { transitions, source };
+}
+
+/** Fetch gate prerequisites from canon at klappy://odd/gate/prerequisites.
+ *  Parses the `## Prerequisite Overlays` table (columns: Prerequisite | Check | Gap message).
+ *  Precomputes stemmedTokens per prereq at parse time (per PRD D5 + D9 — parse product,
+ *  worth caching; prereq matching is stemmed set intersection at runtime, no BM25). */
+async function fetchGatePrerequisites(
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
+): Promise<{ prerequisites: GatePrerequisite[]; source: "knowledge_base" | "minimal" }> {
+  if (cachedGatePrerequisites && cachedGatePrerequisitesKnowledgeBaseUrl === knowledgeBaseUrl)
+    return { prerequisites: cachedGatePrerequisites, source: cachedGatePrerequisitesSource };
+
+  const parsed: GatePrerequisite[] = [];
+  try {
+    const content = await fetcher.getFile("odd/gate/prerequisites.md", knowledgeBaseUrl);
+    if (content) {
+      const section = content.match(
+        /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      if (section) {
+        for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = parseTableRow(row);
+          if (cols.length >= 3) {
+            const id = cols[0].trim();
+            const check = cols[1].trim();
+            const gapMessage = cols[2].replace(/^"|"$/g, "").trim();
+            if (id.length === 0) continue;
+            // Precompute stemmed tokens from check vocabulary. tokenize() stems
+            // and filters stop words using the default set; for gate's small
+            // vocabulary this is appropriate — we want stop-word filtering so
+            // multi-word entries like "definition of done" contribute only the
+            // content-bearing stems.
+            const stemmedTokens = new Set(tokenize(check));
+            parsed.push({ id, check, gapMessage, stemmedTokens });
+          }
+        }
+      }
+    }
+  } catch {
+    // Graceful degradation
+  }
+
+  let prerequisites: GatePrerequisite[];
+  let source: "knowledge_base" | "minimal";
+  if (parsed.length > 0) {
+    prerequisites = parsed;
+    source = "knowledge_base";
+  } else {
+    prerequisites = MINIMAL_PREREQUISITES.map((p) => ({
+      ...p,
+      stemmedTokens: new Set(tokenize(p.check)),
+    }));
+    source = "minimal";
+  }
+
+  cachedGatePrerequisites = prerequisites;
+  cachedGatePrerequisitesKnowledgeBaseUrl = knowledgeBaseUrl;
+  cachedGatePrerequisitesSource = source;
+  return { prerequisites, source };
 }
 
 async function fetchBasePrerequisites(
@@ -1307,6 +1526,13 @@ async function runCleanupStorage(
   cachedStakesCalibration = null;
   cachedStakesCalibrationKnowledgeBaseUrl = undefined;
   cachedStakesCalibrationSource = "minimal";
+  // E0008.3 — gate governance caches (P1.3.2, 0.20.0)
+  cachedGateTransitions = null;
+  cachedGateTransitionsKnowledgeBaseUrl = undefined;
+  cachedGateTransitionsSource = "minimal";
+  cachedGatePrerequisites = null;
+  cachedGatePrerequisitesKnowledgeBaseUrl = undefined;
+  cachedGatePrerequisitesSource = "minimal";
 
   return {
     action: "cleanup_storage",
@@ -2102,91 +2328,94 @@ async function runGateAction(
   state?: OddkitState,
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const transition = detectTransition(input);
   const fullInput = context ? `${input}\n${context}` : input;
 
-  interface Prereq {
-    id: string;
-    description: string;
-    required: boolean;
+  // Load governance in parallel. Each helper returns a { <domainNoun>, source }
+  // tuple per PRD D3; aggregate strictly per D1 (any helper minimal → aggregate
+  // minimal). Per PRD D5: transitions use BM25 (ranking problem); prereqs use
+  // stemmed set intersection (independent gap-or-not, avoids BM25 IDF-negative
+  // pathology on small shared-vocabulary corpora).
+  const [
+    { transitions, source: transitionsSource },
+    { prerequisites, source: prereqsSource },
+  ] = await Promise.all([
+    fetchGateTransitions(fetcher, knowledgeBaseUrl),
+    fetchGatePrerequisites(fetcher, knowledgeBaseUrl),
+  ]);
+
+  // Strict union per canon/constraints/core-governance-baseline. Two-tier
+  // today (workers/baseline/ not shipped); expands additively to include
+  // "bundled" when that pipeline ships.
+  const governanceSource: "knowledge_base" | "minimal" =
+    [transitionsSource, prereqsSource].some((s) => s === "minimal")
+      ? "minimal"
+      : "knowledge_base";
+
+  // Per PRD D4: two peer governance URIs (not singular), alphabetical by
+  // path-tail. Shape divergence from encode's singular governance_uri is
+  // by design — gate's two files are peers with no hierarchy. Shape parity
+  // with challenge's governance_uris plural array; gate's is structurally
+  // cleaner because both entries point to peer single files (challenge's
+  // array mixed a directory anchor with three files).
+  const governanceUris = [
+    "klappy://odd/gate/prerequisites",
+    "klappy://odd/gate/transitions",
+  ];
+
+  // Transition detection via BM25 per PRD D5. Index is built inline from
+  // the cached governance array (per PRD D9 — microsecond derivation, not
+  // cached separately). Top hit with score > 0 wins; rowOrder breaks ties
+  // deterministically when two transitions score identically.
+  const bm25Docs = transitions.map((t) => ({ id: t.key, text: t.detectionText }));
+  const transitionIndex = buildBM25Index(bm25Docs);
+  const hits = searchBM25(transitionIndex, fullInput, transitions.length);
+
+  let matchedTransition: TransitionDef | null = null;
+  if (hits.length > 0 && hits[0].score > 0) {
+    const topScore = hits[0].score;
+    const tiedIds = new Set(hits.filter((h) => h.score === topScore).map((h) => h.id));
+    const tiedTransitions = transitions
+      .filter((t) => tiedIds.has(t.key))
+      .sort((a, b) => a.rowOrder - b.rowOrder);
+    matchedTransition = tiedTransitions[0] ?? null;
   }
-  const prereqs: Prereq[] = [];
-  if (transition.from === "exploration" && transition.to === "planning") {
-    prereqs.push({
-      id: "problem_defined",
-      description: "Problem statement is clearly defined",
-      required: true,
-    });
-    prereqs.push({
-      id: "constraints_reviewed",
-      description: "Relevant constraints have been reviewed",
-      required: true,
-    });
-  } else if (transition.from === "planning" && transition.to === "execution") {
-    prereqs.push({
-      id: "decisions_locked",
-      description: "Key decisions are locked",
-      required: true,
-    });
-    prereqs.push({ id: "dod_defined", description: "Definition of done is clear", required: true });
-    prereqs.push({
-      id: "irreversibility_assessed",
-      description: "Irreversible aspects identified",
-      required: true,
-    });
-    prereqs.push({
-      id: "constraints_satisfied",
-      description: "All MUST constraints are addressable",
-      required: true,
-    });
-  } else if (transition.to === "completion") {
-    prereqs.push({ id: "dod_met", description: "DoD criteria met with evidence", required: true });
-    prereqs.push({
-      id: "artifacts_present",
-      description: "Required artifacts present",
-      required: true,
-    });
-  }
+
+  const transition = matchedTransition
+    ? { from: matchedTransition.from, to: matchedTransition.to }
+    : { from: "unknown", to: "unknown" };
+
+  // Prereq evaluation via stemmed set intersection per PRD D5. Each prereq
+  // evaluates independently — pass if any stemmed input token matches any
+  // stemmed check term; no ranking, no scoring. Eliminates BM25's IDF-
+  // negative pathology on small corpora with shared vocabulary.
+  const inputStems = new Set(tokenize(fullInput));
+  const prereqById = new Map(prerequisites.map((p) => [p.id, p]));
 
   const met: string[] = [];
   const unmet: string[] = [];
   const unknown: string[] = [];
-  const checkPatterns: Record<string, RegExp> = {
-    problem_defined: /\b(problem|goal|objective|need|issue)\b/i,
-    constraints_reviewed: /\b(constraint|rule|policy|reviewed|checked)\b/i,
-    decisions_locked: /\b(decided|locked|chosen|selected|committed)\b/i,
-    dod_defined: /\b(definition of done|dod|done when|acceptance criteria)\b/i,
-    irreversibility_assessed: /\b(irreversib|can't undo|one-way|point of no return)\b/i,
-    constraints_satisfied: /\b(constraints? (met|satisfied|addressed))\b/i,
-    dod_met: /\b(done|complete|finished|all criteria)\b/i,
-    artifacts_present: /\b(screenshot|test|log|artifact|evidence|proof)\b/i,
-  };
-  for (const p of prereqs) {
-    const pattern = checkPatterns[p.id];
-    if (pattern && pattern.test(fullInput)) met.push(p.description);
-    else if (p.required) unmet.push(p.description);
-    else unknown.push(p.description);
+
+  if (matchedTransition) {
+    for (const prereqId of matchedTransition.prereqIds) {
+      const prereq = prereqById.get(prereqId);
+      if (!prereq) {
+        // Governance error: transition references a prereq id not defined in
+        // odd/gate/prerequisites.md. Surface as unknown rather than crash so
+        // partial canon states remain diagnosable.
+        unknown.push(`(unknown prereq id: ${prereqId})`);
+        continue;
+      }
+      const hasMatch = Array.from(prereq.stemmedTokens).some((s) => inputStems.has(s));
+      if (hasMatch) {
+        met.push(prereq.id);
+      } else {
+        unmet.push(prereq.gapMessage);
+      }
+    }
   }
 
   const gateStatus = unmet.length > 0 ? "NOT_READY" : "PASS";
-
-  const index = await fetcher.getIndex(knowledgeBaseUrl);
-  const results = scoreEntries(index.entries, `transition boundary deceleration ${input}`).slice(
-    0,
-    3,
-  );
-  const canonRefs: Array<{ path: string; quote: string }> = [];
-  for (const entry of results) {
-    const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
-    if (content) {
-      const stripped = content.replace(/^---[\s\S]*?---\n/, "");
-      const lines2 = stripped.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
-      canonRefs.push({
-        path: `${entry.path}#${entry.title}`,
-        quote: lines2.slice(0, 2).join(" ").slice(0, 150),
-      });
-    }
-  }
+  const requiredTotal = matchedTransition ? matchedTransition.prereqIds.length : 0;
 
   // Update state
   const updatedState = state ? initState(state) : undefined;
@@ -2198,10 +2427,7 @@ async function runGateAction(
   }
 
   const lines = [`Gate: ${gateStatus} (${transition.from} → ${transition.to})`, ""];
-  lines.push(
-    `Prerequisites: ${met.length}/${prereqs.filter((p) => p.required).length} required met`,
-    "",
-  );
+  lines.push(`Prerequisites: ${met.length}/${requiredTotal} required met`, "");
   if (unmet.length > 0) {
     lines.push("Unmet (required):");
     for (const u of unmet) lines.push(`  - ${u}`);
@@ -2212,13 +2438,18 @@ async function runGateAction(
     for (const m of met) lines.push(`  + ${m}`);
     lines.push("");
   }
-  if (canonRefs.length > 0) {
-    lines.push("Relevant canon:");
-    for (const r of canonRefs) {
-      lines.push(`  > ${r.quote}`);
-      lines.push(`  — ${r.path}`);
-      lines.push("");
-    }
+  if (unknown.length > 0) {
+    lines.push("Unknown (governance errors):");
+    for (const u of unknown) lines.push(`  ? ${u}`);
+    lines.push("");
+  }
+
+  const debug: Record<string, unknown> = {
+    duration_ms: Date.now() - startMs,
+    generated_at: new Date().toISOString(),
+  };
+  if (knowledgeBaseUrl) {
+    debug.knowledge_base_url = knowledgeBaseUrl;
   }
 
   return {
@@ -2231,12 +2462,14 @@ async function runGateAction(
         unmet,
         unknown,
         required_met: met.length,
-        required_total: prereqs.filter((p) => p.required).length,
+        required_total: requiredTotal,
       },
+      governance_source: governanceSource,
+      governance_uris: governanceUris,
     },
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
-    debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    debug,
   };
 }
 

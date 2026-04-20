@@ -1,6 +1,6 @@
 {
   "name": "oddkit",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Agent-first CLI for ODD-governed repos. Epistemic terrain rendering with portable baseline.",
   "type": "module",
   "bin": {

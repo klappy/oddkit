@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-20
+
+### Added
+
+- **`governance_source` on `oddkit_gate` envelope** — Gate response `result` now declares which tier served its governance vocabulary: `"knowledge_base"` (both `odd/gate/transitions.md` and `odd/gate/prerequisites.md` parsed from canon) or `"minimal"` (one or both files unreachable; hardcoded vocabulary snapshot used). Strict aggregation rule per P1.3.1 precedent: any helper falling through to minimal makes the aggregate `"minimal"`. Two-tier cascade today — `workers/baseline/` is not yet shipped, and `odd/gate/` is explicitly canon-only per `klappy://canon/constraints/core-governance-baseline` §What-Ships-in-Baseline.
+
+- **`governance_uris` (plural array of 2) on `oddkit_gate` envelope** — Gate reads two peer governance documents (`odd/gate/transitions`, `odd/gate/prerequisites`); the envelope surfaces both URIs in alphabetical order by path-tail. **This is an intentional shape divergence from `oddkit_encode`'s singular `governance_uri`** — encode's encoding-type docs sit under a single canonical umbrella, but gate's two files are peers in a foreign-key relation (transitions references prereq ids defined in prerequisites). Same divergence rationale as `oddkit_challenge` in 0.19.0; gate's array is structurally symmetric because both entries point to peer single files. Consumers that prefer a singular anchor can read `governance_uris[0]` — alphabetical ordering makes this stable.
+
+- **`debug.knowledge_base_url` echo on `oddkit_gate` envelope** — Gate now echoes the caller's `knowledge_base_url` override in the debug envelope, matching encode (0.18.0) and challenge (0.19.0).
+
+- **Two new canon files define gate's governance:** `odd/gate/transitions.md` (four transition keys, from/to endpoints, prerequisite id mappings, BM25 detection terms) and `odd/gate/prerequisites.md` (eight prerequisite ids with check vocabularies and gap messages). Canon-first contract: both files merged to klappy.dev main before this release (klappy/klappy.dev#120).
+
+### Changed
+
+- **`oddkit_gate` transition detection now uses BM25 stemmed matching over canon-supplied vocabulary** (replaces the prior literal word-boundary regex cascade). This is **strictly additive**: every input that matched the prior regex still matches, plus stemmed variations now match too. `deploying`, `released`, `started building`, `building`, and `reconsidering` now match their canonical transitions via stemming. The Porter-style stemmer does not currently reverse consonant gemination (`shipping` → `shipp`, not `ship`), so the small number of geminating verbs gate cares about (`ship`, `step back`) have their inflected forms listed explicitly in `odd/gate/transitions.md` rather than relying on the stemmer. Priority resolution between competing transitions uses BM25 scoring (specific phrase beats bare word — `ready to build` outscores bare `ready` via 2-term-vs-1-term match) rather than the prior fragile regex-cascade order. Row order in `odd/gate/transitions.md` remains as deterministic tiebreaker for genuine ties.
+
+- **`oddkit_gate` prerequisite evaluation now uses stemmed set intersection** (not BM25). Each prereq evaluates independently: pass if any stemmed input token matches any stemmed check term; fail otherwise. This is fit-to-problem — prereqs return gap-or-not in isolation, not a ranking. Avoids BM25's IDF-negative pathology on the small 8-prereq corpus where common vocabulary across prereqs (words like `goal`, `done`, `constraint`) would flip `log((N-df+0.5)/(df+0.5))` negative and produce score-zero contributions on valid matches. Stemming consequence for prereqs: `problems identified` satisfies `problem_defined`, `constraints addressed` satisfies `constraints_satisfied`, `deployed it` satisfies `dod_met`.
+
+- **`oddkit_gate` matching is uniform across tiers.** The `knowledge_base` tier reads vocabulary from canon; the `minimal` tier uses a hardcoded vocabulary snapshot whose content mirrors the pre-0.20.0 regex alternations flattened to comma-separated phrases and words. Both tiers run the same BM25-for-transitions / set-intersection-for-prereqs matchers. The difference between tiers is edit-ability (canon is editable without deploy; minimal is locked to the deployed worker version), not capability. Stemming works in both tiers.
+
+- **`runGateAction` now reads transitions and prerequisites from canon at runtime** via `fetchGateTransitions` and `fetchGatePrerequisites` helpers, replacing the prior hardcoded three-arm if/else over transition tuples and the hardcoded `checkPatterns` regex map. `MINIMAL_TRANSITIONS` and `MINIMAL_PREREQUISITES` module-level constants hold the fallback-tier vocabulary.
+
+- **`result.prerequisites.met` format change (minor):** previously returned prereq description strings (e.g. `"Problem statement is clearly defined"`); now returns prereq ids (e.g. `"problem_defined"`). `result.prerequisites.unmet` now returns the canon-supplied gap messages (e.g. `"Problem statement not defined — the goal or issue being solved is unclear"`) which are more informative than the prior descriptions. Callers doing string-matching on these arrays should update their expectations.
+
+### Fixed
+
+- (none specific to this release)
+
+### Known limitations
+
+- **Stemmer does not handle consonant gemination.** The Porter-style stemmer in `workers/src/bm25.ts` drops common suffixes (`-ing`, `-ed`, etc.) but does not reverse doubled-consonant gemination — `shipping` stems to `shipp` rather than `ship`, `stepped` stems to `stepp` rather than `step`. Gate works around this by listing the handful of geminating inflected forms explicitly in `odd/gate/transitions.md` rather than relying on the stemmer. Non-geminating verbs (`deploy`, `build`, `start`, `reconsider`, etc.) continue to match their inflections via the stemmer alone. Same limitation applies to challenge and any future stemmed-matching tool; a proper Porter stemmer upgrade is tracked as a sweep follow-up.
+
+- **`getIndex` strict-mode (`skipBaselineFallback`) still inherited from 0.18.0 and 0.19.0.** Same limitation documented in prior entries. No tool in the sweep has exercised the code path non-trivially yet; tracked as a P1.3.x follow-up.
+
+- **`workers/baseline/` build pipeline still not shipped.** Two-tier cascade (`"knowledge_base" | "minimal"`) remains the operational envelope enum for gate; `"bundled"` stays out of the enum until the pipeline ships.
+
+- **`oddkit_challenge`'s `evaluatePrerequisiteCheck` is still regex-based.** Migration to stemmed set intersection (same matcher as gate's prereqs per this release's D5) is on the sweep trajectory for challenge's next revisit, bundled with a review of `cachedChallengeTypeIndex` under the "don't cache microsecond derivations" principle applied to gate in this release.
+
 ## [0.19.0] - 2026-04-20
 
 ### Added
