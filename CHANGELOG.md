@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-04-20
+
+### Changed
+
+- **`oddkit_encode` trigger-word classifier migrated from regex alternation to stemmed set intersection** (per PRD D5 from P1.3.4 — split-by-fit, same shape challenge adopted in 0.21.0 and gate adopted in 0.20.0). `EncodingTypeDef.triggerRegex: RegExp | null` is replaced with `stemmedTokens: Set<string>` — a parse product built once per canon fetch. Canon trigger vocabulary reads unchanged from `odd/encoding-types/*.md` (`## Trigger Words` fenced block); the new matcher tokenizes each vocabulary word with stop-words disabled, stems into the Set at parse time, and intersects against a stop-word-disabled stemmed input set at runtime. Inflected forms (`deciding`, `realizing`, `discovering`) now match their canonical stems (`decid`, `realiz`, `discover`) without canon having to enumerate each inflection. **Strictly additive**: every input that matched the prior regex still matches, plus stemmed variations now do too. Stop-words are disabled (empty `Set`) on both the parse-time `tokenize(word, new Set())` and the runtime `tokenize(para, new Set())` calls — canon vocab includes stop-word-adjacent phrases like `going with`, `committed to`, `must not`, `turns out`, `found that`, `next step`, `blocked by`; the P1.3.3 `from`-in-source-named precedent (C-04) demanded this pattern be replicated verbatim. Both classifier call sites preserve their existing semantics: `parsePrefixedBatchInput` untagged-paragraph path picks first match via `break` (one artifact per paragraph); `parseUnstructuredInput` emits one artifact per matching type (no `break` — the load-bearing design comment is preserved verbatim). `tokenize(para, new Set())` is hoisted out of the per-type loop at both call sites. A new `intersectsStems(vocab, input)` helper encapsulates the match test. Per `klappy://canon/principles/vodka-architecture`: fit the matcher to the problem shape (independent gap-or-not per type, multi-type allowed by design).
+
+### Removed
+
+- **Module-level `cachedEncodingTypes` in-process cache** (per PRD D9 from P1.3.4 — don't cache microsecond derivations; same pattern challenge shipped in 0.21.0 and gate shipped in 0.20.0). `cachedEncodingTypes`, `cachedEncodingTypesKnowledgeBaseUrl`, `cachedEncodingTypesSource` module-level fields deleted; cache-check short-circuit at the top of `discoverEncodingTypes` deleted; `cleanup_storage` resets for the three fields deleted. Per `klappy://canon/principles/cache-fetches-and-parses`: the fetch layer (Module Memory → Cache API → R2, 5-minute TTL) already caches the canon file content; caching the parse product for microsecond re-derivation savings is the anti-pattern the principle names. Parse runs fresh per call; overhead is sub-millisecond on hot fetches.
+
+### Added
+
+- **New smoke regression assertions in `workers/test/canon-tool-envelope.smoke.mjs`** anchoring the D5 migration: (12) stemmed inflection match — `"I'm deciding to ship two-tier cascade"` classifies as Decision (`decid` stem matches `decided` in canon vocab); (13) stop-word canon vocab survives — `"we're going with option B after the review"` matches Decision (`going with` multi-word canon vocab); (14) multi-type preservation — `"We must never deploy without tests because we decided this last week"` emits both `C` and `D` artifacts via the no-break path; (15) first-match preservation — untagged paragraph in a mixed batch emits exactly one artifact via the batch classifier's `break` semantic.
+
+### Refs
+
+- Handoff: `klappy://odd/handoffs/2026-04-20-p1-3-4-encode-canon-parity`
+- Canon basis: `klappy://canon/principles/cache-fetches-and-parses`, `klappy://canon/principles/vodka-architecture`
+- Precedent: oddkit 0.21.1 (challenge's D5 + D9), 0.20.0 (gate's D5 + D9)
+- Shipping gate: `klappy://canon/constraints/release-validation-gate` (binding)
+- Closes the canon-parity sweep — all three tools now use stemmed set intersection and have their in-process derivation caches removed per `cache-fetches-and-parses`.
+
 ## [0.21.1] - 2026-04-20
 
 ### Fixed
