@@ -102,10 +102,9 @@ interface ChallengeTypeDef {
   fallback: boolean;
 }
 
-interface BasePrerequisite {
-  prerequisite: string;
-  check: string;
-  gapMessage: string;
+/** Shared shape for the runtime match vocabulary attached to challenge
+ *  prereqs. Keeps the per-type and base-prereq structs in sync (DRY). */
+interface PrereqMatchVocab {
   // Per PRD D2 (P1.3.3): parse products populated at canon-fetch time.
   // stemmedTokens is the stemmed form of quoted keywords in `check`;
   // the four has*Check booleans flag structural-test hints detected in
@@ -118,15 +117,11 @@ interface BasePrerequisite {
   hasCitationCheck: boolean;
 }
 
-/** Shared shape for the runtime match vocabulary attached to challenge
- *  prereqs. Keeps the per-type and base-prereq structs in sync (DRY). */
-interface PrereqMatchVocab {
-  stemmedTokens: Set<string>;
-  hasURLCheck: boolean;
-  hasNumericCheck: boolean;
-  hasProperNounCheck: boolean;
-  hasCitationCheck: boolean;
-}
+type BasePrerequisite = {
+  prerequisite: string;
+  check: string;
+  gapMessage: string;
+} & PrereqMatchVocab;
 
 // Gate governance types — P1.3.2 (0.20.0). Consumed by runGateAction via
 // fetchGateTransitions and fetchGatePrerequisites. Both read from canon
@@ -2323,10 +2318,13 @@ function parseCheckColumn(check: string): PrereqMatchVocab {
   let m: RegExpExecArray | null;
   while ((m = quotedRegex.exec(check)) !== null) {
     // Tokenize each quoted keyword or phrase — multi-word phrases like
-    // "according to" contribute multiple stems; stop-words are dropped
-    // by tokenize(). This preserves semantic coverage while normalizing
-    // morphology (problems → problem, considered → consid, etc.).
-    for (const stem of tokenize(m[1])) {
+    // "according to" contribute multiple stems. Stop-word filtering is
+    // disabled here (empty Set) because canon vocab explicitly includes
+    // English stop words — notably "from" for source-named — that the
+    // pre-refactor regex evaluator matched literally. Preserves the
+    // strictly-additive guarantee while normalizing morphology
+    // (problems → problem, considered → consid, etc.).
+    for (const stem of tokenize(m[1], new Set<string>())) {
       stemmedTokens.add(stem);
     }
   }
