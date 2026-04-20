@@ -57,15 +57,22 @@ export interface OddkitEnvelope {
 type ActionResult = Omit<OddkitEnvelope, "server_time">;
 
 // Governance-driven encoding types. Trigger-word classification is stemmed
-// set intersection per klappy://canon/principles/vodka-architecture (fit the
-// matcher to the problem) — same D5 shape applied to challenge prereqs in
-// 0.21.0 and gate prereqs in 0.20.0. triggerWords kept for debugging only;
-// stemmedTokens is the parse product the runtime evaluates against.
+// phrase-subset matching per klappy://canon/principles/vodka-architecture
+// (fit the matcher to the problem) — same D5 shape applied to challenge
+// prereqs in 0.21.0 and gate prereqs in 0.20.0. triggerWords kept for
+// debugging only; stemmedPhrases is the parse product the runtime evaluates
+// against. Each inner array is the ordered stem sequence of a single
+// trigger word or phrase; a type matches an input when ALL stems of at
+// least one phrase are present in the input's stem set. This preserves
+// phrase-level semantics (`committed to`, `going with`, `must not`,
+// `next step`, `follow up`, `blocked by`, `turns out`) so common function
+// words (`to`, `with`, `by`, `up`, `out`, `not`) do not become standalone
+// match triggers on every English paragraph.
 interface EncodingTypeDef {
   letter: string;
   name: string;
   triggerWords: string[];
-  stemmedTokens: Set<string>;
+  stemmedPhrases: string[][];
   qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }>;
 }
 
@@ -441,22 +448,26 @@ async function discoverEncodingTypes(
         ? triggerSection[1].split(",").map((w: string) => w.trim()).filter((w: string) => w.length > 0)
         : [];
       // D5 / klappy://canon/principles/vodka-architecture — classification is
-      // stemmed set intersection, not regex alternation. Canon vocab is parsed
-      // once into a Set<string> of stems; runtime tokenizes input once and
-      // intersects. Inflected forms (deciding → decid, realizing → realiz)
-      // now match their canonical stems without canon having to list each
-      // inflection. Stop-word filtering is disabled (empty Set) on both the
-      // parse-time and runtime tokenize() calls — canon vocab includes
-      // stop-word-adjacent phrases (`going with`, `committed to`, `must not`,
-      // `turns out`, `next step`, `blocked by`, `found that`) and dropping
-      // them would silently break the strictly-additive invariant, the same
-      // failure mode P1.3.3 hit on challenge's `from`-in-source-named vocab.
+      // stemmed phrase-subset matching, not regex alternation. Each canon
+      // trigger word/phrase is parsed once into its ordered stem sequence;
+      // runtime tokenizes input once and a type matches when ALL stems of
+      // at least one phrase are present. Inflected forms (deciding → decid,
+      // realizing → realiz) match their canonical stems without canon having
+      // to list each inflection. Stop-word filtering is disabled (empty Set)
+      // on both the parse-time and runtime tokenize() calls — canon vocab
+      // includes stop-word-adjacent phrases (`going with`, `committed to`,
+      // `must not`, `turns out`, `next step`, `blocked by`, `found that`)
+      // and dropping them would silently break the strictly-additive
+      // invariant, the same failure mode P1.3.3 hit on challenge's
+      // `from`-in-source-named vocab. Phrase-level conjunction (all stems
+      // of a phrase must match) is the precision floor: without it,
+      // ubiquitous function words like `to`/`with`/`by`/`up`/`out`/`not`
+      // would become standalone triggers on every English paragraph.
       // Per canon/constraints/release-validation-gate and P1.3.3 C-04.
-      const stemmedTokens = new Set<string>();
+      const stemmedPhrases: string[][] = [];
       for (const word of triggerWords) {
-        for (const stem of tokenize(word, new Set())) {
-          stemmedTokens.add(stem);
-        }
+        const stems = tokenize(word, new Set());
+        if (stems.length > 0) stemmedPhrases.push(stems);
       }
 
       const criteriaSection = content.match(
@@ -476,7 +487,7 @@ async function discoverEncodingTypes(
         }
       }
 
-      types.push({ letter, name, triggerWords, stemmedTokens, qualityCriteria });
+      types.push({ letter, name, triggerWords, stemmedPhrases, qualityCriteria });
     } catch {
       continue;
     }
@@ -513,15 +524,14 @@ async function discoverEncodingTypes(
       ["E", "Encode",      ["encoded", "captured", "crystallized", "persisted", "artifact"]],
     ];
     resolved = defaults.map(([letter, name, words]) => {
-      const stemmedTokens = new Set<string>();
+      const stemmedPhrases: string[][] = [];
       for (const word of words) {
-        for (const stem of tokenize(word, new Set())) {
-          stemmedTokens.add(stem);
-        }
+        const stems = tokenize(word, new Set());
+        if (stems.length > 0) stemmedPhrases.push(stems);
       }
       return {
         letter, name, triggerWords: words,
-        stemmedTokens,
+        stemmedPhrases,
         qualityCriteria: [],
       };
     });
@@ -1117,6 +1127,24 @@ function intersectsStems(vocab: Set<string>, input: Set<string>): boolean {
   return false;
 }
 
+// Phrase-subset match — a phrase matches when ALL of its stems appear in the
+// input stem set. Short-circuits on the first phrase that matches. This is
+// the precision-preserving variant of intersectsStems for multi-word canon
+// vocab: single-stem phrases degenerate to set membership (identical to the
+// old single-token behavior), while multi-stem phrases like
+// `committed to` → ["committ","to"] require both stems to co-occur, so
+// ubiquitous function words cannot match on their own.
+function matchesStemmedPhrases(phrases: string[][], input: Set<string>): boolean {
+  for (const phrase of phrases) {
+    let allPresent = true;
+    for (const stem of phrase) {
+      if (!input.has(stem)) { allPresent = false; break; }
+    }
+    if (allPresent) return true;
+  }
+  return false;
+}
+
 function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
   const typeMap = new Map(types.map((t) => [t.letter, t.name]));
   const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
@@ -1160,7 +1188,7 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
         // Break on first match: this path picks one type per paragraph by
         // design (paragraph boundaries are the author's). Unlike
         // parseUnstructuredInput which emits one artifact per matching type.
-        if (intersectsStems(t.stemmedTokens, inputStems)) { matched = t; break; }
+        if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) { matched = t; break; }
       }
       const pick = matched ?? types[0] ?? { letter: "D", name: "Decision" };
       const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
@@ -1209,7 +1237,7 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
       // "We must never deploy without tests" is both Decision and Constraint.
       // Multi-typing at the server level mirrors what the model would do with
       // separate TSV rows. Do not add a break here.
-      if (intersectsStems(t.stemmedTokens, inputStems)) {
+      if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) {
         const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
         artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
