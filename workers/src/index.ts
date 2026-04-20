@@ -277,7 +277,7 @@ Use when:
     },
     {
       name: "oddkit_challenge",
-      description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions. Challenge proactively before encoding consequential decisions.",
+      description: "Pressure-test a claim, assumption, or proposal against canon constraints. Surfaces tensions, missing evidence, and contradictions. Reads four peer governance surfaces at runtime — challenge-types (detection patterns + questions), base-prerequisites (universal checks), normative-vocabulary (directive signal and detection noise), and stakes-calibration (9-mode proportional pressure) — and declares `governance_source` in the response envelope (`knowledge_base` when all four resolved from canon, `minimal` when any fell through to hardcoded defaults). Challenge proactively before encoding consequential decisions.",
       action: "challenge",
       schema: {
         input: z.string().describe("A claim, assumption, or proposal to challenge."),

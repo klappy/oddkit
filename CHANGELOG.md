@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-20
+
+### Added
+
+- **`governance_source` on `oddkit_challenge` envelope** — Challenge response `result` now declares which tier served its governance vocabulary: `"knowledge_base"` (all four governance surfaces parsed from canon) or `"minimal"` (one or more surfaces fell through to hardcoded defaults). Strict aggregation rule: any helper falling through to minimal makes the aggregate `"minimal"`. Two-tier cascade today, not three — `workers/baseline/` is not yet shipped (the bundled tier from `canon/constraints/core-governance-baseline` is a contract aspiration, not in-repo code). When the bundled tier ships later, the union expands additively to include `"bundled"` without breaking consumers.
+
+- **`governance_uris` (plural array) on `oddkit_challenge` envelope** — Challenge reads four peer governance documents (`odd/challenge/base-prerequisites`, `odd/challenge-types/`, `odd/challenge/normative-vocabulary`, `odd/challenge/stakes-calibration`); the envelope now surfaces all four URIs in alphabetical order by path-tail. **This is an intentional shape divergence from `oddkit_encode`'s singular `governance_uri`** — encode's encoding-type docs sit under a single canonical umbrella (`canon/definitions/dolcheo-vocabulary`), but challenge's four files are peers with no governing hierarchy, so a single anchor would misrepresent where `base-prerequisites` and `normative-vocabulary` live. Consumers reading both tools must handle both field names. A consumer that prefers a singular anchor can read `governance_uris[0]` — alphabetical ordering makes this stable.
+
+- **`debug.knowledge_base_url` on `oddkit_challenge` envelope** — Challenge now echoes the caller's `knowledge_base_url` override in the debug envelope, matching encode's pattern from 0.18.0. Helps callers verify their override was threaded through, especially when pointing at private or custom canon repos.
+
+### Changed
+
+- **`oddkit_challenge` four governance helpers return `{<domainNoun>, source}` tuples** — `discoverChallengeTypes` → `{types, source}`, `fetchBasePrerequisites` → `{prerequisites, source}`, `fetchNormativeVocabulary` → `{vocabulary, source}`, `fetchStakesCalibration` → `{calibration, source}`. Per-helper domain-noun field names preserve readability at the call site; the `source` flag feeds the aggregate envelope signal. Internal refactor; no input-shape change for callers.
+
+### Fixed
+
+- **0.17.0 release note correction: `governance_source` on challenge.** The 0.17.0 entry for "`governance_source` on refactored tool envelopes" claimed challenge, encode, and telemetry_policy all declared the tier signal. In practice only telemetry_policy did at that HEAD. 0.18.0 retrofitted encode. This release retrofits challenge and closes the last gap in the original 0.17.0 overstatement.
+
+### Known limitations
+
+- **Challenge does not yet implement strict-mode at the index layer** — Same limitation documented in 0.18.0 for encode, inherited through the shared `KnowledgeBaseFetcher.getIndex` merge behavior. Passing `knowledge_base_url` to `oddkit_challenge` echoes the override in `debug.knowledge_base_url` and honors canon overrides when the target repo has challenge-type docs, but `getIndex` merges baseline entries by design (`arbitrateEntries`: canon overrides baseline, baseline is the floor). A custom `knowledge_base_url` pointing at a repo without challenge docs will still return `governance_source: "knowledge_base"` via the default baseline index rather than falling through to `"minimal"`. Strict-mode on `getIndex` remains a tracked follow-up for the P1.3 sweep.
+
 ## [0.18.0] - 2026-04-19
 
 ### Added

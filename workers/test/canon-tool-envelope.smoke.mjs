@@ -217,6 +217,110 @@ async function run() {
     `got: ${encodeOverride.result?.governance_source}`,
   );
 
+  // Tool 5: oddkit_challenge — canon-driven, four governance surfaces.
+  // Full envelope + governance_source + governance_uris (plural, per PRD D4 —
+  // shape diverges from encode by design because challenge reads four peer
+  // governance files, not a single hierarchy).
+  console.log(`\n─── oddkit_challenge: envelope + governance_source + governance_uris ───`);
+  const challengeDefault = await callTool("oddkit_challenge", {
+    input: "I think we should ship this refactor today",
+    mode: "planning",
+  });
+  expectFullEnvelope("oddkit_challenge (default knowledge_base)", challengeDefault);
+  expectGovernanceSource("oddkit_challenge (default knowledge_base)", challengeDefault, "knowledge_base");
+  ok(
+    "oddkit_challenge: result.governance_uris is an array of exactly 4 entries",
+    Array.isArray(challengeDefault.result?.governance_uris) &&
+      challengeDefault.result?.governance_uris.length === 4,
+    `got: ${JSON.stringify(challengeDefault.result?.governance_uris)}`,
+  );
+  const expectedUris = [
+    "klappy://odd/challenge/base-prerequisites",
+    "klappy://odd/challenge-types",
+    "klappy://odd/challenge/normative-vocabulary",
+    "klappy://odd/challenge/stakes-calibration",
+  ];
+  ok(
+    "oddkit_challenge: governance_uris matches alphabetical peer set",
+    JSON.stringify(challengeDefault.result?.governance_uris) === JSON.stringify(expectedUris),
+    `got: ${JSON.stringify(challengeDefault.result?.governance_uris)}`,
+  );
+  ok(
+    "oddkit_challenge: result.governance_uri (singular) is NOT emitted on challenge (divergence from encode by design — PRD D4)",
+    challengeDefault.result?.governance_uri === undefined,
+    `got: ${challengeDefault.result?.governance_uri}`,
+  );
+
+  console.log(`\n─── oddkit_challenge: knowledge_base_url override ───`);
+  const challengeOverride = await callTool("oddkit_challenge", {
+    input: "testing override threading",
+    mode: "planning",
+    knowledge_base_url: "https://github.com/torvalds/linux",
+  });
+  expectFullEnvelope("oddkit_challenge (knowledge_base_url override)", challengeOverride);
+  ok(
+    "oddkit_challenge: debug.knowledge_base_url echoes the override",
+    challengeOverride.debug?.knowledge_base_url === "https://github.com/torvalds/linux",
+    `got: ${challengeOverride.debug?.knowledge_base_url}`,
+  );
+  // Same getIndex merge caveat as encode (PRD §3.5 + Known Limitations):
+  // override without challenge docs can still resolve via default baseline
+  // merge. Accept either valid enum value.
+  ok(
+    "oddkit_challenge: override returns valid governance_source enum value",
+    ["knowledge_base", "minimal"].includes(challengeOverride.result?.governance_source),
+    `got: ${challengeOverride.result?.governance_source}`,
+  );
+
+  // 9-mode parse integrity — PR #100 regression guard. stakes-calibration
+  // defines 9 modes; every one must return a full envelope with valid
+  // governance_source. voice-dump additionally asserts SUPPRESSED status
+  // because that branch has its own early-return envelope that must also
+  // carry governance_source + governance_uris (see PRD §10 risk register).
+  console.log(`\n─── oddkit_challenge: 9-mode parse integrity ───`);
+  const modes = [
+    "exploration",
+    "planning",
+    "execution",
+    "voice-dump",
+    "drafting",
+    "peer-review-ready",
+    "canon-tier-2",
+    "canon-tier-1",
+    "published-essay",
+  ];
+  for (const m of modes) {
+    const r = await callTool("oddkit_challenge", {
+      input: "sample claim under mode pressure — canon defines the rules",
+      mode: m,
+    });
+    ok(`oddkit_challenge[${m}]: has 'action'`, typeof r.action === "string");
+    ok(`oddkit_challenge[${m}]: has 'server_time'`, typeof r.server_time === "string");
+    ok(
+      `oddkit_challenge[${m}]: governance_source valid`,
+      ["knowledge_base", "bundled", "minimal"].includes(r.result?.governance_source),
+      `got: ${r.result?.governance_source}`,
+    );
+    ok(
+      `oddkit_challenge[${m}]: governance_uris present and length 4`,
+      Array.isArray(r.result?.governance_uris) && r.result?.governance_uris.length === 4,
+      `got: ${JSON.stringify(r.result?.governance_uris)}`,
+    );
+    if (m === "voice-dump") {
+      ok(
+        `oddkit_challenge[voice-dump]: status === SUPPRESSED (SUPPRESSED branch carries governance fields)`,
+        r.result?.status === "SUPPRESSED",
+        `got: ${r.result?.status}`,
+      );
+    } else {
+      ok(
+        `oddkit_challenge[${m}]: status === CHALLENGED`,
+        r.result?.status === "CHALLENGED",
+        `got: ${r.result?.status}`,
+      );
+    }
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }
