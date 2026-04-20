@@ -454,6 +454,36 @@ async function run() {
     `missing: ${JSON.stringify(confMissing)}`,
   );
 
+  // (10) 0.21.1 regression — stop-word canon keywords must survive parse-time
+  // tokenization. Bugbot caught this on 0.21.0: `from` is in source-named's
+  // canon vocab AND in the default STOP_WORDS set, so the default-filtered
+  // tokenize() silently dropped it from both stemmedTokens and inputStems,
+  // breaking the strictly-additive invariant. Fix: pass empty Set as
+  // stopWords arg to both tokenize() calls. This assertion is the regression
+  // anchor.
+  const fromOnlySource =
+    "I learned this morning that the deploy regressed from my colleague Alex Brown — observed during last night's incident review.";
+  const fromMissing = await challengeMissing(fromOnlySource);
+  ok(
+    `oddkit_challenge: 0.21.1 source-named passes when input matches via stop-word canon keyword "from"`,
+    !includesGap(fromMissing, "no source named"),
+    `missing: ${JSON.stringify(fromMissing)}`,
+  );
+
+  // (11) 0.21.1 regression — verify "according to" (which contains stop-word
+  // "to") still passes source-named via the surviving "accord" stem. This is
+  // the multi-word phrase case where stop-word filtering would have dropped
+  // half the phrase. Pre-fix this still worked (because "accord" survives
+  // independently), but the assertion documents the intended behavior.
+  const accordingToText =
+    "We saw a 30% latency regression according to the Tuesday measurements I observed in the dashboard.";
+  const accMissing = await challengeMissing(accordingToText);
+  ok(
+    `oddkit_challenge: 0.21.1 source-named passes via stemmed "accord" from "according to"`,
+    !includesGap(accMissing, "no source named"),
+    `missing: ${JSON.stringify(accMissing)}`,
+  );
+
   // Tool 6: oddkit_gate — canon-driven, two governance surfaces. Full envelope +
   // governance_source + governance_uris (plural array of 2 — shape diverges
   // from encode's singular governance_uri, matches challenge's plural shape,
