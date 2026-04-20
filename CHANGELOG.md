@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.22.0] - 2026-04-20
+## [0.23.0] - 2026-04-20
+
+> **Version note:** P1.3.4 was scoped as 0.22.0 per the handoff, but two envelope-conformance fixes (PR #124 telemetry, PR #125 catalog) landed on main in parallel and were released as 0.22.0 via PR #128 while this branch was in Sonnet 4.6 validator dispatch. Per `klappy://canon/constraints/release-validation-gate` Rule 3 (canon outranks session artifacts) and SemVer discipline, this refactor is re-versioned to 0.23.0. The handoff's "ship as 0.22.0" recommendation was session-scoped; main-reality is the canon.
 
 ### Changed
 
@@ -29,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shipping gate: `klappy://canon/constraints/release-validation-gate` (binding)
 - Bugbot finding dispositioned: PR #126 review `cursor[bot]` 2026-04-20T12:55:03Z (high severity, multi-word vocab flattening) — fix-forward in same PR via Cursor autofix commit `113ba11` (phrase-subset match). The in-session orchestrator proposed a stricter consecutive-subsequence variant; autofix's subset-match was accepted as the simpler design better aligned with encode's multi-type tolerance philosophy.
 - Closes the canon-parity sweep — all three tools now use stemmed matching and have their in-process derivation caches removed per `cache-fetches-and-parses`.
+
+## [0.22.0] - 2026-04-20
+
+### Added
+
+- **`index_built_at` on `oddkit_catalog` debug envelope** — catalog now surfaces the index build timestamp under an accurately-named field, preserving the cache-freshness diagnostic alongside the response-time `generated_at`. Landed via klappy/oddkit#125.
+
+### Fixed
+
+- **`telemetry_public` envelope conformance** — previously returned a bare `{action, result}` envelope, missing `server_time`, `assistant_text`, and `debug`. Every other tool — including `telemetry_policy` after PR #108 — already emitted the full envelope. This fix brings `telemetry_public` into conformance with the E0008.2 canon (`klappy://docs/appendices/epoch-8-2`) and adds the missing three fields on both the success path and the not-configured error path. `assistant_text` on success is derived from the row count when the result carries data rows. `result.generated_at` preserved unchanged. Landed via klappy/oddkit#124.
+
+- **`oddkit_catalog` `debug.generated_at` is response time, not cached index timestamp** — `runCatalog` previously returned `generated_at: index.generated_at` — the cached index build timestamp — producing up to 48-minute drift from envelope `server_time` in the same response. Every other handler uses `new Date().toISOString()` for this field. Fix aligns catalog with the same pattern; the cache-build timestamp is preserved as a separate, accurately-named `index_built_at` field (see Added). Landed via klappy/oddkit#125.
+
+Both bugs caught during the v0.21.1 regression test sweep.
 
 ## [0.21.1] - 2026-04-20
 

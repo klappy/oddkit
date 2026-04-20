@@ -1808,7 +1808,8 @@ async function runCatalog(
     debug: {
       knowledge_base_url: knowledgeBaseUrl,
       baseline_url: index.baseline_url,
-      generated_at: index.generated_at,
+      generated_at: new Date().toISOString(),   // response time — consistent with all other handlers
+      index_built_at: index.generated_at,       // preserve cache-freshness diagnostic under accurate name
       duration_ms: Date.now() - startMs,
     },
   };
