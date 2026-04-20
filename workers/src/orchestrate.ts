@@ -91,7 +91,13 @@ interface ChallengeTypeDef {
   triggerWords: string[];
   detectionText: string; // triggerWords + blockquote, fed to BM25 indexer
   questions: Array<{ question: string; tier: string }>;
-  prerequisiteOverlays: Array<{ prerequisite: string; check: string; gapMessage: string }>;
+  prerequisiteOverlays: Array<
+    {
+      prerequisite: string;
+      check: string;
+      gapMessage: string;
+    } & PrereqMatchVocab
+  >;
   reframings: string[];
   fallback: boolean;
 }
@@ -100,6 +106,26 @@ interface BasePrerequisite {
   prerequisite: string;
   check: string;
   gapMessage: string;
+  // Per PRD D2 (P1.3.3): parse products populated at canon-fetch time.
+  // stemmedTokens is the stemmed form of quoted keywords in `check`;
+  // the four has*Check booleans flag structural-test hints detected in
+  // the check description. See parseCheckColumn below. These are parse
+  // products per klappy://canon/principles/cache-fetches-and-parses.
+  stemmedTokens: Set<string>;
+  hasURLCheck: boolean;
+  hasNumericCheck: boolean;
+  hasProperNounCheck: boolean;
+  hasCitationCheck: boolean;
+}
+
+/** Shared shape for the runtime match vocabulary attached to challenge
+ *  prereqs. Keeps the per-type and base-prereq structs in sync (DRY). */
+interface PrereqMatchVocab {
+  stemmedTokens: Set<string>;
+  hasURLCheck: boolean;
+  hasNumericCheck: boolean;
+  hasProperNounCheck: boolean;
+  hasCitationCheck: boolean;
 }
 
 // Gate governance types — P1.3.2 (0.20.0). Consumed by runGateAction via
@@ -160,8 +186,12 @@ interface StakesCalibration {
 let cachedChallengeTypes: ChallengeTypeDef[] | null = null;
 let cachedChallengeTypesKnowledgeBaseUrl: string | undefined = undefined;
 let cachedChallengeTypesSource: "knowledge_base" | "minimal" = "minimal";
-let cachedChallengeTypeIndex: BM25Index | null = null;
-let cachedChallengeTypeIndexKnowledgeBaseUrl: string | undefined = undefined;
+// Note: challenge's BM25 type-detection index is NOT cached — per
+// klappy://canon/principles/cache-fetches-and-parses, rebuilding a BM25
+// index over challenge's 6–9-type corpus is a microsecond derivation and
+// the plumbing tax (URL-keyed invalidation + cleanup_storage wiring +
+// drift risk) costs more than the rebuild. Inline-built at the call site
+// in runChallengeAction, same pattern as gate's transition index (0.20.0).
 let cachedBasePrerequisites: BasePrerequisite[] | null = null;
 let cachedBasePrerequisitesKnowledgeBaseUrl: string | undefined = undefined;
 let cachedBasePrerequisitesSource: "knowledge_base" | "minimal" = "minimal";
@@ -550,15 +580,19 @@ async function discoverChallengeTypes(
         }
       }
 
-      // Prerequisite Overlays table — rows of (Prerequisite, Check, Gap message)
+      // Prerequisite Overlays table — rows of (Prerequisite, Check, Gap message).
+      // Per P1.3.3 PRD D2: each row is enriched with PrereqMatchVocab (stemmed
+      // tokens + structural-test flags) at parse time; see parseCheckColumn.
       const prereqSection = content.match(
         /## Prerequisite Overlays[\s\S]*?\| Prerequisite[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
       );
-      const prerequisiteOverlays: Array<{
-        prerequisite: string;
-        check: string;
-        gapMessage: string;
-      }> = [];
+      const prerequisiteOverlays: Array<
+        {
+          prerequisite: string;
+          check: string;
+          gapMessage: string;
+        } & PrereqMatchVocab
+      > = [];
       if (prereqSection) {
         for (const row of prereqSection[1].split("\n").filter((r: string) => r.includes("|"))) {
           const cols = parseTableRow(row);
@@ -569,6 +603,7 @@ async function discoverChallengeTypes(
               prerequisite: cols[0],
               check: cols[1],
               gapMessage: gap,
+              ...parseCheckColumn(cols[1]),
             });
           }
         }
@@ -620,35 +655,12 @@ async function discoverChallengeTypes(
   // rather than inventing a built-in fallback registry — see PRD D7).
   const source: "knowledge_base" | "minimal" = types.length > 0 ? "knowledge_base" : "minimal";
   cachedChallengeTypesSource = source;
-  // Index build deferred — needs vocab.stopWords from fetchNormativeVocabulary,
-  // assembled lazily by getOrBuildChallengeTypeIndex below. Both types and the
-  // index are deterministic functions of knowledgeBaseUrl, so caching by knowledgeBaseUrl
-  // remains safe.
+  // Note: the BM25 type-detection index over per-type detection text is
+  // NOT cached — it's a microsecond derivation over already-cached parse
+  // products, rebuilt inline per request in runChallengeAction. See
+  // klappy://canon/principles/cache-fetches-and-parses for the principle
+  // and the plumbing-tax argument.
   return { types, source };
-}
-
-/** Lazily build (or return cached) per-knowledgeBaseUrl BM25 index over the per-type
- *  detection text, using governance-sourced stop words from normative-vocabulary.md.
- *  The cache is keyed on knowledgeBaseUrl so different canon sources do not contaminate
- *  each other's indexes. */
-function getOrBuildChallengeTypeIndex(
-  types: ChallengeTypeDef[],
-  vocab: NormativeVocabulary,
-  knowledgeBaseUrl?: string,
-): BM25Index {
-  if (cachedChallengeTypeIndex && cachedChallengeTypeIndexKnowledgeBaseUrl === knowledgeBaseUrl) {
-    return cachedChallengeTypeIndex;
-  }
-  // Build BM25 index over per-type detection text (triggers + blockquote).
-  // Stemming handles morphology; IDF weights distinctive trigger terms above filler.
-  // vocab.stopWords comes from `## Detection Noise` in normative-vocabulary.md;
-  // it deliberately preserves modal verbs and negation as signal. An empty
-  // Set means no filtering (governance opted into IDF-only scoring).
-  const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
-  const bm25Index = buildBM25Index(bm25Docs, vocab.stopWords);
-  cachedChallengeTypeIndex = bm25Index;
-  cachedChallengeTypeIndexKnowledgeBaseUrl = knowledgeBaseUrl;
-  return bm25Index;
 }
 
 // Gate minimal-tier vocabulary — P1.3.2 D6. Used when canon is unreachable
@@ -847,6 +859,7 @@ async function fetchBasePrerequisites(
               prerequisite: cols[0],
               check: cols[1],
               gapMessage: cols[2].replace(/^"|"$/g, ""),
+              ...parseCheckColumn(cols[1]),
             });
           }
         }
@@ -1515,8 +1528,6 @@ async function runCleanupStorage(
   cachedChallengeTypes = null;
   cachedChallengeTypesKnowledgeBaseUrl = undefined;
   cachedChallengeTypesSource = "minimal";
-  cachedChallengeTypeIndex = null;
-  cachedChallengeTypeIndexKnowledgeBaseUrl = undefined;
   cachedBasePrerequisites = null;
   cachedBasePrerequisitesKnowledgeBaseUrl = undefined;
   cachedBasePrerequisitesSource = "minimal";
@@ -2023,9 +2034,15 @@ async function runChallengeAction(
   // Detection runs BEFORE the voice-dump suppression check so the SUPPRESSED
   // response can still expose `governance` — the model sees what would have
   // fired without surfacing the pressure-test questions.
+  // Build BM25 type-detection index inline per request (not cached) —
+  // per klappy://canon/principles/cache-fetches-and-parses, a BM25 index
+  // over challenge's 6–9-type corpus is a microsecond derivation and the
+  // plumbing tax is not worth the rebuild cost. Parse products (types,
+  // vocab) are cached upstream; the index is just a reshape.
   // Stop words come from `## Detection Noise` in normative-vocabulary.md
   // (governance), not a hardcoded constant in this file.
-  const typeIndex = getOrBuildChallengeTypeIndex(types, vocab, knowledgeBaseUrl);
+  const bm25Docs = types.map((t) => ({ id: t.slug, text: t.detectionText }));
+  const typeIndex = buildBM25Index(bm25Docs, vocab.stopWords);
   const matchedTypes: ChallengeTypeDef[] = [];
   const hits = searchBM25(typeIndex, input, types.length);
   const typeBySlug = new Map(types.map((t) => [t.slug, t]));
@@ -2124,9 +2141,14 @@ async function runChallengeAction(
   }
 
   const strictness = modeConfig?.prerequisiteStrictness?.toLowerCase() || "required";
+  // Hoist tokenize(input) out of the per-prereq loop — input is constant across
+  // the loop, stemmedTokens differ per prereq. Per PRD D3 (P1.3.3): stemmed
+  // set intersection at runtime, structural tests preserved, no regex compile
+  // per check. This is the fit-to-problem matcher per D5.
+  const inputStems = new Set(tokenize(input));
   const missing: string[] = [];
   for (const p of prereqMap.values()) {
-    const passed = evaluatePrerequisiteCheck(input, p.check);
+    const passed = evaluatePrerequisiteCheck(inputStems, input, p);
     if (!passed) {
       // source-named check is escalated to blocking when strictness says so
       if (strictness.includes("optional") && !p.prerequisite.includes("source-named")) {
@@ -2288,36 +2310,78 @@ async function runChallengeAction(
   };
 }
 
-// Governance-driven check evaluator — interprets natural-language `check` strings
-// from ## Prerequisite Overlays tables. Uses cheap heuristics: substring matching
-// against quoted keywords in the check description, plus a few special-case patterns.
-function evaluatePrerequisiteCheck(input: string, check: string): boolean {
-  // Extract quoted keywords like "evidence", "observed", "alternative"
-  const quotedKeywords: string[] = [];
+// Parse-time helper: extract quoted keywords from a `check` description and
+// detect the four structural-test hints. Called at canon-fetch time from
+// both discoverChallengeTypes (per-type prereqs) and fetchBasePrerequisites
+// (universal prereqs). Produces a PrereqMatchVocab that the runtime consumes
+// via evaluatePrerequisiteCheck. Per klappy://canon/principles/cache-fetches-
+// and-parses, this is a parse product: the Set is the stemmed form of the
+// canon's vocabulary and is cached alongside the rest of the prereq struct.
+function parseCheckColumn(check: string): PrereqMatchVocab {
   const quotedRegex = /"([^"]+)"/g;
+  const stemmedTokens = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = quotedRegex.exec(check)) !== null) {
-    quotedKeywords.push(m[1]);
-  }
-
-  if (quotedKeywords.length > 0) {
-    // Pass if ANY quoted keyword appears in input (case-insensitive, word-boundary where possible)
-    for (const kw of quotedKeywords) {
-      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // Use word-boundary for single words, substring for phrases
-      const pattern = /^\w+$/.test(kw) ? new RegExp("\\b" + escaped + "\\b", "i") : new RegExp(escaped, "i");
-      if (pattern.test(input)) return true;
+    // Tokenize each quoted keyword or phrase — multi-word phrases like
+    // "according to" contribute multiple stems; stop-words are dropped
+    // by tokenize(). This preserves semantic coverage while normalizing
+    // morphology (problems → problem, considered → consid, etc.).
+    for (const stem of tokenize(m[1])) {
+      stemmedTokens.add(stem);
     }
-    // Special-case check descriptions that mention URLs, citations, numeric markers
-    if (/\bURL\b/i.test(check) && /https?:\/\//.test(input)) return true;
-    if (/numeric/i.test(check) && /\d/.test(input)) return true;
-    if (/proper-?noun/i.test(check) && /\b[A-Z][a-z]+\s+[A-Z]/.test(input)) return true;
-    if (/citation/i.test(check) && /\[\d+\]|\bper\s+[A-Z]|\baccording to\b/i.test(input)) return true;
-    return false;
   }
+  return {
+    stemmedTokens,
+    hasURLCheck: /\bURL\b/i.test(check),
+    hasNumericCheck: /\bnumeric\b/i.test(check),
+    hasProperNounCheck: /\bproper-?noun\b/i.test(check),
+    hasCitationCheck: /\bcitation\b/i.test(check),
+  };
+}
 
-  // No quoted keywords: conservative fallback — passes if input is non-trivial
-  return input.trim().length >= 20;
+// Governance-driven check evaluator — runtime pairing for parseCheckColumn.
+// Per PRD D5 (split-by-fit): prereq evaluation is independent gap-or-not per
+// prereq, not ranked. Stemmed set intersection is the fit-to-problem matcher
+// and catches morphological variations that the prior regex cascade missed
+// (e.g. "problems identified" now stems to `problem` + `identif` and matches
+// a prereq whose vocab includes `problem`). Structural side-tests (URL,
+// numeric, proper-noun, citation) preserved from the pre-refactor evaluator
+// because they cover cases the keyword vocabulary can't — `source-named`
+// inputs like "here's the URL: https://..." have no stemmed overlap with the
+// vocab `per / according to / from / source: / who said / where i read` but
+// the URL structural test catches them. Strictly additive over the prior
+// regex: every input that matched pre-refactor still matches post-refactor.
+function evaluatePrerequisiteCheck(
+  inputStems: Set<string>,
+  rawInput: string,
+  prereq: PrereqMatchVocab,
+): boolean {
+  // Token match — stemmed set intersection.
+  for (const s of prereq.stemmedTokens) {
+    if (inputStems.has(s)) return true;
+  }
+  // Structural tests — preserved from pre-refactor evaluator. Check against
+  // the raw input because these patterns are inherently case- and shape-
+  // sensitive (URLs, proper-noun capitalization, bracketed citations).
+  if (prereq.hasURLCheck && /https?:\/\//.test(rawInput)) return true;
+  if (prereq.hasNumericCheck && /\d/.test(rawInput)) return true;
+  if (prereq.hasProperNounCheck && /\b[A-Z][a-z]+\s+[A-Z]/.test(rawInput)) return true;
+  if (prereq.hasCitationCheck && /\[\d+\]|\bper\s+[A-Z]|\baccording to\b/i.test(rawInput)) {
+    return true;
+  }
+  // Conservative fallback: prereqs whose check description had NO quoted
+  // keywords AND NO structural hints pass on any non-trivial input. This
+  // preserves the pre-refactor fallback behavior (`input.trim().length >= 20`).
+  if (
+    prereq.stemmedTokens.size === 0 &&
+    !prereq.hasURLCheck &&
+    !prereq.hasNumericCheck &&
+    !prereq.hasProperNounCheck &&
+    !prereq.hasCitationCheck
+  ) {
+    return rawInput.trim().length >= 20;
+  }
+  return false;
 }
 
 async function runGateAction(
