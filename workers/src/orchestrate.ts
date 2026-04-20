@@ -348,26 +348,6 @@ function detectMode(input: string): { mode: string; confidence: string } {
   return { mode: sorted[0][0], confidence };
 }
 
-function detectTransition(input: string): { from: string; to: string } {
-  if (/\b(ready to build|ready to implement|start building|let's code|start coding)\b/i.test(input))
-    return { from: "planning", to: "execution" };
-  if (
-    /\b(ready to plan|start planning|let's plan|time to plan|move to planning|moving to planning)\b/i.test(
-      input,
-    )
-  )
-    return { from: "exploration", to: "planning" };
-  if (/\b(moving to execution|moving to build)\b/i.test(input))
-    return { from: "planning", to: "execution" };
-  if (/\b(back to exploration|need to rethink|step back|reconsider)\b/i.test(input))
-    return { from: "execution", to: "exploration" };
-  if (/\b(ship|deploy|release|go live|push to prod)\b/i.test(input))
-    return { from: "execution", to: "completion" };
-  if (/\b(ready|let's go|proceed|move forward|next step)\b/i.test(input))
-    return { from: "exploration", to: "planning" };
-  return { from: "unknown", to: "unknown" };
-}
-
 // Discover encoding types from canon governance docs.
 //
 // Governance resolution per canon/constraints/core-governance-baseline:
@@ -733,7 +713,7 @@ async function fetchGateTransitions(
             const key = cols[0].replace(/`/g, "").trim();
             const from = cols[1].trim();
             const to = cols[2].trim();
-            const prereqIdsRaw = cols[3].trim();
+            const prereqIdsRaw = cols[3].replace(/`/g, "").trim();
             const detectionText = cols[4].trim();
             if (key.length === 0) continue;
             const prereqIds = prereqIdsRaw.length > 0
@@ -787,7 +767,7 @@ async function fetchGatePrerequisites(
         for (const row of section[1].split("\n").filter((r: string) => r.includes("|"))) {
           const cols = parseTableRow(row);
           if (cols.length >= 3) {
-            const id = cols[0].trim();
+            const id = cols[0].replace(/`/g, "").trim();
             const check = cols[1].trim();
             const gapMessage = cols[2].replace(/^"|"$/g, "").trim();
             if (id.length === 0) continue;
@@ -2368,7 +2348,7 @@ async function runGateAction(
   // deterministically when two transitions score identically.
   const bm25Docs = transitions.map((t) => ({ id: t.key, text: t.detectionText }));
   const transitionIndex = buildBM25Index(bm25Docs);
-  const hits = searchBM25(transitionIndex, fullInput, transitions.length);
+  const hits = searchBM25(transitionIndex, input, transitions.length);
 
   let matchedTransition: TransitionDef | null = null;
   if (hits.length > 0 && hits[0].score > 0) {
@@ -2414,7 +2394,7 @@ async function runGateAction(
     }
   }
 
-  const gateStatus = unmet.length > 0 ? "NOT_READY" : "PASS";
+  const gateStatus = unmet.length > 0 || unknown.length > 0 ? "NOT_READY" : "PASS";
   const requiredTotal = matchedTransition ? matchedTransition.prereqIds.length : 0;
 
   // Update state
