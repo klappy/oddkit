@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-04-20
+
+### Fixed
+
+- **Strictly-additive invariant restored in `oddkit_challenge` prereq evaluator** (Cursor Bugbot finding on PR #120 / #121, medium severity). The 0.21.0 implementation called `tokenize(input)` and `tokenize(m[1])` with the default `STOP_WORDS` filter on both the input side and the parse-time vocabulary side. Canon vocab keywords that are also English stop words — notably `from` in source-named's vocabulary — were silently dropped from both `inputStems` and `stemmedTokens`. Inputs like `"I learned this from my colleague"` passed `source-named` pre-refactor (via `\bfrom\b` literal regex match) but failed post-refactor, breaking the strictly-additive invariant claimed in the 0.21.0 CHANGELOG and PR description. Fix: pass `new Set()` (empty stop-words) to both `tokenize()` calls so canon vocab survives and both sides share shape. New regression assertions in canon-tool-envelope.smoke.mjs anchor the fix at item (10) `from`-only source attribution and item (11) the `according to` multi-word case.
+
+- **`BasePrerequisite` collapsed to `BasePrerequisiteCore & PrereqMatchVocab` intersection** (Cursor Bugbot finding on PR #120, low severity). The 0.21.0 implementation defined `interface PrereqMatchVocab` to share shape between `BasePrerequisite` and `ChallengeTypeDef.prerequisiteOverlays[]` (DRY) but then re-listed all five fields in `BasePrerequisite` instead of using `& PrereqMatchVocab`. Fix: split into `interface BasePrerequisiteCore` (the three core fields) and `type BasePrerequisite = BasePrerequisiteCore & PrereqMatchVocab` (the intersection). Future field additions to `PrereqMatchVocab` now propagate automatically.
+
+### Process
+
+- This release exists because the 0.21.0 ship process skipped Bugbot's findings (treating in_progress as non-blocking) and skipped Sonnet 4.6 validator dispatch despite the P1.3.2 ledger explicitly warning against making smoke-only the default. Both findings landed in prod for ~15 minutes before recovery. Documented in P1.3.3 closeout ledger as a process failure to carry forward.
+
 ## [0.21.0] - 2026-04-20
 
 ### Changed

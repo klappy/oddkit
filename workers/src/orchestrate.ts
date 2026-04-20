@@ -102,21 +102,18 @@ interface ChallengeTypeDef {
   fallback: boolean;
 }
 
-interface BasePrerequisite {
+interface BasePrerequisiteCore {
   prerequisite: string;
   check: string;
   gapMessage: string;
-  // Per PRD D2 (P1.3.3): parse products populated at canon-fetch time.
-  // stemmedTokens is the stemmed form of quoted keywords in `check`;
-  // the four has*Check booleans flag structural-test hints detected in
-  // the check description. See parseCheckColumn below. These are parse
-  // products per klappy://canon/principles/cache-fetches-and-parses.
-  stemmedTokens: Set<string>;
-  hasURLCheck: boolean;
-  hasNumericCheck: boolean;
-  hasProperNounCheck: boolean;
-  hasCitationCheck: boolean;
 }
+
+// BasePrerequisite shares the PrereqMatchVocab shape (stemmedTokens + 4
+// structural-test flags) with ChallengeTypeDef.prerequisiteOverlays[] via
+// intersection — defined as `& PrereqMatchVocab` rather than re-listing the
+// fields, so future field additions to the shared shape propagate
+// automatically. Per Bugbot finding on PR #120 (low severity).
+type BasePrerequisite = BasePrerequisiteCore & PrereqMatchVocab;
 
 /** Shared shape for the runtime match vocabulary attached to challenge
  *  prereqs. Keeps the per-type and base-prereq structs in sync (DRY). */
@@ -2145,7 +2142,11 @@ async function runChallengeAction(
   // the loop, stemmedTokens differ per prereq. Per PRD D3 (P1.3.3): stemmed
   // set intersection at runtime, structural tests preserved, no regex compile
   // per check. This is the fit-to-problem matcher per D5.
-  const inputStems = new Set(tokenize(input));
+  // Stop-word filtering is disabled (empty Set) so this matches the parse-time
+  // tokenize() call in parseCheckColumn. Canon vocab includes stop-words like
+  // `from` (source-named) — both sides must share shape or strictly-additive
+  // breaks. Per Bugbot finding on PR #120 / #121.
+  const inputStems = new Set(tokenize(input, new Set()));
   const missing: string[] = [];
   for (const p of prereqMap.values()) {
     const passed = evaluatePrerequisiteCheck(inputStems, input, p);
@@ -2323,10 +2324,17 @@ function parseCheckColumn(check: string): PrereqMatchVocab {
   let m: RegExpExecArray | null;
   while ((m = quotedRegex.exec(check)) !== null) {
     // Tokenize each quoted keyword or phrase — multi-word phrases like
-    // "according to" contribute multiple stems; stop-words are dropped
-    // by tokenize(). This preserves semantic coverage while normalizing
-    // morphology (problems → problem, considered → consid, etc.).
-    for (const stem of tokenize(m[1])) {
+    // "according to" contribute multiple stems. Stop-word filtering is
+    // disabled (empty Set) because canon vocab includes stop-word
+    // keywords — `from` in source-named, `to` in `according to`, etc.
+    // The pre-refactor regex evaluator matched these literally as
+    // `\bfrom\b` against raw input; dropping them here would silently
+    // break the strictly-additive invariant. The runtime call site uses
+    // the same empty stop-word set on inputStems so both sides share
+    // shape. Stemming still applies (problems → problem, considered →
+    // consid). Per Bugbot finding on PR #120 (medium severity) and
+    // PR #121 (carried forward).
+    for (const stem of tokenize(m[1], new Set())) {
       stemmedTokens.add(stem);
     }
   }
