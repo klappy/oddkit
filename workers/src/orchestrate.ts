@@ -1116,22 +1116,12 @@ function isPrefixedBatchInput(input: string): boolean {
   return paragraphs.some((p) => PREFIX_TAG_REGEX.test(p));
 }
 
-// Stemmed set intersection — the D5 matcher shape for encode trigger-word
-// classification. Iterate the smaller set (canon vocab) and probe the larger
-// (runtime input stems) for O(min(|a|,|b|)) early exit. Mirrors the shape
-// used by evaluatePrerequisiteCheck in the P1.3.3 challenge evaluator.
-function intersectsStems(vocab: Set<string>, input: Set<string>): boolean {
-  for (const s of vocab) {
-    if (input.has(s)) return true;
-  }
-  return false;
-}
-
 // Phrase-subset match — a phrase matches when ALL of its stems appear in the
-// input stem set. Short-circuits on the first phrase that matches. This is
-// the precision-preserving variant of intersectsStems for multi-word canon
-// vocab: single-stem phrases degenerate to set membership (identical to the
-// old single-token behavior), while multi-stem phrases like
+// input stem set. Short-circuits on the first phrase that matches. The D5
+// matcher shape for encode trigger-word classification, mirroring the shape
+// used by evaluatePrerequisiteCheck in the P1.3.3 challenge evaluator:
+// single-stem phrases degenerate to set membership (identical to the old
+// single-token behavior), while multi-stem phrases like
 // `committed to` → ["committ","to"] require both stems to co-occur, so
 // ubiquitous function words cannot match on their own.
 function matchesStemmedPhrases(phrases: string[][], input: Set<string>): boolean {
