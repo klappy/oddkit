@@ -603,6 +603,28 @@ async function run() {
     `got: met=${prereqPass.result?.prerequisites?.required_met} total=${prereqPass.result?.prerequisites?.required_total}`,
   );
 
+  // Tool: oddkit_catalog — debug.generated_at must be response time, not cached index time
+  console.log("\n─── Testing: oddkit_catalog ───");
+  const catalogResult = await callTool("oddkit", { action: "catalog", input: "recent" });
+  expectFullEnvelope("oddkit_catalog", catalogResult);
+
+  // debug.generated_at must be recent (under 60s) — not the cached index build time
+  const generatedAt = catalogResult.debug?.generated_at;
+  ok(`oddkit_catalog: debug.generated_at present`,
+    typeof generatedAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(generatedAt),
+    `got: ${generatedAt}`);
+  if (typeof generatedAt === "string") {
+    const ageMs = Date.now() - Date.parse(generatedAt);
+    ok(`oddkit_catalog: debug.generated_at is response time (age < 60s)`,
+      ageMs < 60_000 && ageMs >= 0,
+      `ageMs=${ageMs}`);
+  }
+
+  // index_built_at is the separate, accurately-named cache-freshness diagnostic
+  ok(`oddkit_catalog: debug.index_built_at present`,
+    typeof catalogResult.debug?.index_built_at === "string",
+    `got: ${catalogResult.debug?.index_built_at}`);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }
