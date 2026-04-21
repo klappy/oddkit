@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-04-21
+
+### Fixed
+
+- **`blob8` (worker_version) telemetry fallback** (PR #131). Telemetry's `worker_version` blob was logging as the literal string `"unknown"` for 100% of production tool calls (6,051 / 6,051 over the 7 days preceding the fix). Root cause: `env.ODDKIT_VERSION` is only injected when deploying via `npm run deploy` (which passes `--var ODDKIT_VERSION:...`), but Cloudflare's auto-deploy from GitHub — the canonical deploy path — invokes `wrangler` directly from `wrangler.toml` and never executes the `deploy` script. So `env.ODDKIT_VERSION` was always undefined in production, and the fallback was the literal `"unknown"`. Other call sites (`workers/src/index.ts:30,184,894,915`, `workers/src/orchestrate.ts:1570`) already fall back to `pkg.version` via a `BUILD_VERSION` constant; `workers/src/telemetry.ts` was the lone holdout. Fix: import `pkg from "../package.json"` (mirroring the `index.ts` pattern), define `BUILD_VERSION = pkg.version`, replace the `"unknown"` literal with `BUILD_VERSION`. Existing `env.ODDKIT_VERSION` override semantics preserved — `npm run deploy` users still take precedence. After this ships, `blob8` will report the actual semver on auto-deploys, restoring version-aware regression detection that was masked for the entire production history of telemetry.
+
+### Changed
+
+- **`duration_ms` (`double2`) schema docstring expanded** (PR #131). The previous one-liner — `"MCP request processing time (measured by caller)"` — under-described the measurement and led to operator confusion when telemetry showed `oddkit_time` averaging 269ms / max 9362ms while the per-action `debug.duration_ms` field reported 0ms. The new docstring explicitly states that `duration_ms` is full MCP request wall-clock measured at the worker edge from request entry through `handler()` return — including V8 cold-start, KB fetch, MCP SDK overhead, and action handler compute — and disambiguates from the per-action `debug.duration_ms` envelope field which measures only handler-internal compute. No behavior change. Also expanded the `blob8` docstring to document the `env.ODDKIT_VERSION` → `BUILD_VERSION` resolution chain and assert the field is never `"unknown"` on a normal deploy.
+
+### Refs
+
+- PR: [#131](https://github.com/klappy/oddkit/pull/131)
+- Validator session: `sesn_011CaHXQGvRSKZvoRUNauwxv` (Sonnet 4.6, fresh context, 5-corroboration pattern per `klappy://canon/constraints/release-validation-gate`)
+- Validator findings: zero code defects; one non-blocking O-open carry-forward (telemetry instrumentation category undefined in `release-validation-gate` canon — author's "non-load-bearing" framing was retracted in amended PR body, validator dispatched per "when in doubt" rule)
+- Canon basis: `klappy://canon/constraints/release-validation-gate`, `klappy://canon/constraints/telemetry-governance`
+- Surfaced by: in-session telemetry evaluation (operator: "Let's evaluate oddkit telemetry. Any learnings about recent usage?")
+
 ## [0.23.0] - 2026-04-20
 
 > **Version note:** P1.3.4 was scoped as 0.22.0 per the handoff, but two envelope-conformance fixes (PR #124 telemetry, PR #125 catalog) landed on main in parallel and were released as 0.22.0 via PR #128 while this branch was in Sonnet 4.6 validator dispatch. Per `klappy://canon/constraints/release-validation-gate` Rule 3 (canon outranks session artifacts) and SemVer discipline, this refactor is re-versioned to 0.23.0. The handoff's "ship as 0.22.0" recommendation was session-scoped; main-reality is the canon.
