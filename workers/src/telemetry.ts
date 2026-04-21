@@ -13,16 +13,37 @@
  *   blob5: consumer_source — how label was resolved (e.g. "user-agent")
  *   blob6: knowledge_base_url — which repo is being served
  *   blob7: document_uri   — for get calls, the URI requested
- *   blob8: worker_version — oddkit version string
+ *   blob8: worker_version — oddkit semver string. Sourced from env.ODDKIT_VERSION
+ *                            (deploy-time injection) with a build-time fallback
+ *                            to workers/package.json::version. Never "unknown"
+ *                            on a normal deploy.
  *   blob9: cache_tier    — which storage tier served the index (E0008.1)
  *   double1: count        — always 1 (for SUM aggregation)
- *   double2: duration_ms  — MCP request processing time (measured by caller)
+ *   double2: duration_ms  — Full MCP request wall-clock, measured at the worker
+ *                            edge from request entry through handler return.
+ *                            Includes V8 cold-start, KB fetch, MCP SDK overhead,
+ *                            and action handler compute. NOT the same as the
+ *                            per-action `debug.duration_ms` returned in tool
+ *                            envelopes — that field measures only the action
+ *                            handler's internal compute. Expect a long tail on
+ *                            cache-miss requests even for trivial actions like
+ *                            oddkit_time.
  *   index1: sampling_key  — consumer label (for sampling consistency)
  *
  * See: klappy://canon/constraints/telemetry-governance
  */
 
 import type { Env } from "./zip-baseline-fetcher";
+import pkg from "../package.json";
+
+// Build-time fallback for blob8 (worker_version). env.ODDKIT_VERSION is
+// injected via `--var ODDKIT_VERSION:...` when deploying through the
+// `npm run deploy` script, but Cloudflare's auto-deploy from GitHub does
+// not execute that script — it invokes wrangler directly with the config
+// in wrangler.toml, leaving env.ODDKIT_VERSION undefined. Falling back to
+// pkg.version (read from workers/package.json at build time) gives
+// telemetry a real version string under the canonical deploy path.
+const BUILD_VERSION = pkg.version;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Sanitization
@@ -215,7 +236,7 @@ export function recordTelemetry(request: Request, env: Env, durationMs: number, 
             consumerSource,
             toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
             documentUri,
-            env.ODDKIT_VERSION || "unknown",
+            env.ODDKIT_VERSION || BUILD_VERSION,
             cacheTier || "none", // blob9: E0008.1 x-ray cache tier
           ],
           doubles: [1, durationMs],
