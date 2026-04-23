@@ -970,9 +970,15 @@ export default {
         // can read its body in the background. The original `response` flows
         // back to the caller untouched.
         const responseContentType = response.headers.get("content-type") ?? "";
-        const responseClone = responseContentType.includes("application/json")
-          ? response.clone()
-          : null;
+        let responseClone: Response | null = null;
+        try {
+          responseClone = responseContentType.includes("application/json")
+            ? response.clone()
+            : null;
+        } catch {
+          // Telemetry must never break MCP requests
+          responseClone = null;
+        }
 
         ctx.waitUntil(
           (async () => {
