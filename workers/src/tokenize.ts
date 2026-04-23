@@ -115,34 +115,3 @@ export async function measurePayloadShape(
     tokenize_ms: tokenizerRan ? tokenize_ms : 0,
   };
 }
-
-/**
- * Measure the byte and token shape of a Request/Response pair using the
- * call-site Response object directly. Clones the response so the original
- * body flows untouched back to the caller, reads the clone to completion,
- * then delegates to `measurePayloadShape`.
- *
- * No Content-Type filter — the original implementation guessed that MCP
- * responses would be `application/json` and recorded zeros for everything
- * else. Real MCP traffic uses Streamable HTTP transport which returns
- * `text/event-stream`, and the prior filter dropped almost every response.
- * Reading the body universally is correct because oddkit's responses are
- * always bounded (no long-lived streams), and the SSE protocol overhead
- * (~10 bytes per event) is negligible against the actual payload size.
- *
- * Telemetry must never break MCP requests — clone or read failures fall
- * through to an empty `responseText`, which `measurePayloadShape` handles
- * by recording `bytes_out=0, tokens_out=0`.
- */
-export async function measureResponseShape(
-  requestText: string,
-  response: Response,
-): Promise<PayloadShape> {
-  let responseText = "";
-  try {
-    responseText = await response.clone().text();
-  } catch {
-    // Fall through with empty string; bytes_out / tokens_out will be 0.
-  }
-  return measurePayloadShape(requestText, responseText);
-}

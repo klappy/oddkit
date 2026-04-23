@@ -130,53 +130,5 @@ await test("measurePayloadShape handles empty response (SSE skipped)", async () 
   assert.ok(s.bytes_in > 0);
 });
 
-// ─── measureResponseShape — guards against the prod bug the agent caught ──
-
-const { measureResponseShape } = await import(compiledPath);
-
-await test("measureResponseShape measures application/json responses", async () => {
-  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } });
-  const res = new Response(body, { headers: { "Content-Type": "application/json" } });
-  const s = await measureResponseShape("req", res);
-  assert.ok(s.bytes_out > 0, `bytes_out should be > 0, got ${s.bytes_out}`);
-  assert.ok(s.tokens_out > 0, `tokens_out should be > 0, got ${s.tokens_out}`);
-});
-
-await test("measureResponseShape ALSO measures text/event-stream (the smoke-test bug)", async () => {
-  // This is the case that the prior implementation got wrong:
-  // MCP Streamable HTTP transport returns text/event-stream by default,
-  // and the prior Content-Type filter recorded zeros for every such response.
-  const sseBody = `data: ${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "hello world" }] } })}\n\n`;
-  const res = new Response(sseBody, { headers: { "Content-Type": "text/event-stream" } });
-  const s = await measureResponseShape("req", res);
-  assert.ok(s.bytes_out > 50, `bytes_out should reflect SSE body (~80 bytes), got ${s.bytes_out}`);
-  assert.ok(s.tokens_out > 5, `tokens_out should be > 5, got ${s.tokens_out}`);
-  console.log(`     SSE response: bytes_out=${s.bytes_out} tokens_out=${s.tokens_out}`);
-});
-
-await test("measureResponseShape leaves the original response body intact (clone)", async () => {
-  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { x: 42 } });
-  const res = new Response(body, { headers: { "Content-Type": "application/json" } });
-
-  // Measure first
-  await measureResponseShape("req", res);
-
-  // The original response body MUST still be readable — measurement uses a clone
-  const originalText = await res.text();
-  assert.equal(originalText, body, "original response body should be intact after measurement");
-});
-
-await test("measureResponseShape handles already-consumed body without throwing", async () => {
-  const body = JSON.stringify({ ok: true });
-  const res = new Response(body);
-  // Drain the original first — this will make .clone() succeed but the cloned body
-  // won't have data flowing if it was a stream. For a static body this still works,
-  // but the test ensures no throw under unusual conditions.
-  await res.text();
-  // Now ask measureResponseShape to handle this — it must not throw
-  const s = await measureResponseShape("req", res);
-  assert.ok(typeof s.bytes_out === "number", "must return a numeric bytes_out");
-});
-
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
