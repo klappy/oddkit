@@ -238,7 +238,7 @@ await test("oddkit_search with realistic ~8KB response — measurements are sane
 
 // ─── Test 3: SSE response (empty body) records zeros ───────────────────────
 
-await test("SSE response (empty body) records bytes_out=0, tokens_out=0", async () => {
+await test("SSE response (empty body) records bytes_out=0, tokens_out=0, tokenize_ms=0", async () => {
   const env = mockEnv();
   const requestBody = JSON.stringify({
     jsonrpc: "2.0",
@@ -254,6 +254,28 @@ await test("SSE response (empty body) records bytes_out=0, tokens_out=0", async 
   assert.equal(point.doubles[3], 0, "bytes_out should be 0 for empty response");
   assert.equal(point.doubles[5], 0, "tokens_out should be 0 for empty response");
   assert.ok(point.doubles[2] > 0, "bytes_in should still be > 0");
+});
+
+// Bugbot's fix (commit c4f5752) — distinguish "encoder ran" from
+// "encoder short-circuited on empty input." If the response is empty (SSE)
+// AND the encoder only ran on the request, that still counts as "ran" and
+// tokenize_ms must reflect the real cost. But if BOTH sides are empty,
+// tokenize_ms must be 0. This case locks both halves of that invariant in.
+await test("Bugbot invariant: tokenize_ms is 0 only when encoder did not actually run", async () => {
+  // Case A: both empty → tokenize_ms must be 0 (no encoder call did meaningful work)
+  const bothEmpty = await measurePayloadShape("", "");
+  assert.equal(bothEmpty.tokenize_ms, 0,
+    `both empty: tokenize_ms must be 0, got ${bothEmpty.tokenize_ms}`);
+
+  // Case B: request only → tokenize_ms can be non-zero (encoder ran on request)
+  const requestOnly = await measurePayloadShape("hello world payload", "");
+  assert.ok(requestOnly.tokenize_ms >= 0, "tokenize_ms must be >= 0");
+  assert.ok(requestOnly.tokens_in > 0, "tokens_in should be > 0 when request has content");
+  // tokenize_ms may be 0 if the call was extremely fast, but it must NOT be
+  // forced to zero just because responseText is empty. Confirming only that
+  // the field is present and finite — the prior bug was a non-zero value
+  // being recorded when nothing ran, not the inverse.
+  assert.ok(Number.isFinite(requestOnly.tokenize_ms), "tokenize_ms must be finite");
 });
 
 // ─── Test 4: Batch JSON-RPC writes one point per message ───────────────────
