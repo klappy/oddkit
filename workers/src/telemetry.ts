@@ -45,6 +45,11 @@
  *                            response is sent so it never adds user-facing latency.
  *                            A value of 0 alongside non-zero bytes indicates the
  *                            tokenizer was skipped (load failure or empty payload).
+ *                            Resolution is 1ms (Date.now), not sub-ms. Cloudflare
+ *                            Workers' performance.now() does not advance during
+ *                            synchronous CPU work, so it cannot measure pure-CPU
+ *                            tokenization. Sub-ms tokenizations round to 0; the
+ *                            bench-vs-prod comparison is therefore lower-bounded.
  *   index1: sampling_key  — consumer label (for sampling consistency)
  *
  * See: klappy://canon/constraints/telemetry-governance

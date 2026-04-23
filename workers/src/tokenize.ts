@@ -83,6 +83,16 @@ export interface PayloadShape {
  * Measure the byte and token shape of a request/response pair. Tokenization
  * is performed once per payload using the lazy-loaded cl100k_base encoder.
  * Bytes are measured via TextEncoder (UTF-8 byte length, the wire size).
+ *
+ * Timing note: uses `Date.now()` rather than `performance.now()`. Cloudflare
+ * Workers' `performance.now()` does not advance during synchronous CPU work
+ * (a deterministic-timing mitigation against timing-side-channel attacks —
+ * the timer only ticks when the worker performs I/O). Tokenization is pure
+ * CPU work, so `performance.now()` returns the same value before and after
+ * the encode and `tokenize_ms` always reads 0 in production. `Date.now()`
+ * always advances, at 1ms resolution. The bench-vs-prod comparison loses
+ * sub-millisecond precision but gains a working signal — payloads that take
+ * ≥1ms (8KB and up per the bench) show up as 1ms and above.
  */
 export async function measurePayloadShape(
   requestText: string,
@@ -92,12 +102,12 @@ export async function measurePayloadShape(
   const bytes_in = requestText ? encoder.encode(requestText).length : 0;
   const bytes_out = responseText ? encoder.encode(responseText).length : 0;
 
-  const start = performance.now();
+  const start = Date.now();
   const [tIn, tOut] = await Promise.all([
     countTokensSafe(requestText),
     countTokensSafe(responseText),
   ]);
-  const tokenize_ms = Math.round((performance.now() - start) * 1000) / 1000;
+  const tokenize_ms = Date.now() - start;
 
   // A `0` from countTokensSafe on empty text is a trivial short-circuit, not
   // a real tokenization — only a non-null result on non-empty text proves the
