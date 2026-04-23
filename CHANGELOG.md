@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-04-23
+
+### Added
+
+- **Payload-shape telemetry: `bytes_in`, `bytes_out`, `tokens_in`, `tokens_out` (PR #134)**. Four new doubles in the `oddkit_telemetry` Analytics Engine schema (`double3`–`double6`), measured per MCP request and written from a fire-and-forget `waitUntil` callback so user-facing latency is unchanged. Bytes are UTF-8 wire-length via `TextEncoder`; tokens are cl100k_base counts via `gpt-tokenizer/encoding/cl100k_base` (chosen over `@anthropic-ai/tokenizer` after a 5-minute Node bench: ~6× faster median, dramatically better p95, ~432 KB gzipped via subpath import — see `workers/test/tokenize.test.mjs`). Schema goes from 7 doubles to 6 (full doubles array: `[count, duration_ms, bytes_in, bytes_out, tokens_in, tokens_out]`). Tokenizer is module-level singleton, lazy-loaded via dynamic import, cached across requests within an isolate. Cold-call parses the encoder once; warm-call cost is sub-millisecond on Node, in the same V8 the Workers runtime uses. Bench-vs-prod comparison validated via fifth Managed Agent smoke at session `sesn_011CaMNujMg9pymcz18JFPp8` (`tokenization-smoke-managed` consumer label): `oddkit_catalog` → 21,437 bytes_out / 5,856 tokens_out; `oddkit_time` → 178 bytes_out / 71 tokens_out; chars-per-token ratio (~3.7–4.5) consistent with the bench's prediction across all observed payload sizes.
+
+- **Telemetry write helpers in `workers/src/tokenize.ts` (PR #134)**. New `measurePayloadShape(requestText, responseText)` returns `PayloadShape` (the 4-field struct above) given two body strings. `countTokensSafe(text)` wraps the encoder in a try/catch and returns `null` on failure so the telemetry path never throws. The call site in `workers/src/index.ts` clones the response synchronously before `return response`, then reads + measures inside `ctx.waitUntil` — clone must be synchronous because the body is a one-shot stream that the runtime drains as soon as the handler returns.
+
+### Changed
+
+- **No Content-Type filter on the response body (PR #134)**. The first iteration of payload-shape telemetry skipped any response whose Content-Type was not `application/json`, on the assumption that MCP responses would always be JSON. They are not — MCP's Streamable HTTP transport returns `text/event-stream` for tool calls, and the filter caused 100% of tool_call responses to record `bytes_out=0, tokens_out=0`. The filter was removed; the response body is now read regardless of Content-Type. SSE protocol overhead (~10 bytes per event) is negligible against the actual payload size, and oddkit's responses are bounded single-event streams that drain quickly. Telemetry is wrapped in a try/catch to preserve the non-breaking invariant for any future response that might fail to clone.
+
+### Removed
+
+- **`tokenize_ms` (formerly `double7`) — Workers runtime cannot measure it (PR #134)**. A previous iteration of the schema shipped a `tokenize_ms` field intended to capture the wall-clock cost of tokenization for bench-vs-prod comparison. Live smoke against the preview confirmed it always reads `0` in production. Cause is structural, not a bug: Cloudflare Workers freezes both `performance.now()` and `Date.now()` between network I/O events as a timing-side-channel mitigation (documented at `developers.cloudflare.com/workers/runtime-apis/web-standards/`). Tokenization is pure CPU work, so any sub-request timing of it from inside a Worker request handler is unmeasurable. The field was dropped from `PayloadShape`, the `writeDataPoint` doubles array, and the `telemetry-governance` canon doc. The bench at `workers/test/tokenize.test.mjs` characterized the cost curve once (cl100k handles 50 KB in ~1.3 ms on Node v22, the same V8 the Workers runtime uses); future per-call cost is predictable from observed `bytes_out` / `tokens_out` against that curve. See `klappy://canon/constraints/telemetry-governance` § "Why no tokenize_ms" for the published rationale.
+
+### Fixed
+
+- **Root `package-lock.json` version drift back-fill (this PR)**. Pre-bump state showed root `package-lock.json` at `0.23.0` while `workers/package-lock.json` was at `0.23.1` — root drifted one release behind. Both lockfiles are now bumped to `0.24.0` (top-level `version` and `packages[""].version`). The pre-commit hook enforces sync between `package.json` and `workers/package.json`; both `package-lock.json` files still require manual sync per current tooling.
+
+### Refs
+
+- PR (code): [klappy/oddkit#134](https://github.com/klappy/oddkit/pull/134)
+- PR (canon): [klappy/klappy.dev#134](https://github.com/klappy/klappy.dev/pull/134) — telemetry-governance schema update, two new constraints (`measure-before-you-object`, `performed-prudence-anti-pattern`)
+- Five Managed Agent smoke sessions (forensic record):
+  - `sesn_011CaMJdyWpUAm8n7YgRyLLG` — caught Content-Type filter dropping all SSE responses
+  - `sesn_011CaMKDLhT5zvUAUJ2HUvfW` — caught `clone()` inside `waitUntil` producing empty reader
+  - `sesn_011CaMLronGtL22J6R7fAPMs` — caught `performance.now()` frozen during synchronous CPU work
+  - `sesn_011CaMMf7tirAh2v5YoZHkxA` — caught `Date.now()` frozen too (both timers under deterministic-timing mitigation)
+  - `sesn_011CaMNujMg9pymcz18JFPp8` — **PASS** after dropping `tokenize_ms`; verified `bytes_in`/`bytes_out`/`tokens_in`/`tokens_out` populate with realistic varied values across tools
+- Agent: `agent_011CaMJd8jvMj5CJMiQ11TdM`. Environment: `env_016RffZyqSdHeb5s3Z6UABw8`. Sonnet 4.6 throughout per `klappy://canon/constraints/release-validation-gate`.
+- Canon basis: `klappy://canon/constraints/release-validation-gate`, `klappy://canon/constraints/telemetry-governance`, `klappy://canon/constraints/measure-before-you-object`, `klappy://canon/observations/performed-prudence-anti-pattern`.
+- Tests: 7/7 unit (`workers/test/tokenize.test.mjs`), 6/6 integration (`workers/test/telemetry-integration.test.mjs`). Typecheck clean. Bench artifact at `workers/test/tokenize.test.mjs` (cl100k vs anthropic comparison, 200B–50KB sweep).
+
 ## [0.23.1] - 2026-04-21
 
 ### Fixed
