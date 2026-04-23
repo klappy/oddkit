@@ -976,10 +976,16 @@ export default {
             try {
               const requestText = await telemetryClone.text();
 
-              const { measureResponseShape } = await import("./tokenize");
+              const { measurePayloadShape } = await import("./tokenize");
               const { recordTelemetry } = await import("./telemetry");
 
-              const shape = await measureResponseShape(requestText, responseClone);
+              let responseText = "";
+              try {
+                responseText = await responseClone.text();
+              } catch {
+                // Fall through with empty string; bytes_out / tokens_out will be 0.
+              }
+              const shape = await measurePayloadShape(requestText, responseText);
               recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
             } catch {
               // Telemetry must never break MCP requests
