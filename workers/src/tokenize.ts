@@ -99,11 +99,19 @@ export async function measurePayloadShape(
   ]);
   const tokenize_ms = Math.round((performance.now() - start) * 1000) / 1000;
 
+  // A `0` from countTokensSafe on empty text is a trivial short-circuit, not
+  // a real tokenization — only a non-null result on non-empty text proves the
+  // encoder ran. If neither payload was actually tokenized, zero out
+  // tokenize_ms to preserve the documented "skipped/failed" signal.
+  const tokenizerRan =
+    (requestText !== "" && tIn !== null) ||
+    (responseText !== "" && tOut !== null);
+
   return {
     bytes_in,
     bytes_out,
     tokens_in: tIn ?? 0,
     tokens_out: tOut ?? 0,
-    tokenize_ms: tIn === null && tOut === null ? 0 : tokenize_ms,
+    tokenize_ms: tokenizerRan ? tokenize_ms : 0,
   };
 }
