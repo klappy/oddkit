@@ -6,14 +6,13 @@
  * recordTelemetry + measurePayloadShape with realistic JSON-RPC payloads.
  *
  * Verifies end-to-end:
- *   - The full PayloadShape lands in doubles 3-7
+ *   - The full PayloadShape lands in doubles 3-6
  *   - bytes_in/out match TextEncoder UTF-8 byte length on the actual payloads
  *   - tokens_in/out are positive integers when payloads are non-empty
- *   - tokenize_ms is non-negative and finite
  *   - Batch JSON-RPC produces one data point per message
  *   - SSE simulation (responseText="") records zeros for the response side
  *   - Tool-call payloads correctly populate blob3 (tool_name)
- *   - The blob array is exactly 9 entries and the doubles array is exactly 7
+ *   - The blob array is exactly 9 entries and the doubles array is exactly 6
  *
  * This is the verification that wrangler dev would have done — same code
  * path, same schema, real tokenizer.
@@ -171,7 +170,7 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
 
   // Schema shape
   assert.equal(point.blobs.length, 9, `blobs should be 9, got ${point.blobs.length}`);
-  assert.equal(point.doubles.length, 7, `doubles should be 7, got ${point.doubles.length}`);
+  assert.equal(point.doubles.length, 6, `doubles should be 6, got ${point.doubles.length}`);
   assert.equal(point.indexes.length, 1, "indexes should be 1");
 
   // Blobs
@@ -190,11 +189,9 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
   assert.equal(point.doubles[3], shape.bytes_out, "double4 = bytes_out");
   assert.equal(point.doubles[4], shape.tokens_in, "double5 = tokens_in");
   assert.equal(point.doubles[5], shape.tokens_out, "double6 = tokens_out");
-  assert.equal(point.doubles[6], shape.tokenize_ms, "double7 = tokenize_ms");
 
   console.log(`     bytes_in=${shape.bytes_in} bytes_out=${shape.bytes_out} ` +
-              `tokens_in=${shape.tokens_in} tokens_out=${shape.tokens_out} ` +
-              `tokenize_ms=${shape.tokenize_ms.toFixed(3)}`);
+              `tokens_in=${shape.tokens_in} tokens_out=${shape.tokens_out}`);
 });
 
 // ─── Test 2: oddkit_search with realistic large response ───────────────────
@@ -227,18 +224,13 @@ await test("oddkit_search with realistic ~8KB response — measurements are sane
   assert.ok(shape.bytes_out > 5000, `bytes_out should be > 5000, got ${shape.bytes_out}`);
   assert.ok(shape.tokens_out > 1000, `tokens_out should be > 1000, got ${shape.tokens_out}`);
 
-  // Tokenization cost should be in the bench-predicted range (1-5ms for ~8KB)
-  assert.ok(shape.tokenize_ms < 100,
-    `tokenize_ms should be < 100ms for ~8KB payload (bench predicted ~1ms), got ${shape.tokenize_ms}`);
-
   console.log(`     bytes_out=${shape.bytes_out} (~${(shape.bytes_out/1024).toFixed(1)}KB) ` +
-              `tokens_out=${shape.tokens_out} ` +
-              `tokenize_ms=${shape.tokenize_ms.toFixed(3)} (bench predicted ~1ms for 8KB)`);
+              `tokens_out=${shape.tokens_out}`);
 });
 
 // ─── Test 3: SSE response (empty body) records zeros ───────────────────────
 
-await test("SSE response (empty body) records bytes_out=0, tokens_out=0, tokenize_ms=0", async () => {
+await test("SSE response (empty body) records bytes_out=0 and tokens_out=0", async () => {
   const env = mockEnv();
   const requestBody = JSON.stringify({
     jsonrpc: "2.0",
@@ -254,28 +246,6 @@ await test("SSE response (empty body) records bytes_out=0, tokens_out=0, tokeniz
   assert.equal(point.doubles[3], 0, "bytes_out should be 0 for empty response");
   assert.equal(point.doubles[5], 0, "tokens_out should be 0 for empty response");
   assert.ok(point.doubles[2] > 0, "bytes_in should still be > 0");
-});
-
-// Bugbot's fix (commit c4f5752) — distinguish "encoder ran" from
-// "encoder short-circuited on empty input." If the response is empty (SSE)
-// AND the encoder only ran on the request, that still counts as "ran" and
-// tokenize_ms must reflect the real cost. But if BOTH sides are empty,
-// tokenize_ms must be 0. This case locks both halves of that invariant in.
-await test("Bugbot invariant: tokenize_ms is 0 only when encoder did not actually run", async () => {
-  // Case A: both empty → tokenize_ms must be 0 (no encoder call did meaningful work)
-  const bothEmpty = await measurePayloadShape("", "");
-  assert.equal(bothEmpty.tokenize_ms, 0,
-    `both empty: tokenize_ms must be 0, got ${bothEmpty.tokenize_ms}`);
-
-  // Case B: request only → tokenize_ms can be non-zero (encoder ran on request)
-  const requestOnly = await measurePayloadShape("hello world payload", "");
-  assert.ok(requestOnly.tokenize_ms >= 0, "tokenize_ms must be >= 0");
-  assert.ok(requestOnly.tokens_in > 0, "tokens_in should be > 0 when request has content");
-  // tokenize_ms may be 0 if the call was extremely fast, but it must NOT be
-  // forced to zero just because responseText is empty. Confirming only that
-  // the field is present and finite — the prior bug was a non-zero value
-  // being recorded when nothing ran, not the inverse.
-  assert.ok(Number.isFinite(requestOnly.tokenize_ms), "tokenize_ms must be finite");
 });
 
 // ─── Test 4: Batch JSON-RPC writes one point per message ───────────────────
@@ -327,29 +297,6 @@ await test("missing env.ODDKIT_TELEMETRY is a graceful no-op", async () => {
   const shape = await measurePayloadShape(requestBody, "{}");
   // Should not throw
   recordTelemetry(mockRequest(), requestBody, env, 5, "memory", shape);
-});
-
-// ─── Test 7: The tokenize_ms warm-vs-cold pattern ──────────────────────────
-
-await test("tokenize_ms cold-call > warm-call (encoder caches across calls)", async () => {
-  const reqA = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
-    params: { name: "oddkit_time", arguments: {} } });
-  const resA = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { x: 1 } });
-
-  const cold = await measurePayloadShape(reqA, resA);
-  const warm = await measurePayloadShape(reqA, resA);
-  const warmer = await measurePayloadShape(reqA, resA);
-
-  console.log(`     cold=${cold.tokenize_ms.toFixed(3)}ms ` +
-              `warm=${warm.tokenize_ms.toFixed(3)}ms ` +
-              `warmer=${warmer.tokenize_ms.toFixed(3)}ms`);
-
-  // The warm calls should be bounded — not asserting strict ordering
-  // because timing jitter can flip them, but the median should be tiny.
-  assert.ok(warm.tokenize_ms < 50,
-    `warm tokenize_ms should be < 50ms, got ${warm.tokenize_ms}`);
-  assert.ok(warmer.tokenize_ms < 50,
-    `warmer tokenize_ms should be < 50ms, got ${warmer.tokenize_ms}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

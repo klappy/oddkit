@@ -39,17 +39,16 @@
  *                            0 when tokenization was skipped or failed.
  *   double6: tokens_out   — cl100k_base token count of the response body. 0 for
  *                            streamed responses or tokenizer failure.
- *   double7: tokenize_ms  — Total wall-clock time spent tokenizing both payloads
- *                            in the waitUntil() background task. Distinct from
- *                            the response trace — tokenization happens after the
- *                            response is sent so it never adds user-facing latency.
- *                            A value of 0 alongside non-zero bytes indicates the
- *                            tokenizer was skipped (load failure or empty payload).
- *                            Resolution is 1ms (Date.now), not sub-ms. Cloudflare
- *                            Workers' performance.now() does not advance during
- *                            synchronous CPU work, so it cannot measure pure-CPU
- *                            tokenization. Sub-ms tokenizations round to 0; the
- *                            bench-vs-prod comparison is therefore lower-bounded.
+ *
+ *   NOTE: a previous iteration shipped a `double7: tokenize_ms` field intended
+ *   to capture the wall-clock cost of tokenization for bench-vs-prod
+ *   comparison. It is gone. Cloudflare Workers freezes both
+ *   `performance.now()` and `Date.now()` between network I/O events as a
+ *   timing-side-channel mitigation, so any timing of pure CPU work always
+ *   reads 0 in production. The cost was characterized in the bench (workers/
+ *   test/tokenize.test.mjs) and bytes_in/out + tokens_in/out are sufficient
+ *   to predict per-call cost from that bench curve.
+ *
  *   index1: sampling_key  — consumer label (for sampling consistency)
  *
  * See: klappy://canon/constraints/telemetry-governance
@@ -258,7 +257,6 @@ export function recordTelemetry(
   const bytesOut = shape?.bytes_out ?? 0;
   const tokensIn = shape?.tokens_in ?? 0;
   const tokensOut = shape?.tokens_out ?? 0;
-  const tokenizeMs = shape?.tokenize_ms ?? 0;
 
   for (const payload of messages) {
     const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
@@ -296,7 +294,6 @@ export function recordTelemetry(
         bytesOut,         // double4: bytes_out
         tokensIn,         // double5: tokens_in
         tokensOut,        // double6: tokens_out
-        tokenizeMs,       // double7: tokenize_ms
       ],
       indexes: [consumerLabel],
     });

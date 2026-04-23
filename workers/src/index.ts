@@ -958,9 +958,10 @@ export default {
 
       // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
       // Phase 1.5: cache_tier from tracer feeds blob9 (E0008.1)
-      // Phase 2: payload shape (bytes_in/out, tokens_in/out, tokenize_ms) feeds
-      // doubles 3–7. All measurement happens inside waitUntil so the response
-      // returns to the caller with zero added latency. Response body is
+      // Phase 2: payload shape (bytes_in/out, tokens_in/out) feeds doubles
+      // 3-6. tokenize_ms was tried and dropped — Workers freezes both
+      // performance.now() and Date.now() during synchronous CPU work, making
+      // sub-request timing of pure-CPU tokenization unmeasurable. Response body is
       // measured universally — MCP's Streamable HTTP transport returns SSE,
       // not JSON, so a Content-Type filter would (and did) drop almost every
       // response. The helper handles clone failures safely.

@@ -21,7 +21,7 @@
  * Failure mode: if the tokenizer fails to load or throws on a payload,
  * `countTokensSafe` returns null. Telemetry treats null as "not measured"
  * and writes `0` to keep the schema dense; the absence is visible in the
- * tokenize_ms column being 0 alongside non-zero bytes.
+ * tokens columns being 0 alongside non-zero bytes.
  *
  * See: klappy://canon/constraints/telemetry-governance
  */
@@ -67,32 +67,31 @@ export async function countTokensSafe(text: string): Promise<number | null> {
 
 /**
  * Result of measuring a payload pair. All fields default to 0 on failure
- * so the telemetry schema stays dense; the `tokenize_ms` field carries
- * the signal — a value of 0 alongside non-zero bytes indicates the
- * tokenizer was skipped or failed.
+ * so the telemetry schema stays dense; the absence of a real value is
+ * encoded by tokens_in / tokens_out being 0 alongside non-zero bytes
+ * (encoder skipped or failed).
+ *
+ * Note: this struct does NOT carry a tokenize_ms field. Cloudflare Workers
+ * freezes both `performance.now()` and `Date.now()` during synchronous
+ * CPU work as a timing-side-channel mitigation — neither timer advances
+ * unless a network I/O event occurs between reads. Tokenization is pure
+ * CPU work, so any sub-request timing of it would always read 0 in
+ * production. The cost was already characterized in the bench (bench
+ * file at workers/test/tokenize.test.mjs and integration test). We keep
+ * the bytes/tokens shape and trust the bench for the per-payload cost
+ * curve.
  */
 export interface PayloadShape {
   bytes_in: number;
   bytes_out: number;
   tokens_in: number;
   tokens_out: number;
-  tokenize_ms: number;
 }
 
 /**
  * Measure the byte and token shape of a request/response pair. Tokenization
  * is performed once per payload using the lazy-loaded cl100k_base encoder.
  * Bytes are measured via TextEncoder (UTF-8 byte length, the wire size).
- *
- * Timing note: uses `Date.now()` rather than `performance.now()`. Cloudflare
- * Workers' `performance.now()` does not advance during synchronous CPU work
- * (a deterministic-timing mitigation against timing-side-channel attacks —
- * the timer only ticks when the worker performs I/O). Tokenization is pure
- * CPU work, so `performance.now()` returns the same value before and after
- * the encode and `tokenize_ms` always reads 0 in production. `Date.now()`
- * always advances, at 1ms resolution. The bench-vs-prod comparison loses
- * sub-millisecond precision but gains a working signal — payloads that take
- * ≥1ms (8KB and up per the bench) show up as 1ms and above.
  */
 export async function measurePayloadShape(
   requestText: string,
@@ -102,26 +101,15 @@ export async function measurePayloadShape(
   const bytes_in = requestText ? encoder.encode(requestText).length : 0;
   const bytes_out = responseText ? encoder.encode(responseText).length : 0;
 
-  const start = Date.now();
   const [tIn, tOut] = await Promise.all([
     countTokensSafe(requestText),
     countTokensSafe(responseText),
   ]);
-  const tokenize_ms = Date.now() - start;
-
-  // A `0` from countTokensSafe on empty text is a trivial short-circuit, not
-  // a real tokenization — only a non-null result on non-empty text proves the
-  // encoder ran. If neither payload was actually tokenized, zero out
-  // tokenize_ms to preserve the documented "skipped/failed" signal.
-  const tokenizerRan =
-    (requestText !== "" && tIn !== null) ||
-    (responseText !== "" && tOut !== null);
 
   return {
     bytes_in,
     bytes_out,
     tokens_in: tIn ?? 0,
     tokens_out: tOut ?? 0,
-    tokenize_ms: tokenizerRan ? tokenize_ms : 0,
   };
 }

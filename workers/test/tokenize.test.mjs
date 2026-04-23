@@ -94,7 +94,7 @@ await test("countTokensSafe scales with text length", async () => {
 
 await test("measurePayloadShape returns all required fields as numbers", async () => {
   const s = await measurePayloadShape("request", "response");
-  for (const field of ["bytes_in", "bytes_out", "tokens_in", "tokens_out", "tokenize_ms"]) {
+  for (const field of ["bytes_in", "bytes_out", "tokens_in", "tokens_out"]) {
     assert.ok(field in s, `missing field: ${field}`);
     assert.equal(typeof s[field], "number", `${field} must be number, got ${typeof s[field]}`);
   }
@@ -115,12 +115,6 @@ await test("measurePayloadShape produces positive token counts for non-empty inp
   );
   assert.ok(s.tokens_in > 0, "tokens_in should be > 0");
   assert.ok(s.tokens_out > 0, "tokens_out should be > 0");
-});
-
-await test("measurePayloadShape tokenize_ms is non-negative and finite", async () => {
-  const s = await measurePayloadShape("a", "b");
-  assert.ok(s.tokenize_ms >= 0, "tokenize_ms must be >= 0");
-  assert.ok(Number.isFinite(s.tokenize_ms), "tokenize_ms must be finite");
 });
 
 await test("measurePayloadShape handles empty response (SSE skipped)", async () => {
