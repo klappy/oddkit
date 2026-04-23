@@ -967,6 +967,9 @@ export default {
       if (telemetryClone) {
         const durationMs = Date.now() - startTime;
         const cacheTier = tracer.indexSource;
+        // Clone the response synchronously before returning so the body is
+        // still available to read inside the deferred waitUntil callback.
+        const responseClone = response.clone();
 
         ctx.waitUntil(
           (async () => {
@@ -976,7 +979,7 @@ export default {
               const { measureResponseShape } = await import("./tokenize");
               const { recordTelemetry } = await import("./telemetry");
 
-              const shape = await measureResponseShape(requestText, response);
+              const shape = await measureResponseShape(requestText, responseClone);
               recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
             } catch {
               // Telemetry must never break MCP requests
