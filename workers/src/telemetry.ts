@@ -28,12 +28,30 @@
  *                            handler's internal compute. Expect a long tail on
  *                            cache-miss requests even for trivial actions like
  *                            oddkit_time.
+ *   double3: bytes_in     — UTF-8 byte length of the JSON-RPC request body.
+ *                            0 when telemetry was unable to read the body.
+ *                            Tokenizer-agnostic; exact wire size.
+ *   double4: bytes_out    — UTF-8 byte length of the response body. 0 for
+ *                            streamed responses (SSE) where the body cannot be
+ *                            measured without consuming the stream.
+ *   double5: tokens_in    — cl100k_base token count of the request body.
+ *                            See `tokenize.ts` for the tokenizer-choice rationale.
+ *                            0 when tokenization was skipped or failed.
+ *   double6: tokens_out   — cl100k_base token count of the response body. 0 for
+ *                            streamed responses or tokenizer failure.
+ *   double7: tokenize_ms  — Total wall-clock time spent tokenizing both payloads
+ *                            in the waitUntil() background task. Distinct from
+ *                            the response trace — tokenization happens after the
+ *                            response is sent so it never adds user-facing latency.
+ *                            A value of 0 alongside non-zero bytes indicates the
+ *                            tokenizer was skipped (load failure or empty payload).
  *   index1: sampling_key  — consumer label (for sampling consistency)
  *
  * See: klappy://canon/constraints/telemetry-governance
  */
 
 import type { Env } from "./zip-baseline-fetcher";
+import type { PayloadShape } from "./tokenize";
 import pkg from "../package.json";
 
 // Build-time fallback for blob8 (worker_version). env.ODDKIT_VERSION is
@@ -198,55 +216,86 @@ export function parseToolCall(payload: unknown): {
  * Record one telemetry data point per JSON-RPC message.
  * Non-blocking — uses env.ODDKIT_TELEMETRY.writeDataPoint() which requires
  * no await (fire-and-forget via Analytics Engine).
- * Called with a cloned request to avoid consuming the original body.
+ *
+ * Caller responsibilities:
+ *   - Pass the raw request body as `requestBody` (string). Already-cloned and
+ *     read; this function will parse it as JSON-RPC.
+ *   - Pass the original `request` so consumer-label resolution can read URL
+ *     params and headers.
+ *   - Pass `shape` describing the payload byte and token shape, or null to
+ *     write zeros for the shape doubles (e.g. when the response could not be
+ *     measured because it was an SSE stream).
  */
-export function recordTelemetry(request: Request, env: Env, durationMs: number, cacheTier?: string): Promise<void> {
-  if (!env.ODDKIT_TELEMETRY) return Promise.resolve();
+export function recordTelemetry(
+  request: Request,
+  requestBody: string,
+  env: Env,
+  durationMs: number,
+  cacheTier?: string,
+  shape?: PayloadShape | null,
+): void {
+  if (!env.ODDKIT_TELEMETRY) return;
 
-  // Parse the request body to extract JSON-RPC details
-  return request
-    .json()
-    .then((body: unknown) => {
-      // Handle batch requests — process each message
-      const messages = Array.isArray(body) ? body : [body];
+  let body: unknown;
+  try {
+    body = JSON.parse(requestBody);
+  } catch {
+    // Malformed JSON-RPC — silently drop, telemetry must never break MCP requests
+    return;
+  }
 
-      for (const payload of messages) {
-        const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
-          request,
-          payload,
-        );
-        const toolCall = parseToolCall(payload);
+  // Handle batch requests — process each message
+  const messages = Array.isArray(body) ? body : [body];
 
-        const msg =
-          typeof payload === "object" && payload !== null
-            ? (payload as Record<string, unknown>)
-            : {};
-        const method = typeof msg.method === "string" ? msg.method : "unknown";
+  // Bytes/tokens are per-request (not per-message); for batches we attribute
+  // the full payload shape to each message rather than fabricating a split.
+  const bytesIn = shape?.bytes_in ?? 0;
+  const bytesOut = shape?.bytes_out ?? 0;
+  const tokensIn = shape?.tokens_in ?? 0;
+  const tokensOut = shape?.tokens_out ?? 0;
+  const tokenizeMs = shape?.tokenize_ms ?? 0;
 
-        const eventType = toolCall ? "tool_call" : "mcp_request";
-        const toolName = toolCall?.toolName ?? "";
-        const documentUri = toolCall?.documentUri ?? "";
+  for (const payload of messages) {
+    const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
+      request,
+      payload,
+    );
+    const toolCall = parseToolCall(payload);
 
-        env.ODDKIT_TELEMETRY!.writeDataPoint({
-          blobs: [
-            eventType,
-            method,
-            toolName,
-            consumerLabel,
-            consumerSource,
-            toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
-            documentUri,
-            env.ODDKIT_VERSION || BUILD_VERSION,
-            cacheTier || "none", // blob9: E0008.1 x-ray cache tier
-          ],
-          doubles: [1, durationMs],
-          indexes: [consumerLabel],
-        });
-      }
-    })
-    .catch(() => {
-      // Telemetry must never break MCP requests — silently drop parse failures
+    const msg =
+      typeof payload === "object" && payload !== null
+        ? (payload as Record<string, unknown>)
+        : {};
+    const method = typeof msg.method === "string" ? msg.method : "unknown";
+
+    const eventType = toolCall ? "tool_call" : "mcp_request";
+    const toolName = toolCall?.toolName ?? "";
+    const documentUri = toolCall?.documentUri ?? "";
+
+    env.ODDKIT_TELEMETRY!.writeDataPoint({
+      blobs: [
+        eventType,
+        method,
+        toolName,
+        consumerLabel,
+        consumerSource,
+        toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
+        documentUri,
+        env.ODDKIT_VERSION || BUILD_VERSION,
+        cacheTier || "none", // blob9: E0008.1 x-ray cache tier
+      ],
+      doubles: [
+        1,                // double1: count
+        durationMs,       // double2: duration_ms
+        bytesIn,          // double3: bytes_in
+        bytesOut,         // double4: bytes_out
+        tokensIn,         // double5: tokens_in
+        tokensOut,        // double6: tokens_out
+        tokenizeMs,       // double7: tokenize_ms
+      ],
+      indexes: [consumerLabel],
     });
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

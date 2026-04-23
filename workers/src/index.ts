@@ -958,14 +958,33 @@ export default {
 
       // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
       // Phase 1.5: cache_tier from tracer feeds blob9 (E0008.1)
+      // Phase 2: payload shape (bytes_in/out, tokens_in/out, tokenize_ms) feeds
+      // doubles 3–7. All measurement happens inside waitUntil so the response
+      // returns to the caller with zero added latency. SSE responses are
+      // recognized by content-type and skip body measurement (zeros recorded).
       if (telemetryClone) {
         const durationMs = Date.now() - startTime;
         const cacheTier = tracer.indexSource;
+
+        // Clone the response NOW (before it's consumed by the network) so we
+        // can read its body in the background. The original `response` flows
+        // back to the caller untouched.
+        const responseContentType = response.headers.get("content-type") ?? "";
+        const responseClone = responseContentType.includes("application/json")
+          ? response.clone()
+          : null;
+
         ctx.waitUntil(
           (async () => {
             try {
+              const requestText = await telemetryClone.text();
+              const responseText = responseClone ? await responseClone.text() : "";
+
+              const { measurePayloadShape } = await import("./tokenize");
               const { recordTelemetry } = await import("./telemetry");
-              await recordTelemetry(telemetryClone, env, durationMs, cacheTier);
+
+              const shape = await measurePayloadShape(requestText, responseText);
+              recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
             } catch {
               // Telemetry must never break MCP requests
             }
