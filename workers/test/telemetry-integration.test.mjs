@@ -370,6 +370,28 @@ await test("rewriteSqlToRaw: knowledge_base_url doesn't clobber shorter substrin
   assert.ok(rewritten.includes("AS url"), "alias 'url' should be untouched");
 });
 
+await test("rewriteSqlToRaw: count() SQL aggregate is not rewritten to double1()", async () => {
+  // `count` is both a semantic column name (double1) and a SQL aggregate
+  // function. Rewriting `count(*)` to `double1(*)` would produce invalid SQL
+  // that CF rejects. A function-call guard (negative lookahead for `(`) keeps
+  // the aggregate intact while still rewriting column references to `count`.
+  const sql = "SELECT tool_name, count(*) AS n FROM oddkit_telemetry GROUP BY tool_name";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("count(*)"), "count(*) aggregate should be preserved");
+  assert.ok(!rewritten.includes("double1(*)"), "count(*) must not become double1(*)");
+  assert.ok(rewritten.includes("blob3"), "tool_name should still rewrite to blob3");
+
+  // Lowercase count( with whitespace also preserved
+  const sql2 = "SELECT count (DISTINCT tool_name) FROM oddkit_telemetry";
+  const rewritten2 = rewriteSqlToRaw(sql2, testMap);
+  assert.ok(!rewritten2.includes("double1 ("), "count (DISTINCT ...) must not be rewritten");
+
+  // But a bare `count` column reference (no paren) still rewrites
+  const sql3 = "SELECT SUM(count) AS n FROM oddkit_telemetry";
+  const rewritten3 = rewriteSqlToRaw(sql3, testMap);
+  assert.ok(rewritten3.includes("SUM(double1)"), "count as column reference should still rewrite to double1");
+});
+
 await test("rewriteResultToSemantic: renames blob/double columns in meta and data", async () => {
   const rawResult = {
     meta: [

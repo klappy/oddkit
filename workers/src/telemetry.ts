@@ -486,6 +486,13 @@ export function detectRawSlotNames(
  * Semantic names are matched on word boundaries to avoid partial replacements.
  * Longer names are replaced first to prevent prefix collisions (e.g.
  * knowledge_base_url vs url).
+ *
+ * A negative lookahead `(?!\s*\()` prevents rewriting identifiers that are
+ * immediately followed by an opening parenthesis — i.e. SQL function calls.
+ * This is required because the semantic name `count` collides with the SQL
+ * aggregate `count()`; without the guard, `count(*)` would become
+ * `double1(*)` and be rejected by the CF API. Column references never
+ * take a `(` after them, so this is safe for all semantic names.
  * Exported for unit testing.
  */
 export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
@@ -496,8 +503,9 @@ export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
 
   let rewritten = sql;
   for (const [semantic, raw] of entries) {
-    // \b word-boundary anchors prevent partial matches inside longer identifiers
-    const pattern = new RegExp(`\\b${semantic}\\b`, "g");
+    // \b word-boundary anchors prevent partial matches inside longer identifiers.
+    // Negative lookahead (?!\s*\() skips function-call positions (e.g. count(*)).
+    const pattern = new RegExp(`\\b${semantic}\\b(?!\\s*\\()`, "g");
     rewritten = rewritten.replace(pattern, raw);
   }
   return rewritten;
