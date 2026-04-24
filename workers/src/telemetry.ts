@@ -493,6 +493,12 @@ export function detectRawSlotNames(
  * aggregate `count()`; without the guard, `count(*)` would become
  * `double1(*)` and be rejected by the CF API. Column references never
  * take a `(` after them, so this is safe for all semantic names.
+ *
+ * Single-quoted string literals are skipped so that values like
+ * `'klappy://sources/scientific-method'` are not corrupted (word boundaries
+ * around `-` / `/` would otherwise cause `method` to be rewritten to the raw
+ * slot name inside the literal). SQL's doubled-quote escape (`''`) is
+ * respected so that escaped quotes do not terminate the literal prematurely.
  * Exported for unit testing.
  */
 export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
@@ -501,13 +507,30 @@ export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
     (a, b) => b[0].length - a[0].length,
   );
 
-  let rewritten = sql;
-  for (const [semantic, raw] of entries) {
-    // \b word-boundary anchors prevent partial matches inside longer identifiers.
-    // Negative lookahead (?!\s*\() skips function-call positions (e.g. count(*)).
-    const pattern = new RegExp(`\\b${semantic}\\b(?!\\s*\\()`, "g");
-    rewritten = rewritten.replace(pattern, raw);
+  const rewriteSegment = (segment: string): string => {
+    let out = segment;
+    for (const [semantic, raw] of entries) {
+      // \b word-boundary anchors prevent partial matches inside longer identifiers.
+      // Negative lookahead (?!\s*\() skips function-call positions (e.g. count(*)).
+      const pattern = new RegExp(`\\b${semantic}\\b(?!\\s*\\()`, "g");
+      out = out.replace(pattern, raw);
+    }
+    return out;
+  };
+
+  // Split SQL into alternating non-literal and single-quoted literal segments.
+  // Only non-literal segments are subject to rewriting, so user-supplied
+  // filter values passed as string literals are preserved verbatim.
+  const literalPattern = /'(?:[^']|'')*'/g;
+  let rewritten = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = literalPattern.exec(sql)) !== null) {
+    rewritten += rewriteSegment(sql.slice(lastIndex, match.index));
+    rewritten += match[0];
+    lastIndex = match.index + match[0].length;
   }
+  rewritten += rewriteSegment(sql.slice(lastIndex));
   return rewritten;
 }
 
