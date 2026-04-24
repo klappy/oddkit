@@ -970,29 +970,37 @@ export default {
         const cacheTier = tracer.indexSource;
         // Clone the response synchronously before returning so the body is
         // still available to read inside the deferred waitUntil callback.
-        const responseClone = response.clone();
+        // Guard the clone itself — telemetry must never break MCP requests.
+        let responseClone: Response | null = null;
+        try {
+          responseClone = response.clone();
+        } catch {
+          // If cloning fails, skip telemetry for this request.
+        }
 
-        ctx.waitUntil(
-          (async () => {
-            try {
-              const requestText = await telemetryClone.text();
-
-              const { measurePayloadShape } = await import("./tokenize");
-              const { recordTelemetry } = await import("./telemetry");
-
-              let responseText = "";
+        if (responseClone) {
+          ctx.waitUntil(
+            (async () => {
               try {
-                responseText = await responseClone.text();
+                const requestText = await telemetryClone.text();
+
+                const { measurePayloadShape } = await import("./tokenize");
+                const { recordTelemetry } = await import("./telemetry");
+
+                let responseText = "";
+                try {
+                  responseText = await responseClone!.text();
+                } catch {
+                  // Fall through with empty string; bytes_out / tokens_out will be 0.
+                }
+                const shape = await measurePayloadShape(requestText, responseText);
+                recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
               } catch {
-                // Fall through with empty string; bytes_out / tokens_out will be 0.
+                // Telemetry must never break MCP requests
               }
-              const shape = await measurePayloadShape(requestText, responseText);
-              recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
-            } catch {
-              // Telemetry must never break MCP requests
-            }
-          })(),
-        );
+            })(),
+          );
+        }
       }
 
       return response;
