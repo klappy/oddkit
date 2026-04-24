@@ -55,6 +55,7 @@
  */
 
 import type { Env } from "./zip-baseline-fetcher";
+import { KnowledgeBaseFetcher } from "./zip-baseline-fetcher";
 import type { PayloadShape } from "./tokenize";
 import pkg from "../package.json";
 
@@ -301,6 +302,253 @@ export function recordTelemetry(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Semantic schema mapping (vodka-architecture compliant)
+//
+// Cloudflare Analytics Engine uses positional slot names (blob1..9, double1..6).
+// Consumers see semantic names only. This module:
+//   1. Loads the authoritative mapping from canon at runtime
+//      (canon/constraints/telemetry-governance.md, parsed via KnowledgeBaseFetcher)
+//   2. Falls back to the hardcoded baseline below if canon is unreachable
+//   3. Rewrites consumer SQL (semantic → raw) before forwarding to CF
+//   4. Rewrites result column names (raw → semantic) before returning to consumer
+//   5. Rejects any query containing raw blob*/double* names with a helpful error
+//
+// Source of truth: klappy://canon/constraints/telemetry-governance
+// ──────────────────────────────────────────────────────────────────────────────
+
+export interface SchemaMap {
+  /** raw slot name → semantic name (e.g. blob1 → event_type) */
+  rawToSemantic: Map<string, string>;
+  /** semantic name → raw slot name (e.g. event_type → blob1) */
+  semanticToRaw: Map<string, string>;
+}
+
+/**
+ * Canonical blob→semantic ordering derived from canon table
+ * "Structural Dimensions (Blobs)" (positional, 9 entries).
+ * The canon doc uses human-readable dimension names in that table, not
+ * machine-readable column identifiers, so positional order is the only
+ * reliable parse signal. These names mirror what the tool docstring exposes.
+ */
+const BASELINE_BLOB_SEMANTIC_NAMES = [
+  "event_type",       // blob1
+  "method",           // blob2
+  "tool_name",        // blob3
+  "consumer_label",   // blob4
+  "consumer_source",  // blob5
+  "knowledge_base_url", // blob6
+  "document_uri",     // blob7
+  "worker_version",   // blob8
+  "cache_tier",       // blob9
+] as const;
+
+/**
+ * Baseline double→semantic names. Canon table "Numeric Values (Doubles)"
+ * encodes these with backtick-quoted identifiers (except "Count" → "count")
+ * which are parseable at runtime. Baseline is the safety net.
+ */
+const BASELINE_DOUBLE_SEMANTIC_NAMES = [
+  "count",       // double1
+  "duration_ms", // double2
+  "bytes_in",    // double3
+  "bytes_out",   // double4
+  "tokens_in",   // double5
+  "tokens_out",  // double6
+] as const;
+
+/** Build a SchemaMap from ordered blob/double name arrays. Exported for unit testing. */
+export function buildSchemaMapFromArrays(
+  blobNames: readonly string[],
+  doubleNames: readonly string[],
+): SchemaMap {
+  const rawToSemantic = new Map<string, string>();
+  const semanticToRaw = new Map<string, string>();
+
+  blobNames.forEach((name, i) => {
+    const slot = `blob${i + 1}`;
+    rawToSemantic.set(slot, name);
+    semanticToRaw.set(name, slot);
+  });
+
+  doubleNames.forEach((name, i) => {
+    const slot = `double${i + 1}`;
+    rawToSemantic.set(slot, name);
+    semanticToRaw.set(name, slot);
+  });
+
+  return { rawToSemantic, semanticToRaw };
+}
+
+/**
+ * Attempt to parse semantic double names from the canon governance document.
+ * The "Numeric Values (Doubles)" table in canon uses backtick-quoted identifiers
+ * in the "Value" column (e.g. `duration_ms`, `bytes_in`). Row 1 uses "Count"
+ * (unquoted) which we lowercase to "count".
+ *
+ * Returns null if the section is missing or has too few rows to be trusted.
+ */
+function parseDoublesFromCanon(content: string): string[] | null {
+  // Match the Numeric Values section up to the next ## or ### heading
+  const sectionMatch = content.match(
+    /###\s+Numeric Values \(Doubles\)([\s\S]*?)(?=\n###|\n##|$)/,
+  );
+  if (!sectionMatch) return null;
+
+  const section = sectionMatch[1];
+
+  // Match table data rows: | # | Value | ...
+  // Value may be plain text (Count) or backtick-quoted (`duration_ms`)
+  const rowPattern = /^\|\s*\d+\s*\|\s*(`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)\s*\|/gm;
+  const names: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = rowPattern.exec(section)) !== null) {
+    const raw = m[1].replace(/`/g, "").trim().toLowerCase();
+    names.push(raw);
+  }
+
+  // Sanity: must match expected baseline count
+  if (names.length !== BASELINE_DOUBLE_SEMANTIC_NAMES.length) return null;
+
+  return names;
+}
+
+/** Module-level cache — reset between Worker isolate restarts (Cloudflare normal). */
+let cachedSchemaMap: SchemaMap | null = null;
+
+/**
+ * Return the schema map, loading from canon on first call.
+ * Canon-derived doubles names take precedence over baseline; blob names are
+ * always positional from the baseline (the canon table uses human-readable
+ * dimension names, not machine-readable identifiers).
+ */
+async function getSchemaMap(env: Env): Promise<SchemaMap> {
+  if (cachedSchemaMap) return cachedSchemaMap;
+
+  let doubleNames: readonly string[] = BASELINE_DOUBLE_SEMANTIC_NAMES;
+
+  try {
+    const fetcher = new KnowledgeBaseFetcher(env);
+    const content = await fetcher.getFile(
+      "canon/constraints/telemetry-governance.md",
+    );
+    if (content) {
+      const parsed = parseDoublesFromCanon(content);
+      if (parsed) {
+        doubleNames = parsed;
+      }
+    }
+  } catch {
+    // Canon unreachable — fall through to baseline (vodka architecture safety net)
+  }
+
+  cachedSchemaMap = buildSchemaMapFromArrays(
+    BASELINE_BLOB_SEMANTIC_NAMES,
+    doubleNames,
+  );
+  return cachedSchemaMap;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SQL query rewriting
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Raw slot name pattern — used to detect forbidden column references. */
+const RAW_SLOT_PATTERN = /\b(blob[1-9]|double[1-9])\b/gi;
+
+/**
+ * Reject queries that contain raw slot names (blob1..9 / double1..6).
+ * Returns an error message string, or null if the query is clean.
+ * Exported for unit testing.
+ */
+export function detectRawSlotNames(
+  sql: string,
+  schemaMap: SchemaMap,
+): string | null {
+  const matches = sql.match(RAW_SLOT_PATTERN);
+  if (!matches) return null;
+
+  const unique = [...new Set(matches.map((m) => m.toLowerCase()))];
+  const suggestions = unique
+    .map((raw) => {
+      const semantic = schemaMap.rawToSemantic.get(raw);
+      return semantic ? `\`${raw}\` → \`${semantic}\`` : `\`${raw}\` (unmapped)`;
+    })
+    .join(", ");
+
+  return (
+    `Raw column names are not allowed. Use semantic names instead: ${suggestions}. ` +
+    `See the telemetry_public tool description for the full schema.`
+  );
+}
+
+/**
+ * Rewrite a SQL query from semantic names to raw Analytics Engine slot names.
+ * Semantic names are matched on word boundaries to avoid partial replacements.
+ * Longer names are replaced first to prevent prefix collisions (e.g.
+ * knowledge_base_url vs url).
+ * Exported for unit testing.
+ */
+export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
+  // Sort by semantic name length descending to avoid prefix collisions
+  const entries = [...schemaMap.semanticToRaw.entries()].sort(
+    (a, b) => b[0].length - a[0].length,
+  );
+
+  let rewritten = sql;
+  for (const [semantic, raw] of entries) {
+    // \b word-boundary anchors prevent partial matches inside longer identifiers
+    const pattern = new RegExp(`\\b${semantic}\\b`, "g");
+    rewritten = rewritten.replace(pattern, raw);
+  }
+  return rewritten;
+}
+
+/**
+ * Rewrite result column names from raw slot names back to semantic names.
+ * Operates on the `meta` array (CF Analytics Engine response format) and
+ * rewrites the corresponding keys in each `data` row.
+ * Exported for unit testing.
+ */
+export function rewriteResultToSemantic(
+  result: unknown,
+  schemaMap: SchemaMap,
+): unknown {
+  if (typeof result !== "object" || result === null) return result;
+
+  const r = result as Record<string, unknown>;
+  if (!Array.isArray(r.meta)) return result;
+
+  type MetaCol = { name: string; type: string };
+  const oldMeta = r.meta as MetaCol[];
+
+  // Build a remapping from old column name → semantic name (only for slots)
+  const colRemap = new Map<string, string>();
+  const newMeta: MetaCol[] = oldMeta.map((col) => {
+    const semantic = schemaMap.rawToSemantic.get(col.name);
+    if (semantic && semantic !== col.name) {
+      colRemap.set(col.name, semantic);
+      return { ...col, name: semantic };
+    }
+    return col;
+  });
+
+  if (colRemap.size === 0) return result; // nothing to rename
+
+  // Rewrite data rows
+  const newData = Array.isArray(r.data)
+    ? (r.data as Array<Record<string, unknown>>).map((row) => {
+        const newRow: Record<string, unknown> = {};
+        for (const [key, val] of Object.entries(row)) {
+          newRow[colRemap.get(key) ?? key] = val;
+        }
+        return newRow;
+      })
+    : r.data;
+
+  return { ...r, meta: newMeta, data: newData };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Analytics Engine SQL query
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -345,10 +593,17 @@ function validateTelemetryQuery(query: string): string | null {
 }
 
 /**
- * Query Analytics Engine SQL API.
+ * Query Analytics Engine SQL API with semantic-name rewriting.
  * Used by telemetry_public tool.
  * Requires CF_ACCOUNT_ID and CF_API_TOKEN env vars.
  * Only permits SELECT queries against the oddkit_telemetry dataset.
+ *
+ * Semantic-name contract:
+ *   - Consumers write SQL using semantic names (event_type, tool_name, etc.)
+ *   - Raw slot names (blob1, double2, etc.) are rejected with a helpful error
+ *   - The schema mapping is loaded from canon at runtime; the hardcoded baseline
+ *     is the safety net when canon is unreachable (vodka architecture)
+ *   - Result columns are renamed from raw slots back to semantic names
  */
 export async function queryTelemetry(env: Env, query: string): Promise<unknown> {
   if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
@@ -357,7 +612,19 @@ export async function queryTelemetry(env: Env, query: string): Promise<unknown> 
     };
   }
 
-  const validationError = validateTelemetryQuery(query);
+  // Load schema map (canon-first, baseline fallback)
+  const schemaMap = await getSchemaMap(env);
+
+  // Reject raw slot names before any other validation
+  const rawSlotError = detectRawSlotNames(query, schemaMap);
+  if (rawSlotError) {
+    return { error: rawSlotError };
+  }
+
+  // Rewrite semantic names → raw slot names for the CF API
+  const rawQuery = rewriteSqlToRaw(query, schemaMap);
+
+  const validationError = validateTelemetryQuery(rawQuery);
   if (validationError) {
     return { error: validationError };
   }
@@ -370,9 +637,12 @@ export async function queryTelemetry(env: Env, query: string): Promise<unknown> 
         Authorization: `Bearer ${env.CF_API_TOKEN}`,
         "Content-Type": "text/plain",
       },
-      body: query,
+      body: rawQuery,
     },
   );
 
-  return response.json();
+  const result = await response.json();
+
+  // Rewrite result column names from raw slots back to semantic names
+  return rewriteResultToSemantic(result, schemaMap);
 }

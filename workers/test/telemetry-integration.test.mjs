@@ -49,6 +49,7 @@ const tsconfig = {
   include: [
     join(WORKERS_ROOT, "src", "tokenize.ts"),
     join(WORKERS_ROOT, "src", "telemetry.ts"),
+    join(WORKERS_ROOT, "src", "zip-baseline-fetcher.ts"),
   ],
 };
 const tsconfigPath = join(tmp, "tsconfig.json");
@@ -74,7 +75,8 @@ const compile = spawnSync("npx", ["--yes", "tsc", "-p", tsconfigPath], {
 // actually need weren't emitted.
 const tokenizeJs = join(tmp, "build", "tokenize.js");
 const telemetryJs = join(tmp, "build", "telemetry.js");
-if (!existsSync(tokenizeJs) || !existsSync(telemetryJs)) {
+const zipFetcherJs = join(tmp, "build", "zip-baseline-fetcher.js");
+if (!existsSync(tokenizeJs) || !existsSync(telemetryJs) || !existsSync(zipFetcherJs)) {
   console.error("TypeScript compile failed (target files not emitted):");
   console.error(compile.stdout);
   console.error(compile.stderr);
@@ -86,14 +88,25 @@ if (compile.status !== 0 && process.env.DEBUG) {
 }
 
 // Newer Node requires `with { type: "json" }` on JSON imports in ESM.
-// TypeScript doesn't add this — patch it in.
-const { readFileSync, writeFileSync: wf } = await import("node:fs");
-let telemetrySrc = readFileSync(telemetryJs, "utf8");
-telemetrySrc = telemetrySrc.replace(
-  /from ["']\.\.\/package\.json["'];/g,
-  'from "../package.json" with { type: "json" };',
-);
-wf(telemetryJs, telemetrySrc);
+// TypeScript bundler moduleResolution omits .js extensions on local imports.
+// Node.js ESM resolver requires explicit extensions — patch all compiled files.
+const { readFileSync, writeFileSync: wf, readdirSync: rds } = await import("node:fs");
+const buildDir = join(tmp, "build");
+for (const f of rds(buildDir).filter(n => n.endsWith(".js"))) {
+  const fpath = join(buildDir, f);
+  let src = readFileSync(fpath, "utf8");
+  // Patch JSON imports
+  src = src.replace(
+    /from ["']\.\.\/package\.json["'];/g,
+    'from "../package.json" with { type: "json" };',
+  );
+  // Patch extensionless local imports (TypeScript bundler mode omits .js)
+  src = src.replace(
+    /from ["'](\.\/[^"'.]+)["'];/g,
+    'from "$1.js";',
+  );
+  wf(fpath, src);
+}
 
 const { measurePayloadShape } = await import(tokenizeJs);
 const { recordTelemetry } = await import(telemetryJs);
@@ -274,6 +287,117 @@ await test("batch JSON-RPC produces one data point per message", async () => {
     assert.equal(w.doubles[2], shape.bytes_in);
     assert.equal(w.doubles[3], shape.bytes_out);
   }
+});
+
+// ─── Semantic schema rewriting tests ──────────────────────────────────────
+
+const {
+  buildSchemaMapFromArrays,
+  detectRawSlotNames,
+  rewriteSqlToRaw,
+  rewriteResultToSemantic,
+} = await import(telemetryJs);
+
+// Build a test schema map (mirrors the production baseline)
+const TEST_BLOB_NAMES = [
+  "event_type", "method", "tool_name", "consumer_label", "consumer_source",
+  "knowledge_base_url", "document_uri", "worker_version", "cache_tier",
+];
+const TEST_DOUBLE_NAMES = [
+  "count", "duration_ms", "bytes_in", "bytes_out", "tokens_in", "tokens_out",
+];
+const testMap = buildSchemaMapFromArrays(TEST_BLOB_NAMES, TEST_DOUBLE_NAMES);
+
+await test("detectRawSlotNames: returns null for clean semantic query", async () => {
+  const result = detectRawSlotNames(
+    "SELECT tool_name, SUM(_sample_interval) FROM oddkit_telemetry GROUP BY tool_name",
+    testMap,
+  );
+  assert.equal(result, null, "clean query should return null");
+});
+
+await test("detectRawSlotNames: rejects blob1 with helpful message", async () => {
+  const result = detectRawSlotNames(
+    "SELECT blob1, blob3 FROM oddkit_telemetry",
+    testMap,
+  );
+  assert.ok(result !== null, "should return error string");
+  assert.ok(result.includes("blob1"), "error should mention the raw name");
+  assert.ok(result.includes("event_type"), "error should suggest semantic name");
+  assert.ok(result.includes("tool_name"), "error should suggest tool_name for blob3");
+});
+
+await test("detectRawSlotNames: rejects double5 with helpful message", async () => {
+  const result = detectRawSlotNames(
+    "SELECT SUM(double5) AS x FROM oddkit_telemetry",
+    testMap,
+  );
+  assert.ok(result !== null, "should return error string");
+  assert.ok(result.includes("double5"), "error should mention the raw name");
+  assert.ok(result.includes("tokens_in"), "error should suggest semantic name");
+});
+
+await test("rewriteSqlToRaw: translates all blob semantic names", async () => {
+  const sql = "SELECT event_type, method, tool_name, consumer_label, consumer_source, knowledge_base_url, document_uri, worker_version, cache_tier FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("blob1"), "event_type → blob1");
+  assert.ok(rewritten.includes("blob2"), "method → blob2");
+  assert.ok(rewritten.includes("blob3"), "tool_name → blob3");
+  assert.ok(rewritten.includes("blob6"), "knowledge_base_url → blob6");
+  assert.ok(rewritten.includes("blob9"), "cache_tier → blob9");
+  assert.ok(!rewritten.includes("event_type"), "event_type should be gone");
+});
+
+await test("rewriteSqlToRaw: translates all double semantic names", async () => {
+  const sql = "SELECT SUM(count) AS n, AVG(duration_ms), SUM(bytes_in), SUM(bytes_out), AVG(tokens_in), AVG(tokens_out) FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("double1"), "count → double1");
+  assert.ok(rewritten.includes("double2"), "duration_ms → double2");
+  assert.ok(rewritten.includes("double3"), "bytes_in → double3");
+  assert.ok(rewritten.includes("double4"), "bytes_out → double4");
+  assert.ok(rewritten.includes("double5"), "tokens_in → double5");
+  assert.ok(rewritten.includes("double6"), "tokens_out → double6");
+  assert.ok(!rewritten.includes("duration_ms"), "duration_ms should be gone");
+  assert.ok(!rewritten.includes("tokens_out"), "tokens_out should be gone");
+});
+
+await test("rewriteSqlToRaw: knowledge_base_url doesn't clobber shorter substrings", async () => {
+  // 'url' as alias should not be mistaken for a semantic column name
+  // and 'knowledge_base_url' should replace as a whole unit
+  const sql = "SELECT knowledge_base_url AS url FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("blob6"), "knowledge_base_url → blob6");
+  assert.ok(rewritten.includes("AS url"), "alias 'url' should be untouched");
+});
+
+await test("rewriteResultToSemantic: renames blob/double columns in meta and data", async () => {
+  const rawResult = {
+    meta: [
+      { name: "blob3", type: "String" },
+      { name: "double2", type: "Float64" },
+      { name: "total", type: "UInt64" },
+    ],
+    data: [
+      { blob3: "search", double2: 123.4, total: "42" },
+      { blob3: "orient", double2: 88.0, total: "17" },
+    ],
+    rows: 2,
+  };
+  const result = rewriteResultToSemantic(rawResult, testMap);
+  assert.deepEqual(result.meta[0], { name: "tool_name", type: "String" }, "blob3 → tool_name in meta");
+  assert.deepEqual(result.meta[1], { name: "duration_ms", type: "Float64" }, "double2 → duration_ms in meta");
+  assert.deepEqual(result.meta[2], { name: "total", type: "UInt64" }, "non-slot column unchanged");
+  assert.equal(result.data[0].tool_name, "search", "data row key renamed");
+  assert.equal(result.data[0].duration_ms, 123.4, "double2 key renamed");
+  assert.equal(result.data[0].total, "42", "non-slot key unchanged");
+  assert.ok(!("blob3" in result.data[0]), "old key blob3 removed");
+  assert.ok(!("double2" in result.data[0]), "old key double2 removed");
+});
+
+await test("rewriteResultToSemantic: passes through non-slot result unchanged", async () => {
+  const rawResult = { error: "bad query" };
+  const result = rewriteResultToSemantic(rawResult, testMap);
+  assert.deepEqual(result, rawResult, "error result passed through unchanged");
 });
 
 // ─── Test 5: Malformed JSON-RPC gets dropped silently ──────────────────────
