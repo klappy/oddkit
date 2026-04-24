@@ -458,13 +458,23 @@ const RAW_SLOT_PATTERN = /\b(blob[1-9]|double[1-9])\b/gi;
 /**
  * Reject queries that contain raw slot names (blob1..9 / double1..6).
  * Returns an error message string, or null if the query is clean.
+ *
+ * Single-quoted string literals are skipped so that values like
+ * `'https://example.com/blob1/readme'` do not trigger a false rejection.
+ * This matches the scoping rules used by `rewriteSqlToRaw`. SQL's
+ * doubled-quote escape (`''`) is respected so that escaped quotes do not
+ * terminate the literal prematurely.
  * Exported for unit testing.
  */
 export function detectRawSlotNames(
   sql: string,
   schemaMap: SchemaMap,
 ): string | null {
-  const matches = sql.match(RAW_SLOT_PATTERN);
+  // Strip single-quoted string literals before scanning for raw slot names
+  // so filter values containing substrings like `blob1` are not flagged.
+  const literalPattern = /'(?:[^']|'')*'/g;
+  const scannable = sql.replace(literalPattern, "''");
+  const matches = scannable.match(RAW_SLOT_PATTERN);
   if (!matches) return null;
 
   const unique = [...new Set(matches.map((m) => m.toLowerCase()))];
