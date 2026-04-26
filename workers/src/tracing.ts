@@ -36,9 +36,23 @@ export class RequestTracer {
       ...(detail ? { detail } : {}),
     });
 
-    // Track the index source for telemetry (first span matching an index tier)
-    if ((label === "index" || label === "index-build") && source && !this._indexSource) {
-      this._indexSource = source;
+    // Track the primary cache tier for telemetry (first span matching a data
+    // fetch). Three label families count:
+    //   - "index" / "index-build"  → navigability index fetch (search/orient/etc.)
+    //   - "file:*"                 → individual file fetch (oddkit_get fast path)
+    // First-wins: actions like runSearch call getIndex *before* getFile, so
+    // the index tier wins for those — file:* spans that fire later are
+    // ignored. Actions like runGet for klappy:// URIs call getFile only,
+    // so the file tier wins. file-r2:* (r2 miss with source="miss") is
+    // excluded because "miss" is not a tier.
+    if (!this._indexSource && source && source !== "miss") {
+      if (
+        label === "index" ||
+        label === "index-build" ||
+        label.startsWith("file:")
+      ) {
+        this._indexSource = source;
+      }
     }
   }
 
@@ -64,13 +78,19 @@ export class RequestTracer {
   }
 
   /**
-   * Which storage tier served the navigability index for this request.
-   * This is the single summary value that feeds telemetry blob9.
+   * Which storage tier served the primary data fetch for this request.
+   * This is the single summary value that feeds telemetry blob9 (cache_tier).
    * "memory" = module-level cache hit (0ms, best case)
    * "cache"  = Cache API edge hit (~1ms)
    * "r2"     = R2 durable storage read (~40ms)
    * "build"  = cold build from ZIP (seconds, worst case)
-   * null     = no index was loaded (e.g. version action)
+   * "github" = GitHub network fetch (when no R2/cache layers exist)
+   * "none"   = no data fetch happened (e.g. version, time actions)
+   *
+   * The value reflects the primary fetch — for actions like search/orient
+   * that load the navigability index first, this is the index tier. For
+   * oddkit_get with a klappy:// URI (the fast path, no index needed), this
+   * is the file fetch tier. Either way: where did the work come from?
    */
   get indexSource(): string {
     return this._indexSource ?? "none";

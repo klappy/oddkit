@@ -617,5 +617,97 @@ await test("cache_tier reads must happen after the streaming response body compl
   );
 });
 
+// ─── Test 8: file:* spans count as primary tier (oddkit_get fast path) ──────
+
+await test("tracer recognizes file:* spans as primary tier when no index span fires", async () => {
+  // oddkit_get for klappy:// URIs takes the fast path: no getIndex call,
+  // straight to getFile. The fetcher emits `file:${path}` spans (memory/r2/
+  // build). Before this fix, only "index" / "index-build" labels updated
+  // _indexSource, so klappy:// gets always recorded cache_tier="none" even
+  // after the streaming-race fix. This test pins the broader recognition.
+
+  const tracer = new RequestTracer();
+  tracer.addSpan("file:canon/foo.md", 12, "memory");
+  assert.equal(
+    tracer.indexSource,
+    "memory",
+    "file:* span with source 'memory' must populate indexSource (klappy:// fast path)",
+  );
+
+  // r2 source on file fetch
+  const tracer2 = new RequestTracer();
+  tracer2.addSpan("file:canon/bar.md", 40, "r2");
+  assert.equal(tracer2.indexSource, "r2", "file:* with r2 source captured");
+
+  // build source on file fetch (cold ZIP extract)
+  const tracer3 = new RequestTracer();
+  tracer3.addSpan("file:canon/baz.md", 1500, "build", "zip-extract");
+  assert.equal(tracer3.indexSource, "build", "file:* with build source captured");
+});
+
+await test("tracer keeps index-wins when index span fires before file spans (search pattern)", async () => {
+  // runSearch calls getIndex first (emits `index` span), then getFile for
+  // each hit (emits `file:*` spans). First-wins guard ensures the index
+  // tier — which represents the primary work — wins, not the per-file
+  // tiers from secondary fetches.
+
+  const tracer = new RequestTracer();
+  tracer.addSpan("index", 33, "cache");
+  tracer.addSpan("file:canon/result-1.md", 100, "r2");
+  tracer.addSpan("file:canon/result-2.md", 250, "build", "zip-extract");
+
+  assert.equal(
+    tracer.indexSource,
+    "cache",
+    "index tier wins when it fires first (search/orient/catalog pattern)",
+  );
+});
+
+await test("tracer file:* recognition still excludes file-r2:* miss spans", async () => {
+  // file-r2:${path} fires on R2 miss with source="miss". "miss" is not a
+  // tier and must not be recorded as one. The setter excludes any span
+  // whose source is the literal string "miss".
+
+  const tracer = new RequestTracer();
+  tracer.addSpan("file-r2:canon/foo.md", 100, "miss");
+  assert.equal(
+    tracer.indexSource,
+    "none",
+    "file-r2:* with source 'miss' must not be captured as a tier",
+  );
+
+  // After the miss, the actual fetch fires with a real source — that one
+  // should be captured.
+  tracer.addSpan("file:canon/foo.md", 200, "build", "zip-extract");
+  assert.equal(
+    tracer.indexSource,
+    "build",
+    "real file fetch after r2-miss is captured normally",
+  );
+});
+
+await test("tracer existing index-only behavior still works (no regression)", async () => {
+  // Sanity: the original case (just index/index-build with no file:* spans)
+  // must continue to work exactly as before.
+
+  const tracer1 = new RequestTracer();
+  tracer1.addSpan("index", 0, "memory");
+  assert.equal(tracer1.indexSource, "memory", "memory index tier captured");
+
+  const tracer2 = new RequestTracer();
+  tracer2.addSpan("index-build", 2000, "build");
+  assert.equal(tracer2.indexSource, "build", "index-build with build source captured");
+
+  // Without a recognized data fetch, indexSource is "none"
+  const tracer3 = new RequestTracer();
+  tracer3.addSpan("action:version", 5);
+  tracer3.addSpan("sha:klappy.dev", 0, "memory");
+  assert.equal(
+    tracer3.indexSource,
+    "none",
+    "action and sha spans alone do not count as primary tier",
+  );
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
