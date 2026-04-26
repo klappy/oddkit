@@ -193,12 +193,13 @@ async function createServer(env: Env, tracer?: RequestTracer, consumerSource?: s
 
   server.tool(
     "oddkit",
-    `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, catalog, validate, preflight, version, or cleanup_storage actions.
+    `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, resolve, catalog, validate, preflight, version, or cleanup_storage actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
 - Policy/canon questions: action="search" with your query
 - Fetching a specific doc: action="get" with URI
+- Resolving a URI to its current canonical answer (walks supersession): action="resolve" with URI
 - Pressure-testing claims: action="challenge"
 - Checking transition readiness: action="gate"
 - Recording decisions: action="encode"
@@ -207,7 +208,7 @@ Use when:
 - Listing available docs: action="catalog"`,
     {
       action: z.enum([
-        "orient", "challenge", "gate", "encode", "search", "get",
+        "orient", "challenge", "gate", "encode", "search", "get", "resolve",
         "catalog", "validate", "preflight", "version", "cleanup_storage",
       ]).describe("Which epistemic action to perform."),
       input: z.string().describe("Primary input — query, claim, URI, goal, or completion claim depending on action."),
@@ -332,6 +333,16 @@ Use when:
         knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
         include_metadata: z.boolean().optional().describe("When true, response includes a metadata object with full parsed frontmatter. Default: false."),
         section: z.string().optional().describe("Extract only the named ## section from the document. Returns available sections if not found."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: "oddkit_resolve",
+      description: "Resolve a klappy:// URI to its current canonical answer, walking superseded_by chains transparently. Returns resolved URI + path + url + supersession_chain. Use this to render links — never hardcode URLs in source. Per klappy://canon/principles/identity-resolved-by-protocol.",
+      action: "resolve",
+      schema: {
+        input: z.string().describe("Canonical URI to resolve (e.g., klappy://writings/some-slug)."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },

@@ -1575,6 +1575,206 @@ function runVersion(env: Env): ActionResult {
   };
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// runResolve — protocol-level URI resolution with transparent supersession.
+//
+// Per klappy://docs/oddkit/specs/oddkit-resolve (DRAFT v4 — KISS) and
+// klappy://canon/principles/identity-resolved-by-protocol: consumers pass
+// in a klappy:// URI; the protocol returns the current canonical answer,
+// walking superseded_by chains to terminus. Backward-compatible (net-new).
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function runResolve(
+  input: string,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
+  state?: OddkitState,
+): Promise<ActionResult> {
+  const startMs = Date.now();
+  const updatedState = state ? initState(state) : undefined;
+
+  if (!input || typeof input !== "string" || !input.startsWith("klappy://")) {
+    return {
+      action: "resolve",
+      result: {
+        status: "INVALID_INPUT",
+        error: "input must be a klappy:// URI",
+      },
+      state: updatedState,
+      assistant_text: `Invalid input: \`${input}\`. Expected a klappy:// URI.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
+  }
+
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
+
+  // Build a URI → entry lookup once. Index entries already carry full frontmatter
+  // per klappy://docs/oddkit/IMPL-catalog-recent.
+  const byUri = new Map<string, IndexEntry>();
+  const byPath = new Map<string, IndexEntry>();
+  for (const entry of index.entries) {
+    if (entry.uri) byUri.set(entry.uri, entry);
+    if (entry.path) byPath.set(entry.path, entry);
+  }
+
+  // Resolve a `superseded_by` value to an index entry. Canon authors use
+  // multiple shapes for this field across the corpus:
+  //   - full klappy:// URI:        klappy://canon/x/y
+  //   - repo-relative path with .md: canon/x/y.md
+  //   - repo-relative path without:  canon/x/y
+  // The resolver normalizes — pushing this work to consumers would repeat
+  // the link-rot anti-pattern we're solving. If a real case emerges where
+  // an author needs to point at a non-existent target on purpose, that's
+  // what the warning + chain-truncation already handles.
+  function lookupSuccessor(ref: string): { entry: IndexEntry | undefined; canonicalUri: string } {
+    const direct = byUri.get(ref);
+    if (direct) return { entry: direct, canonicalUri: direct.uri };
+
+    const pathExact = byPath.get(ref);
+    if (pathExact) return { entry: pathExact, canonicalUri: pathExact.uri };
+
+    if (!ref.startsWith("klappy://") && !ref.endsWith(".md")) {
+      const pathWithExt = byPath.get(ref + ".md");
+      if (pathWithExt) return { entry: pathWithExt, canonicalUri: pathWithExt.uri };
+    }
+
+    if (!ref.startsWith("klappy://")) {
+      const stem = ref.endsWith(".md") ? ref.slice(0, -".md".length) : ref;
+      const asUri = "klappy://" + stem;
+      const viaUri = byUri.get(asUri);
+      if (viaUri) return { entry: viaUri, canonicalUri: viaUri.uri };
+    }
+
+    return { entry: undefined, canonicalUri: ref };
+  }
+
+  const startEntry = byUri.get(input);
+  if (!startEntry) {
+    return {
+      action: "resolve",
+      result: {
+        status: "NOT_FOUND",
+        input_uri: input,
+      },
+      state: updatedState,
+      assistant_text: `URI not found in index: \`${input}\`.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
+  }
+
+  // Walk superseded_by chain to terminus.
+  // Cap traversal depth as a safety net against malformed canon (cycles or absurd chains).
+  // Cycles produce CIRCULAR_SUPERSESSION; depth-cap produces the same with a different reason.
+  const MAX_DEPTH = 16;
+  const chain: Array<{ uri: string; superseded_at?: string }> = [];
+  const visited = new Set<string>([startEntry.uri]);
+
+  let current: IndexEntry = startEntry;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const fm = current.frontmatter || {};
+    const next = fm.superseded_by;
+    if (typeof next !== "string" || next.length === 0) break;
+
+    const supersededAt = typeof fm.superseded_at === "string" ? fm.superseded_at : undefined;
+    chain.push({ uri: current.uri, ...(supersededAt ? { superseded_at: supersededAt } : {}) });
+
+    const { entry: nextEntry, canonicalUri: nextUri } = lookupSuccessor(next);
+
+    if (visited.has(nextUri)) {
+      return {
+        action: "resolve",
+        result: {
+          status: "CIRCULAR_SUPERSESSION",
+          input_uri: input,
+          supersession_chain: [...chain, { uri: nextUri }],
+          message: "superseded_by chain cycles",
+        },
+        state: updatedState,
+        assistant_text: `Circular supersession detected starting from \`${input}\`. This is a canon data error.`,
+        debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+      };
+    }
+
+    if (!nextEntry) {
+      // Chain points at a successor that doesn't exist in any shape we recognize.
+      // Resolve to the last known entry and surface the dangling reference.
+      return {
+        action: "resolve",
+        result: {
+          status: "FOUND",
+          input_uri: input,
+          resolved: {
+            uri: current.uri,
+            path: current.path,
+            title: current.title,
+            url: deriveUrl(current.uri),
+            content_hash: current.content_hash,
+          },
+          supersession_chain: chain.slice(0, -1),
+          warning: `superseded_by points at \`${next}\` which is not in the index; chain truncated`,
+        },
+        state: state ? addCanonRefs(initState(state), [current.path]) : undefined,
+        assistant_text: `Resolved \`${input}\` to \`${current.uri}\` (chain truncated at unknown successor \`${next}\`).`,
+        debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+      };
+    }
+
+    visited.add(nextUri);
+    current = nextEntry;
+  }
+
+  // If we exited the loop on the depth cap with current still pointing at a doc that
+  // declares a further successor, treat that as circular for safety.
+  const finalFm = current.frontmatter || {};
+  if (typeof finalFm.superseded_by === "string" && finalFm.superseded_by.length > 0) {
+    return {
+      action: "resolve",
+      result: {
+        status: "CIRCULAR_SUPERSESSION",
+        input_uri: input,
+        supersession_chain: chain,
+        message: `chain exceeded MAX_DEPTH=${MAX_DEPTH}`,
+      },
+      state: updatedState,
+      assistant_text: `Supersession chain too deep starting from \`${input}\` (>${MAX_DEPTH}). Treating as canon data error.`,
+      debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+    };
+  }
+
+  return {
+    action: "resolve",
+    result: {
+      status: "FOUND",
+      input_uri: input,
+      resolved: {
+        uri: current.uri,
+        path: current.path,
+        title: current.title,
+        url: deriveUrl(current.uri),
+        content_hash: current.content_hash,
+      },
+      supersession_chain: chain,
+    },
+    state: state ? addCanonRefs(initState(state), [current.path]) : undefined,
+    assistant_text:
+      chain.length === 0
+        ? `Resolved \`${input}\` (no supersession).`
+        : `Resolved \`${input}\` → \`${current.uri}\` via ${chain.length} supersession step${chain.length === 1 ? "" : "s"}.`,
+    debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+  };
+}
+
+/**
+ * Derive a public-friendly URL from a klappy:// URI.
+ * v1 mapping: klappy://writings/foo → /writings/foo, klappy://canon/x → /canon/x, etc.
+ * Pure derivation — no I/O. Consumers that need a different URL shape can override
+ * by reading the resolved.uri/path themselves.
+ */
+function deriveUrl(uri: string): string {
+  if (!uri.startsWith("klappy://")) return uri;
+  return "/" + uri.slice("klappy://".length);
+}
+
 async function runCleanupStorage(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
@@ -2734,6 +2934,7 @@ const VALID_ACTIONS = [
   "encode",
   "search",
   "get",
+  "resolve",
   "catalog",
   "validate",
   "preflight",
@@ -2778,6 +2979,9 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         break;
       case "get":
         result = await runGet(input, fetcher, knowledge_base_url, state, include_metadata, section);
+        break;
+      case "resolve":
+        result = await runResolve(input, fetcher, knowledge_base_url, state);
         break;
       case "catalog":
         result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch });
