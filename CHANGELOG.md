@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-04-26
+
+### Added
+
+- **`oddkit_resolve` MCP action — protocol-level URI resolution with transparent supersession (PR #TBD).** Per `klappy://docs/oddkit/specs/oddkit-resolve` (DRAFT v4 — KISS) and `klappy://canon/principles/identity-resolved-by-protocol`. New action takes a `klappy://` URI as `input`, walks any `superseded_by` chain in frontmatter to terminus, and returns `{ status, resolved: { uri, path, title, url, content_hash }, supersession_chain }`. Status enum is `FOUND | NOT_FOUND | INVALID_INPUT | CIRCULAR_SUPERSESSION`. Wired into the unified `oddkit` router (`action: "resolve"`) and exposed as a standalone `oddkit_resolve` tool. Backward-compatible — purely additive net-new action; existing callers unchanged. Reads only the existing index (`fetcher.getIndex`), no new caches, no new frontmatter fields. Phase 2 of the link-rot-elimination campaign per `klappy://docs/planning/link-rot-elimination-campaign`.
+
+### Fixed
+
+- **`oddkit_resolve` supersession walk normalizes mixed-shape `superseded_by` references.** Initial implementation looked up `superseded_by` values strictly as URIs, which failed for the canon authoring convention of using paths (e.g. `superseded_by: "canon/definitions/dolcheo-vocabulary.md"`). Resolver now tolerates three shapes — full `klappy://` URI, repo-relative path with `.md`, repo-relative path without — and resolves each to the canonical entry. Cycle-detection set keys on the canonical URI so mixed shapes within one chain still dedupe correctly. Found by independent Sonnet 4.6 validator dispatched per E0008.3 / `klappy://canon/constraints/release-validation-gate`. Validator-found bug was a real production blocker — direct evidence that the release-validation-gate constraint earns its keep. Regression test added to `tests/cloudflare-production.test.sh` against the real canon URI that surfaced the bug.
+- **`oddkit_resolve` action registration in `VALID_ACTIONS`, field-name consistency on `supersession_chain`, and state-threading parity with peer actions** (Cursor Agent fix on PR #140). Initial implementation registered the new action in the dispatch switch but not in the `VALID_ACTIONS` validation list, returned `chain` instead of `supersession_chain` in two error branches, and synthesized empty state when none was passed in. All three corrected to match the conventions of every other action surface.
+
+### Notes
+
+- **Vodka discipline applied.** v3 of the spec proposed a richer surface (batch action, `resolve_links` flag, `aliases` field, `supersession_response` field, identity-by-meaning queries, build-time companion). v4 cut to the minimum: one input, one job — URI in, current canonical answer out. Cuts captured with explicit revisit triggers in `klappy://docs/planning/link-rot-deferred-concerns`. When real consumers demonstrate pain, each deferred item graduates as its own thin extension.
+- **No `PARTIAL_INDEX` status in v1.** The spec named it as mandatory partial-data compliance; the existing `oddkit_get` and `oddkit_search` actions don't expose this either, treating index reads as synchronous. Resolve matches the existing convention rather than introducing a divergent shape ahead of an observed cold-start problem. If real cold-start visibility becomes load-bearing, follow-up.
+- **No load-bearing surface change to existing actions.** `runResolve` is a new function; the dispatch switch gains one case; the tool list gains one entry; the unified router enum gains one value. Zero behavior change to `orient`, `challenge`, `gate`, `encode`, `search`, `get`, `catalog`, `validate`, `preflight`, `version`, `cleanup_storage`.
+
+### Refs
+
+- Spec: `klappy://docs/oddkit/specs/oddkit-resolve` (DRAFT v4)
+- Principle: `klappy://canon/principles/identity-resolved-by-protocol`
+- Campaign: `klappy://docs/planning/link-rot-elimination-campaign`
+- Deferred concerns: `klappy://docs/planning/link-rot-deferred-concerns`
+- Canon basis: `klappy://canon/constraints/release-validation-gate`, `klappy://canon/principles/vodka-architecture`, `klappy://canon/methods/supersession`
+- Canon PR (klappy.dev): #142
+
 ## [0.24.0] - 2026-04-23
 
 ### Added
