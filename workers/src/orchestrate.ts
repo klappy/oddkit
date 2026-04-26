@@ -1795,6 +1795,7 @@ interface AuditFinding {
   location: { path: string; line: number };
   occurrence: string;
   message: string;
+  suppression_reason?: string;
 }
 
 interface AuditScope {
@@ -1891,7 +1892,10 @@ async function runAudit(
       let nextEntry: IndexEntry | undefined = byUri.get(next) || byPath.get(next);
       if (!nextEntry && !next.startsWith("klappy://") && !next.endsWith(".md")) {
         nextEntry = byPath.get(next + ".md");
-        if (!nextEntry) nextEntry = byUri.get("klappy://" + next);
+      }
+      if (!nextEntry && !next.startsWith("klappy://")) {
+        const stem = next.endsWith(".md") ? next.slice(0, -".md".length) : next;
+        nextEntry = byUri.get("klappy://" + stem);
       }
       if (!nextEntry) {
         // Chain points at unknown successor — runResolve treats this as FOUND
@@ -1940,6 +1944,7 @@ async function runAudit(
     let pendingSuppress: { rule: string; reason: string | null; lineSeen: number } | null = null;
 
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      if (truncated) break;
       const line = lines[lineIdx];
 
       // Check for allowlist directive on this line
@@ -1958,7 +1963,9 @@ async function runAudit(
       // Reset link-finder regex state per line
       MARKDOWN_LINK_RE.lastIndex = 0;
       let linkMatch: RegExpExecArray | null;
+      let lineHadLink = false;
       while ((linkMatch = MARKDOWN_LINK_RE.exec(line)) !== null) {
+        lineHadLink = true;
         const target = linkMatch[2];
 
         const finding = classifyLink(target, path, lineIdx + 1, isWriting, uriResolves);
@@ -1966,6 +1973,9 @@ async function runAudit(
 
         // Apply pending suppression if the rule matches
         if (pendingSuppress && pendingSuppress.rule === finding.rule_id) {
+          if (pendingSuppress.reason) {
+            finding.suppression_reason = pendingSuppress.reason;
+          }
           suppressedFindings.push(finding);
           pendingSuppress = null;
           continue;
@@ -1978,10 +1988,12 @@ async function runAudit(
         }
       }
 
-      // If the directive sat on a link-bearing line and the link wasn't a
-      // matching finding, drop the pending suppression so it doesn't apply
-      // to a later unrelated link. Allowlists are scoped tight by design.
-      if (pendingSuppress && pendingSuppress.lineSeen < lineIdx + 1) {
+      // If the directive sat on an earlier line and we've now seen a link
+      // on a later line that wasn't a matching finding, drop the pending
+      // suppression so it doesn't apply to an unrelated link. Blank lines
+      // and prose between the directive and the targeted link must not
+      // expire the suppression.
+      if (pendingSuppress && pendingSuppress.lineSeen < lineIdx + 1 && lineHadLink) {
         pendingSuppress = null;
       }
     }
@@ -3288,12 +3300,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runResolve(input, fetcher, knowledge_base_url, state);
         break;
       case "audit":
-        result = await runAudit(
-          (typeof input === "string" ? input : input) as string | AuditScope | undefined,
-          fetcher,
-          knowledge_base_url,
-          state,
-        );
+        result = await runAudit(input, fetcher, knowledge_base_url, state);
         break;
       case "catalog":
         result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch });
