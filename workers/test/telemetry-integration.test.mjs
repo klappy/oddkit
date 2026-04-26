@@ -49,6 +49,7 @@ const tsconfig = {
   include: [
     join(WORKERS_ROOT, "src", "tokenize.ts"),
     join(WORKERS_ROOT, "src", "telemetry.ts"),
+    join(WORKERS_ROOT, "src", "zip-baseline-fetcher.ts"),
   ],
 };
 const tsconfigPath = join(tmp, "tsconfig.json");
@@ -74,7 +75,8 @@ const compile = spawnSync("npx", ["--yes", "tsc", "-p", tsconfigPath], {
 // actually need weren't emitted.
 const tokenizeJs = join(tmp, "build", "tokenize.js");
 const telemetryJs = join(tmp, "build", "telemetry.js");
-if (!existsSync(tokenizeJs) || !existsSync(telemetryJs)) {
+const zipFetcherJs = join(tmp, "build", "zip-baseline-fetcher.js");
+if (!existsSync(tokenizeJs) || !existsSync(telemetryJs) || !existsSync(zipFetcherJs)) {
   console.error("TypeScript compile failed (target files not emitted):");
   console.error(compile.stdout);
   console.error(compile.stderr);
@@ -86,14 +88,25 @@ if (compile.status !== 0 && process.env.DEBUG) {
 }
 
 // Newer Node requires `with { type: "json" }` on JSON imports in ESM.
-// TypeScript doesn't add this — patch it in.
-const { readFileSync, writeFileSync: wf } = await import("node:fs");
-let telemetrySrc = readFileSync(telemetryJs, "utf8");
-telemetrySrc = telemetrySrc.replace(
-  /from ["']\.\.\/package\.json["'];/g,
-  'from "../package.json" with { type: "json" };',
-);
-wf(telemetryJs, telemetrySrc);
+// TypeScript bundler moduleResolution omits .js extensions on local imports.
+// Node.js ESM resolver requires explicit extensions — patch all compiled files.
+const { readFileSync, writeFileSync: wf, readdirSync: rds } = await import("node:fs");
+const buildDir = join(tmp, "build");
+for (const f of rds(buildDir).filter(n => n.endsWith(".js"))) {
+  const fpath = join(buildDir, f);
+  let src = readFileSync(fpath, "utf8");
+  // Patch JSON imports
+  src = src.replace(
+    /from ["']\.\.\/package\.json["'];/g,
+    'from "../package.json" with { type: "json" };',
+  );
+  // Patch extensionless local imports (TypeScript bundler mode omits .js)
+  src = src.replace(
+    /from ["'](\.\/[^"'.]+)["'];/g,
+    'from "$1.js";',
+  );
+  wf(fpath, src);
+}
 
 const { measurePayloadShape } = await import(tokenizeJs);
 const { recordTelemetry } = await import(telemetryJs);
@@ -274,6 +287,230 @@ await test("batch JSON-RPC produces one data point per message", async () => {
     assert.equal(w.doubles[2], shape.bytes_in);
     assert.equal(w.doubles[3], shape.bytes_out);
   }
+});
+
+// ─── Semantic schema rewriting tests ──────────────────────────────────────
+
+const {
+  buildSchemaMapFromArrays,
+  detectRawSlotNames,
+  rewriteSqlToRaw,
+  rewriteResultToSemantic,
+} = await import(telemetryJs);
+
+// Build a test schema map (mirrors the production baseline)
+const TEST_BLOB_NAMES = [
+  "event_type", "method", "tool_name", "consumer_label", "consumer_source",
+  "knowledge_base_url", "document_uri", "worker_version", "cache_tier",
+];
+const TEST_DOUBLE_NAMES = [
+  "count", "duration_ms", "bytes_in", "bytes_out", "tokens_in", "tokens_out",
+];
+const testMap = buildSchemaMapFromArrays(TEST_BLOB_NAMES, TEST_DOUBLE_NAMES);
+
+await test("detectRawSlotNames: returns null for clean semantic query", async () => {
+  const result = detectRawSlotNames(
+    "SELECT tool_name, SUM(_sample_interval) FROM oddkit_telemetry GROUP BY tool_name",
+    testMap,
+  );
+  assert.equal(result, null, "clean query should return null");
+});
+
+await test("detectRawSlotNames: rejects blob1 with helpful message", async () => {
+  const result = detectRawSlotNames(
+    "SELECT blob1, blob3 FROM oddkit_telemetry",
+    testMap,
+  );
+  assert.ok(result !== null, "should return error string");
+  assert.ok(result.includes("blob1"), "error should mention the raw name");
+  assert.ok(result.includes("event_type"), "error should suggest semantic name");
+  assert.ok(result.includes("tool_name"), "error should suggest tool_name for blob3");
+});
+
+await test("detectRawSlotNames: rejects double5 with helpful message", async () => {
+  const result = detectRawSlotNames(
+    "SELECT SUM(double5) AS x FROM oddkit_telemetry",
+    testMap,
+  );
+  assert.ok(result !== null, "should return error string");
+  assert.ok(result.includes("double5"), "error should mention the raw name");
+  assert.ok(result.includes("tokens_in"), "error should suggest semantic name");
+});
+
+await test("rewriteSqlToRaw: translates all blob semantic names", async () => {
+  const sql = "SELECT event_type, method, tool_name, consumer_label, consumer_source, knowledge_base_url, document_uri, worker_version, cache_tier FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("blob1"), "event_type → blob1");
+  assert.ok(rewritten.includes("blob2"), "method → blob2");
+  assert.ok(rewritten.includes("blob3"), "tool_name → blob3");
+  assert.ok(rewritten.includes("blob6"), "knowledge_base_url → blob6");
+  assert.ok(rewritten.includes("blob9"), "cache_tier → blob9");
+  assert.ok(!rewritten.includes("event_type"), "event_type should be gone");
+});
+
+await test("rewriteSqlToRaw: translates all double semantic names", async () => {
+  const sql = "SELECT SUM(count) AS n, AVG(duration_ms), SUM(bytes_in), SUM(bytes_out), AVG(tokens_in), AVG(tokens_out) FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("double1"), "count → double1");
+  assert.ok(rewritten.includes("double2"), "duration_ms → double2");
+  assert.ok(rewritten.includes("double3"), "bytes_in → double3");
+  assert.ok(rewritten.includes("double4"), "bytes_out → double4");
+  assert.ok(rewritten.includes("double5"), "tokens_in → double5");
+  assert.ok(rewritten.includes("double6"), "tokens_out → double6");
+  assert.ok(!rewritten.includes("duration_ms"), "duration_ms should be gone");
+  assert.ok(!rewritten.includes("tokens_out"), "tokens_out should be gone");
+});
+
+await test("rewriteSqlToRaw: knowledge_base_url doesn't clobber shorter substrings", async () => {
+  // 'url' as alias should not be mistaken for a semantic column name
+  // and 'knowledge_base_url' should replace as a whole unit
+  const sql = "SELECT knowledge_base_url AS url FROM oddkit_telemetry";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("blob6"), "knowledge_base_url → blob6");
+  assert.ok(rewritten.includes("AS url"), "alias 'url' should be untouched");
+});
+
+await test("rewriteSqlToRaw: count() SQL aggregate is not rewritten to double1()", async () => {
+  // `count` is both a semantic column name (double1) and a SQL aggregate
+  // function. Rewriting `count(*)` to `double1(*)` would produce invalid SQL
+  // that CF rejects. A function-call guard (negative lookahead for `(`) keeps
+  // the aggregate intact while still rewriting column references to `count`.
+  const sql = "SELECT tool_name, count(*) AS n FROM oddkit_telemetry GROUP BY tool_name";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(rewritten.includes("count(*)"), "count(*) aggregate should be preserved");
+  assert.ok(!rewritten.includes("double1(*)"), "count(*) must not become double1(*)");
+  assert.ok(rewritten.includes("blob3"), "tool_name should still rewrite to blob3");
+
+  // Lowercase count( with whitespace also preserved
+  const sql2 = "SELECT count (DISTINCT tool_name) FROM oddkit_telemetry";
+  const rewritten2 = rewriteSqlToRaw(sql2, testMap);
+  assert.ok(!rewritten2.includes("double1 ("), "count (DISTINCT ...) must not be rewritten");
+
+  // But a bare `count` column reference (no paren) still rewrites
+  const sql3 = "SELECT SUM(count) AS n FROM oddkit_telemetry";
+  const rewritten3 = rewriteSqlToRaw(sql3, testMap);
+  assert.ok(rewritten3.includes("SUM(double1)"), "count as column reference should still rewrite to double1");
+});
+
+await test("rewriteSqlToRaw: semantic names inside single-quoted literals are preserved", async () => {
+  // Word-boundary regex without literal-skipping would corrupt filter values
+  // because `-`, `/`, and `'` are non-word characters that form `\b` boundaries.
+  // A query like WHERE document_uri = 'klappy://sources/scientific-method' would
+  // have `method` rewritten to `blob2` *inside the literal*, silently breaking
+  // the filter. The fix splits SQL into non-literal and single-quoted segments
+  // and only rewrites non-literal portions.
+  const sql = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'klappy://sources/scientific-method'";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(
+    rewritten.includes("'klappy://sources/scientific-method'"),
+    "literal value with `method` substring must be preserved verbatim",
+  );
+  assert.ok(
+    !rewritten.includes("scientific-blob2"),
+    "method must not be rewritten inside the literal",
+  );
+  // Column references outside the literal still rewrite correctly
+  assert.ok(rewritten.includes("blob3"), "tool_name column reference still rewrites to blob3");
+  assert.ok(rewritten.includes("blob7"), "document_uri column reference still rewrites to blob7");
+
+  // SQL doubled-quote escape ('') must not terminate the literal prematurely.
+  // The literal here is: it''s a method — single string with one apostrophe.
+  // Naive splitting would treat the first '' as end-of-literal-then-start, exposing
+  // ` a method ` to rewriting and producing ` a blob2 `.
+  const sql2 = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'it''s a method'";
+  const rewritten2 = rewriteSqlToRaw(sql2, testMap);
+  assert.ok(
+    rewritten2.includes("'it''s a method'"),
+    "doubled-quote escape must keep `method` inside the literal preserved",
+  );
+  assert.ok(
+    !rewritten2.includes("a blob2"),
+    "method inside escaped-quote literal must not become blob2",
+  );
+
+  // A semantic name BOTH inside and outside a literal: only the outside one rewrites
+  const sql3 = "SELECT method FROM oddkit_telemetry WHERE document_uri = 'log/method/handler'";
+  const rewritten3 = rewriteSqlToRaw(sql3, testMap);
+  assert.ok(rewritten3.startsWith("SELECT blob2"), "method as column ref rewrites to blob2");
+  assert.ok(
+    rewritten3.includes("'log/method/handler'"),
+    "method inside literal stays as method",
+  );
+});
+
+await test("detectRawSlotNames: raw slot names inside literals do not trigger rejection", async () => {
+  // detectRawSlotNames previously matched RAW_SLOT_PATTERN against the entire
+  // SQL string including literals, while rewriteSqlToRaw skipped literals. The
+  // inconsistency caused valid semantic queries with raw-slot-shaped substrings
+  // in user-supplied filter values to be falsely rejected. The fix strips
+  // literals before scanning, matching the rewrite scoping.
+  const sql = "SELECT tool_name FROM oddkit_telemetry WHERE knowledge_base_url = 'https://example.com/blob1/readme'";
+  const result = detectRawSlotNames(sql, testMap);
+  assert.equal(
+    result,
+    null,
+    "blob1 inside a literal must not trigger rejection",
+  );
+
+  // Same for double-shaped slot names inside literals
+  const sql2 = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'klappy://reports/double5-summary'";
+  const result2 = detectRawSlotNames(sql2, testMap);
+  assert.equal(
+    result2,
+    null,
+    "double5 inside a literal must not trigger rejection",
+  );
+
+  // Sanity check: raw slot OUTSIDE a literal must STILL be rejected.
+  // This guards against a future refactor that over-strips and lets real
+  // raw-slot references through.
+  const sql3 = "SELECT blob1 FROM oddkit_telemetry WHERE knowledge_base_url = 'https://example.com/safe/path'";
+  const result3 = detectRawSlotNames(sql3, testMap);
+  assert.ok(
+    result3 !== null,
+    "bare blob1 outside any literal must still be rejected",
+  );
+  assert.ok(
+    result3.includes("blob1"),
+    "rejection message names the offending raw slot",
+  );
+
+  // Mixed case: raw slot in a literal AND outside — must be rejected for the outside one
+  const sql4 = "SELECT double5 FROM oddkit_telemetry WHERE document_uri = 'safe-blob1-string'";
+  const result4 = detectRawSlotNames(sql4, testMap);
+  assert.ok(result4 !== null, "raw slot outside literal triggers rejection even when another raw slot is in a literal");
+  assert.ok(result4.includes("double5"), "rejection message names the outside-literal raw slot");
+  assert.ok(!result4.includes("blob1"), "raw slot only inside literal must not be flagged");
+});
+
+await test("rewriteResultToSemantic: renames blob/double columns in meta and data", async () => {
+  const rawResult = {
+    meta: [
+      { name: "blob3", type: "String" },
+      { name: "double2", type: "Float64" },
+      { name: "total", type: "UInt64" },
+    ],
+    data: [
+      { blob3: "search", double2: 123.4, total: "42" },
+      { blob3: "orient", double2: 88.0, total: "17" },
+    ],
+    rows: 2,
+  };
+  const result = rewriteResultToSemantic(rawResult, testMap);
+  assert.deepEqual(result.meta[0], { name: "tool_name", type: "String" }, "blob3 → tool_name in meta");
+  assert.deepEqual(result.meta[1], { name: "duration_ms", type: "Float64" }, "double2 → duration_ms in meta");
+  assert.deepEqual(result.meta[2], { name: "total", type: "UInt64" }, "non-slot column unchanged");
+  assert.equal(result.data[0].tool_name, "search", "data row key renamed");
+  assert.equal(result.data[0].duration_ms, 123.4, "double2 key renamed");
+  assert.equal(result.data[0].total, "42", "non-slot key unchanged");
+  assert.ok(!("blob3" in result.data[0]), "old key blob3 removed");
+  assert.ok(!("double2" in result.data[0]), "old key double2 removed");
+});
+
+await test("rewriteResultToSemantic: passes through non-slot result unchanged", async () => {
+  const rawResult = { error: "bad query" };
+  const result = rewriteResultToSemantic(rawResult, testMap);
+  assert.deepEqual(result, rawResult, "error result passed through unchanged");
 });
 
 // ─── Test 5: Malformed JSON-RPC gets dropped silently ──────────────────────

@@ -425,20 +425,31 @@ Use when:
 
 Dataset: oddkit_telemetry (Cloudflare Analytics Engine)
 Schema:
-  blob1  — event_type      "mcp_request" | "tool_call"
-  blob2  — method          JSON-RPC method (e.g. "tools/call")
-  blob3  — tool_name       oddkit action (e.g. "orient", "search")
-  blob4  — consumer_label  best-effort caller identity
-  blob5  — consumer_source how label was resolved (e.g. "user-agent")
-  blob6  — knowledge_base_url       which knowledge base is being served
-  blob7  — document_uri    for get calls, the klappy:// URI requested
-  blob8  — worker_version  oddkit version string
-  double1 — count          always 1
-  double2 — duration_ms    request processing time
-  index1 — sampling_key    consumer label
+  event_type        — "mcp_request" | "tool_call"
+  method            — JSON-RPC method (e.g. "tools/call")
+  tool_name         — oddkit action (e.g. "orient", "search")
+  consumer_label    — best-effort caller identity
+  consumer_source   — how label was resolved (e.g. "user-agent")
+  knowledge_base_url — which knowledge base is being served
+  document_uri      — for get calls, the klappy:// URI requested
+  worker_version    — oddkit version string
+  cache_tier        — which storage tier served the index
+  count             — always 1 (use SUM for aggregation)
+  duration_ms       — request processing time (full wall-clock at worker edge)
+  bytes_in          — UTF-8 byte length of the request body
+  bytes_out         — UTF-8 byte length of the response body (0 for SSE streams)
+  tokens_in         — cl100k_base token count of the request body
+  tokens_out        — cl100k_base token count of the response body
+  index1            — sampling key (consumer label)
 
 Use SUM(_sample_interval) instead of COUNT(*) to account for Analytics Engine sampling.
-Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY`,
+Time filter example: WHERE timestamp > NOW() - INTERVAL '30' DAY
+
+Example — tool leaderboard:
+  SELECT tool_name, SUM(_sample_interval) AS calls FROM oddkit_telemetry WHERE timestamp > NOW() - INTERVAL '30' DAY GROUP BY tool_name ORDER BY calls DESC LIMIT 10
+
+Example — payload shape by tool:
+  SELECT tool_name, AVG(tokens_out) AS avg_tokens_out FROM oddkit_telemetry WHERE timestamp > NOW() - INTERVAL '7' DAY GROUP BY tool_name ORDER BY avg_tokens_out DESC`,
     {
       sql: z.string().describe("Analytics Engine SQL query against the oddkit_telemetry dataset."),
     },
