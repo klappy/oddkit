@@ -1806,7 +1806,17 @@ interface AuditScope {
   since_commit?: string;
 }
 
-const DEFAULT_AUDIT_PATHS = ["writings/", "canon/", "odd/", "docs/"];
+// Default scope is writings/ only — the actual link-rot pain surface that
+// motivated this campaign. PR-2.2 cleanup was writings-only; the April-9
+// audit classified non-writings broken refs as intentional. Authors who
+// need to audit canon/, odd/, or docs/ can pass scope.paths explicitly.
+//
+// Spec deviation from oddkit-audit DRAFT v2 (which named full-repo default
+// excluding docs/archive/): cold-cache fetching ~560 files exceeded the
+// 120s curl budget on CF Preview test 14j. v1 ships the smaller default;
+// when parallelized fetching lands or a real consumer demonstrates pain,
+// the default broadens. Spec amended to match.
+const DEFAULT_AUDIT_PATHS = ["writings/"];
 const AUDIT_EXCLUDE_PREFIXES = ["docs/archive/"];
 const MAX_AUDIT_FILES = 1000;
 const MAX_AUDIT_FINDINGS = 500;
