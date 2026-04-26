@@ -1,12 +1,19 @@
 /**
  * Lightweight edge-compatible request tracer for X-Ray performance diagnostics.
  *
- * Adapted from aquifer-mcp's RequestTracer (which was modeled on
- * translation-helps-mcp's EdgeXRayTracer). Records every I/O operation
- * with timing, source tier, and optional detail.
+ * Adapted from translation-helps-mcp's EdgeXRayTracer. Records every fetch
+ * (storage tier access or network call) as a per-fetch fact with timing,
+ * cached boolean, optional status and size. The URL prefix carries the tier
+ * (memory:// cf-cache:// r2:// build:// or a real https:// URL); there is no
+ * separate `source` field on FetchRecord — `cached` is the primary fact, the
+ * URL is the breadcrumb.
  *
- * Usage: create one RequestTracer per inbound request, thread it through
- * storage reads and tool handlers, then serialize via toHeader() or toJSON().
+ * Telemetry derives cache_hits and cache_lookups from the per-fetch records
+ * via the `cacheStats` getter — the dashboard does the aggregation, not the
+ * tracer. There is no interpretation layer that picks a "winning" tier.
+ *
+ * `addSpan` is retained for non-fetcher events (action timing, sha:* SHA
+ * resolution, anything that is not a storage tier read).
  *
  * Part of E0008: Observability epoch.
  */
@@ -18,16 +25,34 @@ export interface TraceSpan {
   detail?: string;
 }
 
+export interface FetchRecord {
+  url: string;
+  duration_ms: number;
+  cached: boolean;
+  status?: number;
+  size?: number;
+}
+
+export interface CacheStats {
+  hits: number;
+  misses: number;
+  total: number;
+}
+
 export class RequestTracer {
   private spans: TraceSpan[] = [];
+  private fetches: FetchRecord[] = [];
   private startTime: number;
-  private _indexSource: TraceSpan["source"] | null = null;
 
   constructor() {
     this.startTime = performance.now();
   }
 
-  /** Record a span with explicit timing, source, and detail. */
+  /**
+   * Record a non-fetcher span (action timing, SHA resolution, etc.).
+   * Storage tier reads should use `recordFetch` instead so they roll into
+   * the `cacheStats` arithmetic.
+   */
   addSpan(label: string, duration_ms: number, source?: TraceSpan["source"], detail?: string): void {
     this.spans.push({
       label,
@@ -35,29 +60,30 @@ export class RequestTracer {
       ...(source ? { source } : {}),
       ...(detail ? { detail } : {}),
     });
-
-    // Track the primary cache tier for telemetry (first span matching a data
-    // fetch). Three label families count:
-    //   - "index" / "index-build"  → navigability index fetch (search/orient/etc.)
-    //   - "file:*"                 → individual file fetch (oddkit_get fast path)
-    // First-wins: actions like runSearch call getIndex *before* getFile, so
-    // the index tier wins for those — file:* spans that fire later are
-    // ignored. Actions like runGet for klappy:// URIs call getFile only,
-    // so the file tier wins. file-r2:* (r2 miss with source="miss") is
-    // excluded because "miss" is not a tier.
-    if (!this._indexSource && source && source !== "miss") {
-      if (
-        label === "index" ||
-        label === "index-build" ||
-        label.startsWith("file:")
-      ) {
-        this._indexSource = source;
-      }
-    }
   }
 
   /**
-   * Time an async operation and record it as a span.
+   * Record one storage-tier fetch as a per-fetch fact. URL prefix carries
+   * the tier:
+   *   - memory://path     → module-level cache hit (always cached: true)
+   *   - cf-cache://key    → Cloudflare Cache API
+   *   - r2://path         → R2 durable storage
+   *   - build://path      → cold rebuild from ZIP
+   *   - https://...       → real network fetch (status, size populated)
+   *
+   * `cached: true` for hits, `cached: false` for misses and live fetches.
+   * `cacheStats` aggregates these into hit/miss/total counts; the dashboard
+   * does any further per-tier breakdown via debug.trace.fetches[].
+   */
+  recordFetch(record: FetchRecord): void {
+    this.fetches.push({
+      ...record,
+      duration_ms: Math.round(record.duration_ms),
+    });
+  }
+
+  /**
+   * Time an async operation and record it as a (non-fetch) span.
    * Returns the operation's result.
    */
   async trace<T>(
@@ -78,22 +104,16 @@ export class RequestTracer {
   }
 
   /**
-   * Which storage tier served the primary data fetch for this request.
-   * This is the single summary value that feeds telemetry blob9 (cache_tier).
-   * "memory" = module-level cache hit (0ms, best case)
-   * "cache"  = Cache API edge hit (~1ms)
-   * "r2"     = R2 durable storage read (~40ms)
-   * "build"  = cold build from ZIP (seconds, worst case)
-   * "github" = GitHub network fetch (when no R2/cache layers exist)
-   * "none"   = no data fetch happened (e.g. version, time actions)
-   *
-   * The value reflects the primary fetch — for actions like search/orient
-   * that load the navigability index first, this is the index tier. For
-   * oddkit_get with a klappy:// URI (the fast path, no index needed), this
-   * is the file fetch tier. Either way: where did the work come from?
+   * Cache-hit arithmetic over the recorded fetches. `total` is the number of
+   * fetches; `hits` is the count where `cached === true`. This is what
+   * telemetry uses to populate `cache_hits` and `cache_lookups` doubles.
+   * Replaces the retired `indexSource` interpretation: no winner is chosen,
+   * the dashboard computes hit-rate as `SUM(cache_hits) / SUM(cache_lookups)`.
    */
-  get indexSource(): string {
-    return this._indexSource ?? "none";
+  get cacheStats(): CacheStats {
+    let hits = 0;
+    for (const f of this.fetches) if (f.cached) hits++;
+    return { hits, misses: this.fetches.length - hits, total: this.fetches.length };
   }
 
   /** Total elapsed time since tracer creation. */
@@ -109,18 +129,37 @@ export class RequestTracer {
       if (s.detail) val += `[${s.detail}]`;
       return val;
     });
+    for (const f of this.fetches) {
+      const tag = f.cached ? "hit" : "miss";
+      parts.push(`fetch=${f.duration_ms}ms(${tag})[${f.url}]`);
+    }
     parts.push(`total=${this.elapsed_ms}ms`);
     return parts.join(", ");
   }
 
   /** Structured JSON for debug envelope inclusion. */
-  toJSON(): { spans: TraceSpan[]; total_ms: number; index_source: string } {
-    return { spans: [...this.spans], total_ms: this.elapsed_ms, index_source: this.indexSource };
+  toJSON(): {
+    spans: TraceSpan[];
+    fetches: FetchRecord[];
+    cacheStats: CacheStats;
+    total_ms: number;
+  } {
+    return {
+      spans: [...this.spans],
+      fetches: [...this.fetches],
+      cacheStats: this.cacheStats,
+      total_ms: this.elapsed_ms,
+    };
   }
 
-  /** Number of recorded spans. */
+  /** Number of recorded spans (non-fetch). */
   get spanCount(): number {
     return this.spans.length;
+  }
+
+  /** Number of recorded fetches. */
+  get fetchCount(): number {
+    return this.fetches.length;
   }
 }
 

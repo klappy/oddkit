@@ -433,13 +433,14 @@ Schema:
   knowledge_base_url — which knowledge base is being served
   document_uri      — for get calls, the klappy:// URI requested
   worker_version    — oddkit version string
-  cache_tier        — which storage tier served the index
   count             — always 1 (use SUM for aggregation)
   duration_ms       — request processing time (full wall-clock at worker edge)
   bytes_in          — UTF-8 byte length of the request body
   bytes_out         — UTF-8 byte length of the response body (0 for SSE streams)
   tokens_in         — cl100k_base token count of the request body
   tokens_out        — cl100k_base token count of the response body
+  cache_hits        — count of fetches in the request that hit a cache tier
+  cache_lookups     — total fetches in the request (denominator for hit rate)
   index1            — sampling key (consumer label)
 
 Use SUM(_sample_interval) instead of COUNT(*) to account for Analytics Engine sampling.
@@ -968,7 +969,9 @@ export default {
       const response = await handler(request, env, ctx);
 
       // Phase 1 telemetry — non-blocking, fire-and-forget (E0008)
-      // Phase 1.5: cache_tier from tracer feeds blob9 (E0008.1)
+      // Phase 1.5: cache_tier interpreter retired (PR refactor/retire-indexsource-interpreter).
+      // The tracer now records per-fetch facts; recordTelemetry receives the
+      // arithmetic (cache_hits, cache_lookups) instead of a single "winner" tier.
       // Phase 2: payload shape (bytes_in/out, tokens_in/out) feeds doubles
       // 3-6. tokenize_ms was tried and dropped — Workers freezes both
       // performance.now() and Date.now() during synchronous CPU work, making
@@ -978,15 +981,15 @@ export default {
       // response. The helper handles clone failures safely.
       if (telemetryClone) {
         const durationMs = Date.now() - startTime;
-        // NOTE: Do NOT read tracer.indexSource here. The MCP handler returns
+        // NOTE: Do NOT read tracer.cacheStats here. The MCP handler returns
         // a streaming Response — `await handler(...)` resolves with the
         // Response object before the tool handler closure has finished
-        // running, so the tracer has not yet recorded the `index` span at
-        // this point. Reading here yields "none" for every tool. The tracer
-        // is only fully populated once the response body has been consumed
-        // (which forces the streaming tool handler to complete). The read
-        // therefore happens inside the waitUntil callback below, after
-        // `await responseClone.text()` resolves.
+        // running, so the tracer has not yet recorded any fetch records at
+        // this point. Reading here yields {hits:0,total:0} for every tool.
+        // The tracer is only fully populated once the response body has been
+        // consumed (which forces the streaming tool handler to complete).
+        // The read therefore happens inside the waitUntil callback below,
+        // after `await responseClone.text()` resolves. (PR #138 fix retained.)
         // Clone the response synchronously before returning so the body is
         // still available to read inside the deferred waitUntil callback.
         const responseClone = response.clone();
@@ -1005,15 +1008,15 @@ export default {
               } catch {
                 // Fall through with empty string; bytes_out / tokens_out will be 0.
               }
-              // Read tracer.indexSource AFTER the response body has been
+              // Read tracer.cacheStats AFTER the response body has been
               // consumed. By this point the streaming tool handler has
-              // completed and any "index" / "index-build" spans have been
-              // recorded. Reading earlier (e.g. immediately after `await
-              // handler()` returned) was the streaming-race bug that caused
-              // every tool call to record cache_tier="none" in production.
-              const cacheTier = tracer.indexSource;
+              // completed and any storage-tier fetches have been recorded.
+              // Reading earlier (e.g. immediately after `await handler()`
+              // returned) was the streaming-race bug that caused every tool
+              // call to record cache_tier="none" in production (PR #138).
+              const stats = tracer.cacheStats;
               const shape = await measurePayloadShape(requestText, responseText);
-              recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
+              recordTelemetry(request, requestText, env, durationMs, stats, shape);
             } catch {
               // Telemetry must never break MCP requests
             }
