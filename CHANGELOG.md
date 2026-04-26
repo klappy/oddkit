@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-04-26
+
+### Added
+
+- **`oddkit_audit` MCP action — mechanical detection of dead `klappy://` references and legacy markdown link patterns.** Per `klappy://docs/oddkit/specs/oddkit-audit` (DRAFT v2 — KISS). Walks every markdown file in the configured scope, classifies each link, emits structured findings. Two `rule_id`s: `dead-reference` (a `klappy://` URI that doesn't resolve through the index, including chains that end NOT_FOUND or cycle) and `legacy-link-pattern` (a `[label](/page/...)` or `[label](./*.md)` pattern in `writings/` — the patterns that caused the original reader complaints). Both severity `error` by default. Line-level allowlist via `<!-- audit-allow: <rule-id> reason="..." -->` directives. Returns suppressed findings separately so reviewers can challenge suppression reasons. Wired into the unified `oddkit` router (`action: "audit"`), exposed as a standalone `oddkit_audit` tool. Backward-compatible — purely additive. Internal supersession-walk shares normalization logic with `oddkit_resolve` (path/.md/URI shapes per `klappy://canon/constraints/superseded-by-shape-normalization`). Phase 2 PR-2.3 of the link-rot-elimination campaign.
+
+### Notes
+
+- **Vodka discipline preserved.** v1 of the spec proposed four checks (dead-references + terminological-drift + projection-staleness + epoch-gaps) plus a deprecated-terms registry, epoch-completeness rules, and an `audit_allow:` frontmatter field. v2 cut to one check, two rule_ids, line-level allowlist only. The other three checks moved to the deferred-concerns ledger with explicit revisit triggers.
+- **Three places updated for the new action surface** per `klappy://canon/constraints/oddkit-action-registration-completeness`: dispatch switch, `VALID_ACTIONS` array, central router enum + standalone tool definition. Smoke tests confirmed before push.
+- **No `PARTIAL_INDEX` status in v1.** Same as resolve: matches existing convention. If real cold-start visibility becomes load-bearing, follow-up.
+- **`since_commit` parameter accepted but ignored in v1.** The worker has no git access; CI workflows can pass file lists via `paths` instead. Documented in spec; reserves the field for a future implementation that reads from a git mirror or works against staged files.
+- **Bounded by `MAX_AUDIT_FILES=1000` and `MAX_AUDIT_FINDINGS=500`.** When truncated, `summary.truncated: true` flags it. Production canon is ~560 docs today; well below the cap.
+
+### Refs
+
+- Spec: `klappy://docs/oddkit/specs/oddkit-audit` (DRAFT v2 — KISS)
+- Resolver dependency: `klappy://docs/oddkit/specs/oddkit-resolve` (DRAFT v4 — in production at v0.25.0)
+- Principle: `klappy://canon/principles/identity-resolved-by-protocol`
+- Campaign: `klappy://docs/planning/link-rot-elimination-campaign`
+- Bug-class lessons (separate canon PR in klappy/klappy.dev):
+  - `klappy://canon/constraints/oddkit-action-registration-completeness`
+  - `klappy://canon/constraints/superseded-by-shape-normalization`
+  - `klappy://canon/constraints/bash-test-rig-assignment-chain-discipline`
+- Canon basis: `klappy://canon/constraints/release-validation-gate`, `klappy://canon/principles/vodka-architecture`, `klappy://canon/principles/ritual-is-a-smell`
+
 ## [0.25.0] - 2026-04-26
 
 ### Added
