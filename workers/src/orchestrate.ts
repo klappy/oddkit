@@ -1611,8 +1611,41 @@ async function runResolve(
   // Build a URI → entry lookup once. Index entries already carry full frontmatter
   // per klappy://docs/oddkit/IMPL-catalog-recent.
   const byUri = new Map<string, IndexEntry>();
+  const byPath = new Map<string, IndexEntry>();
   for (const entry of index.entries) {
     if (entry.uri) byUri.set(entry.uri, entry);
+    if (entry.path) byPath.set(entry.path, entry);
+  }
+
+  // Resolve a `superseded_by` value to an index entry. Canon authors use
+  // multiple shapes for this field across the corpus:
+  //   - full klappy:// URI:        klappy://canon/x/y
+  //   - repo-relative path with .md: canon/x/y.md
+  //   - repo-relative path without:  canon/x/y
+  // The resolver normalizes — pushing this work to consumers would repeat
+  // the link-rot anti-pattern we're solving. If a real case emerges where
+  // an author needs to point at a non-existent target on purpose, that's
+  // what the warning + chain-truncation already handles.
+  function lookupSuccessor(ref: string): { entry: IndexEntry | undefined; canonicalUri: string } {
+    const direct = byUri.get(ref);
+    if (direct) return { entry: direct, canonicalUri: direct.uri };
+
+    const pathExact = byPath.get(ref);
+    if (pathExact) return { entry: pathExact, canonicalUri: pathExact.uri };
+
+    if (!ref.startsWith("klappy://") && !ref.endsWith(".md")) {
+      const pathWithExt = byPath.get(ref + ".md");
+      if (pathWithExt) return { entry: pathWithExt, canonicalUri: pathWithExt.uri };
+    }
+
+    if (!ref.startsWith("klappy://")) {
+      const stem = ref.endsWith(".md") ? ref.slice(0, -".md".length) : ref;
+      const asUri = "klappy://" + stem;
+      const viaUri = byUri.get(asUri);
+      if (viaUri) return { entry: viaUri, canonicalUri: viaUri.uri };
+    }
+
+    return { entry: undefined, canonicalUri: ref };
   }
 
   const startEntry = byUri.get(input);
@@ -1645,13 +1678,15 @@ async function runResolve(
     const supersededAt = typeof fm.superseded_at === "string" ? fm.superseded_at : undefined;
     chain.push({ uri: current.uri, ...(supersededAt ? { superseded_at: supersededAt } : {}) });
 
-    if (visited.has(next)) {
+    const { entry: nextEntry, canonicalUri: nextUri } = lookupSuccessor(next);
+
+    if (visited.has(nextUri)) {
       return {
         action: "resolve",
         result: {
           status: "CIRCULAR_SUPERSESSION",
           input_uri: input,
-          supersession_chain: [...chain, { uri: next }],
+          supersession_chain: [...chain, { uri: nextUri }],
           message: "superseded_by chain cycles",
         },
         state: updatedState,
@@ -1660,10 +1695,9 @@ async function runResolve(
       };
     }
 
-    const nextEntry = byUri.get(next);
     if (!nextEntry) {
-      // Chain points at a URI that doesn't exist. Treat as resolution to the last
-      // known entry in the chain (stop walking) plus a warning in the result.
+      // Chain points at a successor that doesn't exist in any shape we recognize.
+      // Resolve to the last known entry and surface the dangling reference.
       return {
         action: "resolve",
         result: {
@@ -1685,7 +1719,7 @@ async function runResolve(
       };
     }
 
-    visited.add(next);
+    visited.add(nextUri);
     current = nextEntry;
   }
 
