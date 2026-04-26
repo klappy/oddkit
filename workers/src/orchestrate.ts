@@ -1651,7 +1651,7 @@ async function runResolve(
         result: {
           status: "CIRCULAR_SUPERSESSION",
           input_uri: input,
-          chain: [...chain, { uri: next }],
+          supersession_chain: [...chain, { uri: next }],
           message: "superseded_by chain cycles",
         },
         state: updatedState,
@@ -1676,10 +1676,10 @@ async function runResolve(
             url: deriveUrl(current.uri),
             content_hash: current.content_hash,
           },
-          supersession_chain: chain,
+          supersession_chain: chain.slice(0, -1),
           warning: `superseded_by points at \`${next}\` which is not in the index; chain truncated`,
         },
-        state: addCanonRefs(updatedState || initState(state), [current.path]),
+        state: state ? addCanonRefs(initState(state), [current.path]) : undefined,
         assistant_text: `Resolved \`${input}\` to \`${current.uri}\` (chain truncated at unknown successor \`${next}\`).`,
         debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
       };
@@ -1698,7 +1698,7 @@ async function runResolve(
       result: {
         status: "CIRCULAR_SUPERSESSION",
         input_uri: input,
-        chain,
+        supersession_chain: chain,
         message: `chain exceeded MAX_DEPTH=${MAX_DEPTH}`,
       },
       state: updatedState,
@@ -1721,7 +1721,7 @@ async function runResolve(
       },
       supersession_chain: chain,
     },
-    state: addCanonRefs(updatedState || initState(state), [current.path]),
+    state: state ? addCanonRefs(initState(state), [current.path]) : undefined,
     assistant_text:
       chain.length === 0
         ? `Resolved \`${input}\` (no supersession).`
@@ -2900,6 +2900,7 @@ const VALID_ACTIONS = [
   "encode",
   "search",
   "get",
+  "resolve",
   "catalog",
   "validate",
   "preflight",
