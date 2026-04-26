@@ -179,14 +179,14 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
   });
 
   const shape = await measurePayloadShape(requestBody, responseBody);
-  recordTelemetry(mockRequest(), requestBody, env, 42, "memory", shape);
+  recordTelemetry(mockRequest(), requestBody, env, 42, { hits: 1, total: 1 }, shape);
 
   assert.equal(env.ODDKIT_TELEMETRY.writes.length, 1, "should write 1 data point");
   const point = env.ODDKIT_TELEMETRY.writes[0];
 
-  // Schema shape
-  assert.equal(point.blobs.length, 9, `blobs should be 9, got ${point.blobs.length}`);
-  assert.equal(point.doubles.length, 6, `doubles should be 6, got ${point.doubles.length}`);
+  // Schema shape — blob9 retired, doubles 7 and 8 added
+  assert.equal(point.blobs.length, 8, `blobs should be 8 (blob9 retired), got ${point.blobs.length}`);
+  assert.equal(point.doubles.length, 8, `doubles should be 8, got ${point.doubles.length}`);
   assert.equal(point.indexes.length, 1, "indexes should be 1");
 
   // Blobs
@@ -196,7 +196,6 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
   assert.equal(point.blobs[3], "integration-test", "blob4 = consumer_label");
   assert.equal(point.blobs[4], "query-param", "blob5 = consumer_source");
   assert.equal(point.blobs[7], "0.23.1-test", "blob8 = worker_version");
-  assert.equal(point.blobs[8], "memory", "blob9 = cache_tier");
 
   // Doubles
   assert.equal(point.doubles[0], 1, "double1 = count");
@@ -205,6 +204,8 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
   assert.equal(point.doubles[3], shape.bytes_out, "double4 = bytes_out");
   assert.equal(point.doubles[4], shape.tokens_in, "double5 = tokens_in");
   assert.equal(point.doubles[5], shape.tokens_out, "double6 = tokens_out");
+  assert.equal(point.doubles[6], 1, "double7 = cache_hits");
+  assert.equal(point.doubles[7], 1, "double8 = cache_lookups");
 
   console.log(`     bytes_in=${shape.bytes_in} bytes_out=${shape.bytes_out} ` +
               `tokens_in=${shape.tokens_in} tokens_out=${shape.tokens_out}`);
@@ -231,7 +232,7 @@ await test("oddkit_search with realistic ~8KB response — measurements are sane
   });
 
   const shape = await measurePayloadShape(requestBody, responseBody);
-  recordTelemetry(mockRequest("realistic-test"), requestBody, env, 215, "r2", shape);
+  recordTelemetry(mockRequest("realistic-test"), requestBody, env, 215, { hits: 0, total: 1 }, shape);
 
   const point = env.ODDKIT_TELEMETRY.writes[0];
   assert.equal(point.blobs[2], "oddkit", "tool_name = oddkit (router)");
@@ -256,7 +257,7 @@ await test("SSE response (empty body) records bytes_out=0 and tokens_out=0", asy
   });
   // Simulating the call site path where Content-Type was not application/json
   const shape = await measurePayloadShape(requestBody, "");
-  recordTelemetry(mockRequest(), requestBody, env, 50, "memory", shape);
+  recordTelemetry(mockRequest(), requestBody, env, 50, { hits: 1, total: 1 }, shape);
 
   const point = env.ODDKIT_TELEMETRY.writes[0];
   assert.equal(point.doubles[3], 0, "bytes_out should be 0 for empty response");
@@ -277,7 +278,7 @@ await test("batch JSON-RPC produces one data point per message", async () => {
   const responseBody = JSON.stringify(batch.map(m => ({ jsonrpc: "2.0", id: m.id, result: { ok: true } })));
 
   const shape = await measurePayloadShape(requestBody, responseBody);
-  recordTelemetry(mockRequest(), requestBody, env, 30, "cache", shape);
+  recordTelemetry(mockRequest(), requestBody, env, 30, { hits: 1, total: 1 }, shape);
 
   assert.equal(env.ODDKIT_TELEMETRY.writes.length, 3, `should write 3 data points, got ${env.ODDKIT_TELEMETRY.writes.length}`);
   assert.equal(env.ODDKIT_TELEMETRY.writes[0].blobs[2], "oddkit_time");
@@ -304,10 +305,12 @@ const {
 // Build a test schema map (mirrors the production baseline)
 const TEST_BLOB_NAMES = [
   "event_type", "method", "tool_name", "consumer_label", "consumer_source",
-  "knowledge_base_url", "document_uri", "worker_version", "cache_tier",
+  "knowledge_base_url", "document_uri", "worker_version",
+  // blob9 (cache_tier) retired in retire-indexsource-interpreter
 ];
 const TEST_DOUBLE_NAMES = [
   "count", "duration_ms", "bytes_in", "bytes_out", "tokens_in", "tokens_out",
+  "cache_hits", "cache_lookups",
 ];
 const testMap = buildSchemaMapFromArrays(TEST_BLOB_NAMES, TEST_DOUBLE_NAMES);
 
@@ -341,18 +344,18 @@ await test("detectRawSlotNames: rejects double5 with helpful message", async () 
 });
 
 await test("rewriteSqlToRaw: translates all blob semantic names", async () => {
-  const sql = "SELECT event_type, method, tool_name, consumer_label, consumer_source, knowledge_base_url, document_uri, worker_version, cache_tier FROM oddkit_telemetry";
+  const sql = "SELECT event_type, method, tool_name, consumer_label, consumer_source, knowledge_base_url, document_uri, worker_version FROM oddkit_telemetry";
   const rewritten = rewriteSqlToRaw(sql, testMap);
   assert.ok(rewritten.includes("blob1"), "event_type → blob1");
   assert.ok(rewritten.includes("blob2"), "method → blob2");
   assert.ok(rewritten.includes("blob3"), "tool_name → blob3");
   assert.ok(rewritten.includes("blob6"), "knowledge_base_url → blob6");
-  assert.ok(rewritten.includes("blob9"), "cache_tier → blob9");
+  assert.ok(rewritten.includes("blob8"), "worker_version → blob8");
   assert.ok(!rewritten.includes("event_type"), "event_type should be gone");
 });
 
 await test("rewriteSqlToRaw: translates all double semantic names", async () => {
-  const sql = "SELECT SUM(count) AS n, AVG(duration_ms), SUM(bytes_in), SUM(bytes_out), AVG(tokens_in), AVG(tokens_out) FROM oddkit_telemetry";
+  const sql = "SELECT SUM(count) AS n, AVG(duration_ms), SUM(bytes_in), SUM(bytes_out), AVG(tokens_in), AVG(tokens_out), SUM(cache_hits), SUM(cache_lookups) FROM oddkit_telemetry";
   const rewritten = rewriteSqlToRaw(sql, testMap);
   assert.ok(rewritten.includes("double1"), "count → double1");
   assert.ok(rewritten.includes("double2"), "duration_ms → double2");
@@ -360,8 +363,12 @@ await test("rewriteSqlToRaw: translates all double semantic names", async () => 
   assert.ok(rewritten.includes("double4"), "bytes_out → double4");
   assert.ok(rewritten.includes("double5"), "tokens_in → double5");
   assert.ok(rewritten.includes("double6"), "tokens_out → double6");
+  assert.ok(rewritten.includes("double7"), "cache_hits → double7");
+  assert.ok(rewritten.includes("double8"), "cache_lookups → double8");
   assert.ok(!rewritten.includes("duration_ms"), "duration_ms should be gone");
   assert.ok(!rewritten.includes("tokens_out"), "tokens_out should be gone");
+  assert.ok(!rewritten.includes("cache_hits"), "cache_hits should be gone");
+  assert.ok(!rewritten.includes("cache_lookups"), "cache_lookups should be gone");
 });
 
 await test("rewriteSqlToRaw: knowledge_base_url doesn't clobber shorter substrings", async () => {
@@ -525,7 +532,7 @@ await test("malformed JSON-RPC is silently dropped (telemetry never throws)", as
   const shape = await measurePayloadShape(requestBody, "ok");
 
   // Should not throw
-  recordTelemetry(mockRequest(), requestBody, env, 10, "none", shape);
+  recordTelemetry(mockRequest(), requestBody, env, 10, { hits: 0, total: 0 }, shape);
   assert.equal(env.ODDKIT_TELEMETRY.writes.length, 0, "should not write anything for malformed input");
 });
 
@@ -536,65 +543,63 @@ await test("missing env.ODDKIT_TELEMETRY is a graceful no-op", async () => {
   const requestBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   const shape = await measurePayloadShape(requestBody, "{}");
   // Should not throw
-  recordTelemetry(mockRequest(), requestBody, env, 5, "memory", shape);
+  recordTelemetry(mockRequest(), requestBody, env, 5, { hits: 1, total: 1 }, shape);
 });
 
-// ─── Test 7: Streaming-race regression — cacheTier must be read AFTER body ──
+// ─── Test 7: Streaming-race regression — cacheStats must be read AFTER body ──
 
-await test("cache_tier reads must happen after the streaming response body completes", async () => {
+await test("cacheStats reads must happen after the streaming response body completes", async () => {
   // The MCP handler from agents/mcp returns a streaming Response. `await
   // handler(...)` resolves with the Response object before the tool handler
-  // closure has finished populating the tracer. Reading `tracer.indexSource`
-  // immediately after the await yields "none" for every tool because the
-  // "index" / "index-build" span has not been recorded yet. The fix in
+  // closure has finished populating the tracer. Reading `tracer.cacheStats`
+  // immediately after the await yields {hits:0,total:0} for every tool
+  // because no fetch records have been written yet. The fix in
   // workers/src/index.ts moves the read inside the waitUntil callback,
   // after the response body has been consumed (which forces the streaming
   // tool handler to complete).
   //
-  // This test simulates the timing pattern. A tracer is created, then a
-  // deferred task adds the "index" span asynchronously (mimicking the tool
-  // handler running while the response body streams). We assert:
-  //   (a) the OLD pattern (read immediately) returns "none" — this is the
-  //       observable bug the fix exists to prevent
-  //   (b) the FIXED pattern (read after a microtask flush) returns the
-  //       actual span source — this proves the fix recovers the value
+  // The interpretation layer (`indexSource`) was retired in
+  // refactor/retire-indexsource-interpreter, but the streaming-race
+  // regression survives unchanged — semantics are identical, only the
+  // accessor changed (indexSource → cacheStats).
 
   const tracer = new RequestTracer();
 
-  // Schedule the "index" span for the next tick — this models a streaming
-  // tool handler that has not yet recorded its index access at the moment
-  // the outer handler's `await` resolves.
+  // Schedule a fetch record for the next tick — this models a streaming
+  // tool handler that has not yet recorded its storage access at the
+  // moment the outer handler's `await` resolves.
   const handlerDone = new Promise((resolve) => {
     setImmediate(() => {
-      tracer.addSpan("index", 12, "cache");
+      tracer.recordFetch({ url: "cf-cache://index/v2.4/baseline_abc", duration_ms: 12, cached: true });
       resolve();
     });
   });
 
-  // (a) OLD pattern: read tracer.indexSource synchronously, before the
-  // deferred span has been added. This reproduces the production bug.
-  const oldPatternRead = tracer.indexSource;
+  // (a) OLD pattern: read tracer.cacheStats synchronously, before the
+  // deferred fetch has been added. This reproduces the production bug.
+  const oldPatternRead = tracer.cacheStats;
   assert.equal(
-    oldPatternRead,
-    "none",
-    "OLD pattern (read immediately after await) returns 'none' — this is the streaming-race bug",
+    oldPatternRead.total,
+    0,
+    "OLD pattern (read immediately after await) sees zero fetches — the streaming-race bug",
   );
 
-  // Wait for the deferred span to land (modeling `await responseClone.text()`
+  // Wait for the deferred fetch to land (modeling `await responseClone.text()`
   // forcing the streaming tool handler to finish).
   await handlerDone;
 
-  // (b) FIXED pattern: read tracer.indexSource AFTER the deferred work has
-  // completed. The tracer now reflects the actual cache tier.
-  const fixedPatternRead = tracer.indexSource;
+  // (b) FIXED pattern: read tracer.cacheStats AFTER the deferred work has
+  // completed. The tracer now reflects the actual fetch.
+  const fixedPatternRead = tracer.cacheStats;
   assert.equal(
-    fixedPatternRead,
-    "cache",
-    "FIXED pattern (read after body consumption) returns the actual span source",
+    fixedPatternRead.total,
+    1,
+    "FIXED pattern (read after body consumption) sees the actual fetch",
   );
+  assert.equal(fixedPatternRead.hits, 1, "the deferred fetch was a cache hit");
 
   // Round-trip: feed the fixed value through recordTelemetry and verify it
-  // lands in blob9.
+  // lands in cache_hits / cache_lookups doubles.
   const env = mockEnv();
   const requestBody = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "oddkit_search", arguments: { input: "test" } } });
   const responseBody = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "ok" }] } });
@@ -602,111 +607,68 @@ await test("cache_tier reads must happen after the streaming response body compl
   recordTelemetry(mockRequest(), requestBody, env, 42, fixedPatternRead, shape);
   assert.equal(env.ODDKIT_TELEMETRY.writes.length, 1, "exactly one data point written");
   assert.equal(
-    env.ODDKIT_TELEMETRY.writes[0].blobs[8],
-    "cache",
-    "blob9 (cache_tier) carries the post-body-consumption tracer value",
+    env.ODDKIT_TELEMETRY.writes[0].doubles[6],
+    1,
+    "double7 (cache_hits) carries the post-body-consumption arithmetic",
+  );
+  assert.equal(
+    env.ODDKIT_TELEMETRY.writes[0].doubles[7],
+    1,
+    "double8 (cache_lookups) carries the post-body-consumption arithmetic",
   );
 
-  // Sanity: if we had used the broken old-pattern read, blob9 would be "none"
+  // Sanity: if we had used the broken old-pattern read, both doubles would be 0
   const env2 = mockEnv();
   recordTelemetry(mockRequest(), requestBody, env2, 42, oldPatternRead, shape);
   assert.equal(
-    env2.ODDKIT_TELEMETRY.writes[0].blobs[8],
-    "none",
-    "blob9 with the OLD-pattern read would be 'none' — what production has been recording",
+    env2.ODDKIT_TELEMETRY.writes[0].doubles[6],
+    0,
+    "double7 with the OLD-pattern read would be 0 — what production previously recorded",
+  );
+  assert.equal(
+    env2.ODDKIT_TELEMETRY.writes[0].doubles[7],
+    0,
+    "double8 with the OLD-pattern read would be 0",
   );
 });
 
-// ─── Test 8: file:* spans count as primary tier (oddkit_get fast path) ──────
+// ─── Test 8: tracer.recordFetch arithmetic — cacheStats reflects fetches ──
 
-await test("tracer recognizes file:* spans as primary tier when no index span fires", async () => {
-  // oddkit_get for klappy:// URIs takes the fast path: no getIndex call,
-  // straight to getFile. The fetcher emits `file:${path}` spans (memory/r2/
-  // build). Before this fix, only "index" / "index-build" labels updated
-  // _indexSource, so klappy:// gets always recorded cache_tier="none" even
-  // after the streaming-race fix. This test pins the broader recognition.
+await test("tracer.recordFetch arithmetic: cacheStats {hits, misses, total} mirrors fetches[]", async () => {
+  // Replaces the four PR #139 file:* / index-wins / regression tests that
+  // pinned the retired interpreter behavior. The new contract is simple
+  // arithmetic over the per-fetch records — no winner selection, no
+  // first-vs-slowest debate, no special-case label recognition.
 
   const tracer = new RequestTracer();
-  tracer.addSpan("file:canon/foo.md", 12, "memory");
-  assert.equal(
-    tracer.indexSource,
-    "memory",
-    "file:* span with source 'memory' must populate indexSource (klappy:// fast path)",
+  assert.deepEqual(
+    tracer.cacheStats,
+    { hits: 0, misses: 0, total: 0 },
+    "fresh tracer has zero of everything",
   );
 
-  // r2 source on file fetch
-  const tracer2 = new RequestTracer();
-  tracer2.addSpan("file:canon/bar.md", 40, "r2");
-  assert.equal(tracer2.indexSource, "r2", "file:* with r2 source captured");
+  // Two cache hits, one miss, one cold rebuild
+  tracer.recordFetch({ url: "memory://canon/foo.md", duration_ms: 0, cached: true });
+  tracer.recordFetch({ url: "cf-cache://index/v2.4/k", duration_ms: 1, cached: true });
+  tracer.recordFetch({ url: "r2://canon/bar.md", duration_ms: 40, cached: false });
+  tracer.recordFetch({ url: "build://canon/bar.md", duration_ms: 1500, cached: false });
 
-  // build source on file fetch (cold ZIP extract)
-  const tracer3 = new RequestTracer();
-  tracer3.addSpan("file:canon/baz.md", 1500, "build", "zip-extract");
-  assert.equal(tracer3.indexSource, "build", "file:* with build source captured");
-});
+  const stats = tracer.cacheStats;
+  assert.equal(stats.hits, 2, "two cached: true records → hits = 2");
+  assert.equal(stats.misses, 2, "two cached: false records → misses = 2");
+  assert.equal(stats.total, 4, "total = hits + misses");
 
-await test("tracer keeps index-wins when index span fires before file spans (search pattern)", async () => {
-  // runSearch calls getIndex first (emits `index` span), then getFile for
-  // each hit (emits `file:*` spans). First-wins guard ensures the index
-  // tier — which represents the primary work — wins, not the per-file
-  // tiers from secondary fetches.
+  // toJSON exposes the per-fetch records and the derived stats
+  const json = tracer.toJSON();
+  assert.equal(json.fetches.length, 4, "all four records survive in toJSON.fetches");
+  assert.deepEqual(json.cacheStats, stats, "toJSON.cacheStats matches the getter");
+  assert.ok(!("index_source" in json), "retired index_source field is gone from toJSON");
 
-  const tracer = new RequestTracer();
-  tracer.addSpan("index", 33, "cache");
-  tracer.addSpan("file:canon/result-1.md", 100, "r2");
-  tracer.addSpan("file:canon/result-2.md", 250, "build", "zip-extract");
-
-  assert.equal(
-    tracer.indexSource,
-    "cache",
-    "index tier wins when it fires first (search/orient/catalog pattern)",
-  );
-});
-
-await test("tracer file:* recognition still excludes file-r2:* miss spans", async () => {
-  // file-r2:${path} fires on R2 miss with source="miss". "miss" is not a
-  // tier and must not be recorded as one. The setter excludes any span
-  // whose source is the literal string "miss".
-
-  const tracer = new RequestTracer();
-  tracer.addSpan("file-r2:canon/foo.md", 100, "miss");
-  assert.equal(
-    tracer.indexSource,
-    "none",
-    "file-r2:* with source 'miss' must not be captured as a tier",
-  );
-
-  // After the miss, the actual fetch fires with a real source — that one
-  // should be captured.
-  tracer.addSpan("file:canon/foo.md", 200, "build", "zip-extract");
-  assert.equal(
-    tracer.indexSource,
-    "build",
-    "real file fetch after r2-miss is captured normally",
-  );
-});
-
-await test("tracer existing index-only behavior still works (no regression)", async () => {
-  // Sanity: the original case (just index/index-build with no file:* spans)
-  // must continue to work exactly as before.
-
-  const tracer1 = new RequestTracer();
-  tracer1.addSpan("index", 0, "memory");
-  assert.equal(tracer1.indexSource, "memory", "memory index tier captured");
-
-  const tracer2 = new RequestTracer();
-  tracer2.addSpan("index-build", 2000, "build");
-  assert.equal(tracer2.indexSource, "build", "index-build with build source captured");
-
-  // Without a recognized data fetch, indexSource is "none"
-  const tracer3 = new RequestTracer();
-  tracer3.addSpan("action:version", 5);
-  tracer3.addSpan("sha:klappy.dev", 0, "memory");
-  assert.equal(
-    tracer3.indexSource,
-    "none",
-    "action and sha spans alone do not count as primary tier",
-  );
+  // addSpan still records non-fetch events without affecting cacheStats
+  tracer.addSpan("sha:klappy.dev", 0, "memory");
+  tracer.addSpan("action:search", 30);
+  assert.equal(tracer.cacheStats.total, 4, "addSpan does not increment cacheStats");
+  assert.equal(tracer.spanCount, 2, "spans tracked separately from fetches");
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

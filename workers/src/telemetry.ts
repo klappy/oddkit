@@ -17,7 +17,10 @@
  *                            (deploy-time injection) with a build-time fallback
  *                            to workers/package.json::version. Never "unknown"
  *                            on a normal deploy.
- *   blob9: cache_tier    — which storage tier served the index (E0008.1)
+ *   blob9: RETIRED         — was cache_tier (E0008.1, removed in the
+ *                            retire-indexsource-interpreter refactor). Slot
+ *                            stays free; cache effectiveness is now derived
+ *                            from double7/double8.
  *   double1: count        — always 1 (for SUM aggregation)
  *   double2: duration_ms  — Full MCP request wall-clock, measured at the worker
  *                            edge from request entry through handler return.
@@ -39,6 +42,12 @@
  *                            0 when tokenization was skipped or failed.
  *   double6: tokens_out   — cl100k_base token count of the response body. 0 for
  *                            streamed responses or tokenizer failure.
+ *   double7: cache_hits   — count of per-fetch records in the request whose
+ *                            `cached` flag was true. Sourced from
+ *                            tracer.cacheStats.hits.
+ *   double8: cache_lookups — total per-fetch records in the request (the
+ *                            denominator for hit rate). Sourced from
+ *                            tracer.cacheStats.total.
  *
  *   NOTE: a previous iteration shipped a `double7: tokenize_ms` field intended
  *   to capture the wall-clock cost of tokenization for bench-vs-prod
@@ -236,7 +245,7 @@ export function recordTelemetry(
   requestBody: string,
   env: Env,
   durationMs: number,
-  cacheTier?: string,
+  cacheStats?: { hits: number; total: number },
   shape?: PayloadShape | null,
 ): void {
   if (!env.ODDKIT_TELEMETRY) return;
@@ -258,6 +267,8 @@ export function recordTelemetry(
   const bytesOut = shape?.bytes_out ?? 0;
   const tokensIn = shape?.tokens_in ?? 0;
   const tokensOut = shape?.tokens_out ?? 0;
+  const cacheHits = cacheStats?.hits ?? 0;
+  const cacheLookups = cacheStats?.total ?? 0;
 
   for (const payload of messages) {
     const { label: consumerLabel, source: consumerSource } = parseConsumerLabel(
@@ -286,7 +297,9 @@ export function recordTelemetry(
         toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
         documentUri,
         env.ODDKIT_VERSION || BUILD_VERSION,
-        cacheTier || "none", // blob9: E0008.1 x-ray cache tier
+        // blob9 retired (was cache_tier). Slot stays free per the
+        // "no deprecation, nobody uses them yet" rule. Cache effectiveness
+        // moved to double7/double8.
       ],
       doubles: [
         1,                // double1: count
@@ -295,6 +308,8 @@ export function recordTelemetry(
         bytesOut,         // double4: bytes_out
         tokensIn,         // double5: tokens_in
         tokensOut,        // double6: tokens_out
+        cacheHits,        // double7: cache_hits
+        cacheLookups,     // double8: cache_lookups
       ],
       indexes: [consumerLabel],
     });
@@ -339,7 +354,9 @@ const BASELINE_BLOB_SEMANTIC_NAMES = [
   "knowledge_base_url", // blob6
   "document_uri",     // blob7
   "worker_version",   // blob8
-  "cache_tier",       // blob9
+  // blob9 retired (was cache_tier). Slot stays free per the
+  // "no deprecation, nobody uses them yet" rule. Hit-rate moved to
+  // double7/double8.
 ] as const;
 
 /**
@@ -348,12 +365,14 @@ const BASELINE_BLOB_SEMANTIC_NAMES = [
  * which are parseable at runtime. Baseline is the safety net.
  */
 const BASELINE_DOUBLE_SEMANTIC_NAMES = [
-  "count",       // double1
-  "duration_ms", // double2
-  "bytes_in",    // double3
-  "bytes_out",   // double4
-  "tokens_in",   // double5
-  "tokens_out",  // double6
+  "count",         // double1
+  "duration_ms",   // double2
+  "bytes_in",      // double3
+  "bytes_out",     // double4
+  "tokens_in",     // double5
+  "tokens_out",    // double6
+  "cache_hits",    // double7
+  "cache_lookups", // double8
 ] as const;
 
 /** Build a SchemaMap from ordered blob/double name arrays. Exported for unit testing. */

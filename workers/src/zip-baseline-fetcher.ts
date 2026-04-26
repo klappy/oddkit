@@ -21,7 +21,7 @@
  */
 
 import { unzipSync } from "fflate";
-import { RequestTracer, shortKey } from "./tracing";
+import { RequestTracer } from "./tracing";
 
 // Index schema version — included in cache key so that code changes
 // to the indexing pipeline (filters, fields, scoring) invalidate stale indexes.
@@ -513,12 +513,24 @@ export class KnowledgeBaseFetcher {
       const hit = await c.match(this.cacheRequest(key));
       if (hit) {
         const text = await hit.text();
-        this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "cache");
+        this.tracer?.recordFetch({
+          url: `cf-cache://${key}`,
+          duration_ms: performance.now() - start,
+          cached: true,
+        });
         return JSON.parse(text) as T;
       }
-      this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "miss");
+      this.tracer?.recordFetch({
+        url: `cf-cache://${key}`,
+        duration_ms: performance.now() - start,
+        cached: false,
+      });
     } catch {
-      this.tracer?.addSpan(`cache:${shortKey(key)}`, performance.now() - start, "miss", "error");
+      this.tracer?.recordFetch({
+        url: `cf-cache://${key}`,
+        duration_ms: performance.now() - start,
+        cached: false,
+      });
     }
     return null;
   }
@@ -670,7 +682,7 @@ export class KnowledgeBaseFetcher {
 
     // Check memory cache first (unless skipping cache)
     if (!skipCache && this.zipCache.has(cacheKey)) {
-      this.tracer?.addSpan("zip", 0, "memory");
+      this.tracer?.recordFetch({ url: `memory://${cacheKey}`, duration_ms: 0, cached: true });
       return this.zipCache.get(cacheKey)!;
     }
 
@@ -680,11 +692,20 @@ export class KnowledgeBaseFetcher {
       const r2Object = await this.env.BASELINE.get(cacheKey);
       if (r2Object) {
         const data = new Uint8Array(await r2Object.arrayBuffer());
-        this.tracer?.addSpan("zip", performance.now() - r2Start, "r2");
+        this.tracer?.recordFetch({
+          url: `r2://${cacheKey}`,
+          duration_ms: performance.now() - r2Start,
+          cached: true,
+          size: data.length,
+        });
         this.zipCache.set(cacheKey, data);
         return data;
       }
-      this.tracer?.addSpan("zip-r2", performance.now() - r2Start, "miss");
+      this.tracer?.recordFetch({
+        url: `r2://${cacheKey}`,
+        duration_ms: performance.now() - r2Start,
+        cached: false,
+      });
     }
 
     // Fetch from GitHub
@@ -696,13 +717,23 @@ export class KnowledgeBaseFetcher {
 
       if (!response.ok) {
         console.error(`Failed to fetch ZIP: ${response.status} ${url}`);
-        this.tracer?.addSpan("zip", performance.now() - ghStart, "github", `${response.status}`);
+        this.tracer?.recordFetch({
+          url,
+          duration_ms: performance.now() - ghStart,
+          cached: false,
+          status: response.status,
+        });
         return null;
       }
 
       const data = new Uint8Array(await response.arrayBuffer());
-      this.tracer?.addSpan("zip", performance.now() - ghStart, "github",
-        `${(data.length / 1024).toFixed(0)}KB`);
+      this.tracer?.recordFetch({
+        url,
+        duration_ms: performance.now() - ghStart,
+        cached: false,
+        status: response.status,
+        size: data.length,
+      });
 
       // Cache in R2 (no TTL — content-addressed by SHA at the index/file layer)
       if (this.env.BASELINE) {
@@ -856,7 +887,7 @@ export class KnowledgeBaseFetcher {
     // Step 0: Module-level memory cache (0ms, 5-min TTL)
     const expectedKey = `v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}`;
     if (cachedIndex && cachedIndexKey === expectedKey && Date.now() - indexCachedAt < MODULE_CACHE_TTL_MS) {
-      this.tracer?.addSpan("index", 0, "memory");
+      this.tracer?.recordFetch({ url: `memory://index/${expectedKey}`, duration_ms: 0, cached: true });
       return cachedIndex;
     }
 
@@ -869,8 +900,8 @@ export class KnowledgeBaseFetcher {
     const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
     const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}_${shaKey}`;
 
-    // Step 2: Cache API (~1ms edge read)
-    const cacheStart = performance.now();
+    // Step 2: Cache API (~1ms edge read) — cacheGet records the cf-cache:// fetch.
+    // We do NOT add a duplicate "index" span here; one I/O = one fetch record.
     const cacheHit = await this.cacheGet<BaselineIndex>(cacheKey);
     if (cacheHit) {
       // Verify SHAs match (Cache API doesn't have KV's eventual consistency issue,
@@ -878,7 +909,6 @@ export class KnowledgeBaseFetcher {
       const baselineShaMatch = !baselineSha || cacheHit.commit_sha === baselineSha;
       const canonShaMatch = !canonSha || cacheHit.canon_commit_sha === canonSha;
       if (baselineShaMatch && canonShaMatch) {
-        this.tracer?.addSpan("index", performance.now() - cacheStart, "cache");
         // Populate module cache
         cachedIndex = cacheHit;
         cachedIndexKey = expectedKey;
@@ -895,7 +925,12 @@ export class KnowledgeBaseFetcher {
         try {
           const text = await r2Object.text();
           const r2Index = JSON.parse(text) as BaselineIndex;
-          this.tracer?.addSpan("index", performance.now() - r2Start, "r2");
+          this.tracer?.recordFetch({
+            url: `r2://${cacheKey}`,
+            duration_ms: performance.now() - r2Start,
+            cached: true,
+            size: text.length,
+          });
 
           // Populate upstream caches
           cachedIndex = r2Index;
@@ -905,10 +940,18 @@ export class KnowledgeBaseFetcher {
 
           return r2Index;
         } catch {
-          this.tracer?.addSpan("index", performance.now() - r2Start, "r2", "parse-error");
+          this.tracer?.recordFetch({
+            url: `r2://${cacheKey}`,
+            duration_ms: performance.now() - r2Start,
+            cached: false,
+          });
         }
       } else {
-        this.tracer?.addSpan("index-r2", performance.now() - r2Start, "miss");
+        this.tracer?.recordFetch({
+          url: `r2://${cacheKey}`,
+          duration_ms: performance.now() - r2Start,
+          cached: false,
+        });
       }
     }
 
@@ -948,8 +991,11 @@ export class KnowledgeBaseFetcher {
       canon_commit_sha: canonSha || undefined,
     };
 
-    this.tracer?.addSpan("index-build", performance.now() - buildStart, "build",
-      `${allEntries.length} entries`);
+    this.tracer?.recordFetch({
+      url: `build://index/${expectedKey}`,
+      duration_ms: performance.now() - buildStart,
+      cached: false,
+    });
 
     // Persist to R2 + Cache API (no KV)
     if (this.env.BASELINE) {
@@ -1028,7 +1074,7 @@ export class KnowledgeBaseFetcher {
       // Tier 0: Module-level file cache (0ms)
       const moduleCached = fileCache.get(cacheKey);
       if (moduleCached && Date.now() - moduleCached.cachedAt < MODULE_CACHE_TTL_MS) {
-        this.tracer?.addSpan(`file:${path}`, 0, "memory");
+        this.tracer?.recordFetch({ url: `memory://${path}`, duration_ms: 0, cached: true });
         return moduleCached.content;
       }
 
@@ -1038,7 +1084,12 @@ export class KnowledgeBaseFetcher {
         const r2Object = await this.env.BASELINE.get(cacheKey);
         if (r2Object) {
           const content = await r2Object.text();
-          this.tracer?.addSpan(`file:${path}`, performance.now() - r2Start, "r2");
+          this.tracer?.recordFetch({
+            url: `r2://${path}`,
+            duration_ms: performance.now() - r2Start,
+            cached: true,
+            size: content.length,
+          });
 
           // Populate module cache
           if (fileCache.size >= MAX_FILE_CACHE_ENTRIES) evictExpiredFileCache();
@@ -1047,7 +1098,11 @@ export class KnowledgeBaseFetcher {
           }
           return content;
         }
-        this.tracer?.addSpan(`file-r2:${path}`, performance.now() - r2Start, "miss");
+        this.tracer?.recordFetch({
+          url: `r2://${path}`,
+          duration_ms: performance.now() - r2Start,
+          cached: false,
+        });
       }
 
       // Tier 2: Extract from ZIP
@@ -1067,7 +1122,12 @@ export class KnowledgeBaseFetcher {
 
           if (repoPath === path) {
             const content = new TextDecoder().decode(fileData);
-            this.tracer?.addSpan(`file:${path}`, performance.now() - zipStart, "build", "zip-extract");
+            this.tracer?.recordFetch({
+              url: `build://${path}`,
+              duration_ms: performance.now() - zipStart,
+              cached: false,
+              size: content.length,
+            });
 
             // Persist to R2 (no TTL — content-addressed)
             if (this.env.BASELINE) {
