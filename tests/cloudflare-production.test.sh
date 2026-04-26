@@ -405,6 +405,63 @@ RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
 RESULT=$(extract_json "$RAW")
 check_json "oddkit_catalog" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
 
+# Test 14g: oddkit_resolve — direct hit (FOUND, no supersession)
+# Per klappy://docs/oddkit/specs/oddkit-resolve. Walks superseded_by chains
+# transparently. URI input only in v1 (no meaning queries — see deferred ledger).
+echo ""
+echo "Test 14g: tools/call oddkit_resolve (direct hit)"
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_resolve","arguments":{"input":"klappy://canon/values/orientation"}}}')
+RESULT=$(extract_json "$RAW")
+check_json "oddkit_resolve direct hit" "$RESULT" "assert 'content' in d.get('result',{}), 'no content'"
+INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
+if echo "$INNER" | python3 -c "import sys, json; d=json.load(sys.stdin); r=d.get('result',{}); assert r.get('status')=='FOUND', f'status={r.get(\"status\")}'; assert r.get('resolved',{}).get('uri'), 'missing resolved.uri'" 2>/dev/null; then
+  echo "PASS - resolve direct hit returns FOUND with resolved.uri"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - resolve direct hit shape unexpected"
+  echo "  Inner: $(echo "$INNER" | head -c 400)"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 14h: oddkit_resolve — NOT_FOUND
+echo ""
+echo "Test 14h: tools/call oddkit_resolve (NOT_FOUND)"
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_resolve","arguments":{"input":"klappy://writings/this-uri-does-not-exist-anywhere-9f8a7b6c"}}}')
+RESULT=$(extract_json "$RAW")
+INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
+if echo "$INNER" | python3 -c "import sys, json; d=json.load(sys.stdin); r=d.get('result',{}); assert r.get('status')=='NOT_FOUND', f'status={r.get(\"status\")}'" 2>/dev/null; then
+  echo "PASS - resolve NOT_FOUND for unknown URI"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - resolve NOT_FOUND not produced"
+  echo "  Inner: $(echo "$INNER" | head -c 400)"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 14i: oddkit_resolve — INVALID_INPUT for non-klappy:// scheme
+echo ""
+echo "Test 14i: tools/call oddkit_resolve (INVALID_INPUT)"
+RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_resolve","arguments":{"input":"https://example.com/foo"}}}')
+RESULT=$(extract_json "$RAW")
+INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
+if echo "$INNER" | python3 -c "import sys, json; d=json.load(sys.stdin); r=d.get('result',{}); assert r.get('status')=='INVALID_INPUT', f'status={r.get(\"status\")}'" 2>/dev/null; then
+  echo "PASS - resolve INVALID_INPUT for non-klappy:// URI"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - resolve INVALID_INPUT not produced"
+  echo "  Inner: $(echo "$INNER" | head -c 400)"
+  FAILED=$((FAILED + 1))
+fi
+
 # ============================================
 # SECTION 4: Response Content Validation
 # ============================================
