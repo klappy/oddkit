@@ -456,6 +456,16 @@ async function getSchemaMap(env: Env): Promise<SchemaMap> {
 const RAW_SLOT_PATTERN = /\b(blob[1-9]|double[1-9])\b/gi;
 
 /**
+ * Escape regex metacharacters in a string so it can be safely interpolated
+ * into a `new RegExp(...)` pattern. Used for canon-derived semantic names,
+ * which are sourced from a maintainer-controlled markdown table but could
+ * in principle contain characters like `.` that have special regex meaning.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Reject queries that contain raw slot names (blob1..9 / double1..6).
  * Returns an error message string, or null if the query is clean.
  *
@@ -522,7 +532,10 @@ export function rewriteSqlToRaw(sql: string, schemaMap: SchemaMap): string {
     for (const [semantic, raw] of entries) {
       // \b word-boundary anchors prevent partial matches inside longer identifiers.
       // Negative lookahead (?!\s*\() skips function-call positions (e.g. count(*)).
-      const pattern = new RegExp(`\\b${semantic}\\b(?!\\s*\\()`, "g");
+      const pattern = new RegExp(
+        `\\b${escapeRegExp(semantic)}\\b(?!\\s*\\()`,
+        "g",
+      );
       out = out.replace(pattern, raw);
     }
     return out;
