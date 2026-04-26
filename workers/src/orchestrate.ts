@@ -1956,13 +1956,11 @@ async function runAudit(
       // Reset link-finder regex state per line
       MARKDOWN_LINK_RE.lastIndex = 0;
       let linkMatch: RegExpExecArray | null;
-      let lineHadFinding = false;
       while ((linkMatch = MARKDOWN_LINK_RE.exec(line)) !== null) {
         const target = linkMatch[2];
 
         const finding = classifyLink(target, path, lineIdx + 1, isWriting, uriResolves);
         if (!finding) continue;
-        lineHadFinding = true;
 
         // Apply pending suppression if the rule matches
         if (pendingSuppress && pendingSuppress.rule === finding.rule_id) {
@@ -1979,16 +1977,6 @@ async function runAudit(
           truncated = true;
           break;
         }
-      }
-
-      // If the directive sat on an earlier line and we've now seen a
-      // finding-producing link on a later line that wasn't a matching
-      // rule, drop the pending suppression so it doesn't apply to an
-      // unrelated link. Out-of-scope links (external URLs, anchors,
-      // resolvable klappy:// URIs) produce no finding and must not
-      // expire the directive.
-      if (pendingSuppress && pendingSuppress.lineSeen < lineIdx + 1 && lineHadFinding) {
-        pendingSuppress = null;
       }
     }
   }
