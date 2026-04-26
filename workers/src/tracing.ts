@@ -156,9 +156,4 @@ export class RequestTracer {
   get spanCount(): number {
     return this.spans.length;
   }
-
-  /** Number of recorded fetches. */
-  get fetchCount(): number {
-    return this.fetches.length;
-  }
 }
