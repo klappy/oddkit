@@ -162,13 +162,3 @@ export class RequestTracer {
     return this.fetches.length;
   }
 }
-
-/** Shorten a cache/storage key for readable trace output. */
-export function shortKey(key: string): string {
-  const parts = key.split("/");
-  if (parts.length <= 2) return key;
-  const mid = parts.slice(1, -1).map((p) => (p.length > 10 ? p.slice(0, 10) + "…" : p)).join("/");
-  const last = parts[parts.length - 1]!;
-  const shortLast = last.length > 12 ? last.slice(0, 12) + "…" : last;
-  return `${parts[0]}/${mid}/${shortLast}`;
-}
