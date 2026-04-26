@@ -978,7 +978,15 @@ export default {
       // response. The helper handles clone failures safely.
       if (telemetryClone) {
         const durationMs = Date.now() - startTime;
-        const cacheTier = tracer.indexSource;
+        // NOTE: Do NOT read tracer.indexSource here. The MCP handler returns
+        // a streaming Response — `await handler(...)` resolves with the
+        // Response object before the tool handler closure has finished
+        // running, so the tracer has not yet recorded the `index` span at
+        // this point. Reading here yields "none" for every tool. The tracer
+        // is only fully populated once the response body has been consumed
+        // (which forces the streaming tool handler to complete). The read
+        // therefore happens inside the waitUntil callback below, after
+        // `await responseClone.text()` resolves.
         // Clone the response synchronously before returning so the body is
         // still available to read inside the deferred waitUntil callback.
         const responseClone = response.clone();
@@ -997,6 +1005,13 @@ export default {
               } catch {
                 // Fall through with empty string; bytes_out / tokens_out will be 0.
               }
+              // Read tracer.indexSource AFTER the response body has been
+              // consumed. By this point the streaming tool handler has
+              // completed and any "index" / "index-build" spans have been
+              // recorded. Reading earlier (e.g. immediately after `await
+              // handler()` returned) was the streaming-race bug that caused
+              // every tool call to record cache_tier="none" in production.
+              const cacheTier = tracer.indexSource;
               const shape = await measurePayloadShape(requestText, responseText);
               recordTelemetry(request, requestText, env, durationMs, cacheTier, shape);
             } catch {
