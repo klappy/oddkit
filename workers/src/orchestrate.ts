@@ -1860,28 +1860,14 @@ async function runAudit(
     if (entry.path) byPath.set(entry.path, entry);
   }
 
-  function uriExists(ref: string): boolean {
-    if (byUri.has(ref)) return true;
-    // Same shape-tolerance as runResolve: path with .md, path without
-    if (!ref.startsWith("klappy://")) {
-      if (byPath.has(ref)) return true;
-      if (!ref.endsWith(".md") && byPath.has(ref + ".md")) return true;
-      const stem = ref.endsWith(".md") ? ref.slice(0, -".md".length) : ref;
-      if (byUri.has("klappy://" + stem)) return true;
-    }
-    return false;
-  }
-
   // Walk a klappy:// URI through any superseded_by chain to a terminus,
   // matching runResolve's algorithm. Returns true iff the chain reaches
   // a stable terminus (FOUND); false on NOT_FOUND or CIRCULAR_SUPERSESSION.
+  // Only invoked from classifyLink with klappy:// URIs, so an absent entry
+  // is a definitive NOT_FOUND.
   function uriResolves(uri: string): boolean {
     const start = byUri.get(uri);
-    if (!start) {
-      // Not directly in index — give the same shape-tolerance as runResolve
-      if (uri.startsWith("klappy://")) return false;
-      return uriExists(uri);
-    }
+    if (!start) return false;
     let current: IndexEntry = start;
     const visited = new Set<string>([current.uri]);
     for (let depth = 0; depth < 16; depth++) {
@@ -1908,7 +1894,14 @@ async function runAudit(
       visited.add(nextCanonical);
       current = nextEntry;
     }
-    return false; // depth-cap = treated as circular
+    // Depth-cap exhausted — match runResolve: only circular if the last
+    // entry still declares a further successor. Otherwise the chain
+    // properly terminates and the URI resolves.
+    const finalFm = current.frontmatter || {};
+    if (typeof finalFm.superseded_by === "string" && finalFm.superseded_by.length > 0) {
+      return false;
+    }
+    return true;
   }
 
   // Filter the index to markdown files within the configured scope.
@@ -1963,13 +1956,13 @@ async function runAudit(
       // Reset link-finder regex state per line
       MARKDOWN_LINK_RE.lastIndex = 0;
       let linkMatch: RegExpExecArray | null;
-      let lineHadLink = false;
+      let lineHadFinding = false;
       while ((linkMatch = MARKDOWN_LINK_RE.exec(line)) !== null) {
-        lineHadLink = true;
         const target = linkMatch[2];
 
         const finding = classifyLink(target, path, lineIdx + 1, isWriting, uriResolves);
         if (!finding) continue;
+        lineHadFinding = true;
 
         // Apply pending suppression if the rule matches
         if (pendingSuppress && pendingSuppress.rule === finding.rule_id) {
@@ -1988,12 +1981,13 @@ async function runAudit(
         }
       }
 
-      // If the directive sat on an earlier line and we've now seen a link
-      // on a later line that wasn't a matching finding, drop the pending
-      // suppression so it doesn't apply to an unrelated link. Blank lines
-      // and prose between the directive and the targeted link must not
-      // expire the suppression.
-      if (pendingSuppress && pendingSuppress.lineSeen < lineIdx + 1 && lineHadLink) {
+      // If the directive sat on an earlier line and we've now seen a
+      // finding-producing link on a later line that wasn't a matching
+      // rule, drop the pending suppression so it doesn't apply to an
+      // unrelated link. Out-of-scope links (external URLs, anchors,
+      // resolvable klappy:// URIs) produce no finding and must not
+      // expire the directive.
+      if (pendingSuppress && pendingSuppress.lineSeen < lineIdx + 1 && lineHadFinding) {
         pendingSuppress = null;
       }
     }

@@ -416,9 +416,19 @@ Use when:
       tool.schema,
       tool.annotations,
       async (args: Record<string, unknown>) => {
+        // Most tools declare `input` as a string, but oddkit_audit accepts
+        // an object scope as well. Normalize objects to a JSON string so
+        // the UnifiedParams.input: string contract holds for every action.
+        const rawInput = args.input;
+        const normalizedInput =
+          typeof rawInput === "string"
+            ? rawInput
+            : rawInput && typeof rawInput === "object"
+              ? JSON.stringify(rawInput)
+              : "";
         const result = await handleUnifiedAction({
           action: tool.action,
-          input: (args.input as string) || "",
+          input: normalizedInput,
           context: args.context as string | undefined,
           mode: args.mode as string | undefined,
           knowledge_base_url: args.knowledge_base_url as string | undefined,
