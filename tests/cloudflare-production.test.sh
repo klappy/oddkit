@@ -464,7 +464,8 @@ echo "Test 14h: tools/call oddkit_resolve (NOT_FOUND)"
 RAW=$(curl -sf --max-time 30 "$WORKER_URL/mcp" -X POST \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_resolve","arguments":{"input":"klappy://writings/this-uri-does-not-exist-anywhere-9f8a7b6c"}}}')RESULT=$(extract_json "$RAW")
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_resolve","arguments":{"input":"klappy://writings/this-uri-does-not-exist-anywhere-9f8a7b6c"}}}')
+RESULT=$(extract_json "$RAW")
 INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
 if echo "$INNER" | python3 -c "import sys, json; d=json.load(sys.stdin); r=d.get('result',{}); assert r.get('status')=='NOT_FOUND', f'status={r.get(\"status\")}'" 2>/dev/null; then
   echo "PASS - resolve NOT_FOUND for unknown URI"
