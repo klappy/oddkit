@@ -392,6 +392,97 @@ await test("rewriteSqlToRaw: count() SQL aggregate is not rewritten to double1()
   assert.ok(rewritten3.includes("SUM(double1)"), "count as column reference should still rewrite to double1");
 });
 
+await test("rewriteSqlToRaw: semantic names inside single-quoted literals are preserved", async () => {
+  // Word-boundary regex without literal-skipping would corrupt filter values
+  // because `-`, `/`, and `'` are non-word characters that form `\b` boundaries.
+  // A query like WHERE document_uri = 'klappy://sources/scientific-method' would
+  // have `method` rewritten to `blob2` *inside the literal*, silently breaking
+  // the filter. The fix splits SQL into non-literal and single-quoted segments
+  // and only rewrites non-literal portions.
+  const sql = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'klappy://sources/scientific-method'";
+  const rewritten = rewriteSqlToRaw(sql, testMap);
+  assert.ok(
+    rewritten.includes("'klappy://sources/scientific-method'"),
+    "literal value with `method` substring must be preserved verbatim",
+  );
+  assert.ok(
+    !rewritten.includes("scientific-blob2"),
+    "method must not be rewritten inside the literal",
+  );
+  // Column references outside the literal still rewrite correctly
+  assert.ok(rewritten.includes("blob3"), "tool_name column reference still rewrites to blob3");
+  assert.ok(rewritten.includes("blob7"), "document_uri column reference still rewrites to blob7");
+
+  // SQL doubled-quote escape ('') must not terminate the literal prematurely.
+  // The literal here is: it''s a method — single string with one apostrophe.
+  // Naive splitting would treat the first '' as end-of-literal-then-start, exposing
+  // ` a method ` to rewriting and producing ` a blob2 `.
+  const sql2 = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'it''s a method'";
+  const rewritten2 = rewriteSqlToRaw(sql2, testMap);
+  assert.ok(
+    rewritten2.includes("'it''s a method'"),
+    "doubled-quote escape must keep `method` inside the literal preserved",
+  );
+  assert.ok(
+    !rewritten2.includes("a blob2"),
+    "method inside escaped-quote literal must not become blob2",
+  );
+
+  // A semantic name BOTH inside and outside a literal: only the outside one rewrites
+  const sql3 = "SELECT method FROM oddkit_telemetry WHERE document_uri = 'log/method/handler'";
+  const rewritten3 = rewriteSqlToRaw(sql3, testMap);
+  assert.ok(rewritten3.startsWith("SELECT blob2"), "method as column ref rewrites to blob2");
+  assert.ok(
+    rewritten3.includes("'log/method/handler'"),
+    "method inside literal stays as method",
+  );
+});
+
+await test("detectRawSlotNames: raw slot names inside literals do not trigger rejection", async () => {
+  // detectRawSlotNames previously matched RAW_SLOT_PATTERN against the entire
+  // SQL string including literals, while rewriteSqlToRaw skipped literals. The
+  // inconsistency caused valid semantic queries with raw-slot-shaped substrings
+  // in user-supplied filter values to be falsely rejected. The fix strips
+  // literals before scanning, matching the rewrite scoping.
+  const sql = "SELECT tool_name FROM oddkit_telemetry WHERE knowledge_base_url = 'https://example.com/blob1/readme'";
+  const result = detectRawSlotNames(sql, testMap);
+  assert.equal(
+    result,
+    null,
+    "blob1 inside a literal must not trigger rejection",
+  );
+
+  // Same for double-shaped slot names inside literals
+  const sql2 = "SELECT tool_name FROM oddkit_telemetry WHERE document_uri = 'klappy://reports/double5-summary'";
+  const result2 = detectRawSlotNames(sql2, testMap);
+  assert.equal(
+    result2,
+    null,
+    "double5 inside a literal must not trigger rejection",
+  );
+
+  // Sanity check: raw slot OUTSIDE a literal must STILL be rejected.
+  // This guards against a future refactor that over-strips and lets real
+  // raw-slot references through.
+  const sql3 = "SELECT blob1 FROM oddkit_telemetry WHERE knowledge_base_url = 'https://example.com/safe/path'";
+  const result3 = detectRawSlotNames(sql3, testMap);
+  assert.ok(
+    result3 !== null,
+    "bare blob1 outside any literal must still be rejected",
+  );
+  assert.ok(
+    result3.includes("blob1"),
+    "rejection message names the offending raw slot",
+  );
+
+  // Mixed case: raw slot in a literal AND outside — must be rejected for the outside one
+  const sql4 = "SELECT double5 FROM oddkit_telemetry WHERE document_uri = 'safe-blob1-string'";
+  const result4 = detectRawSlotNames(sql4, testMap);
+  assert.ok(result4 !== null, "raw slot outside literal triggers rejection even when another raw slot is in a literal");
+  assert.ok(result4.includes("double5"), "rejection message names the outside-literal raw slot");
+  assert.ok(!result4.includes("blob1"), "raw slot only inside literal must not be flagged");
+});
+
 await test("rewriteResultToSemantic: renames blob/double columns in meta and data", async () => {
   const rawResult = {
     meta: [
