@@ -349,10 +349,10 @@ Use when:
     },
     {
       name: "oddkit_audit",
-      description: "Walk every klappy:// URI in canon markdown and emit findings for those that don't resolve, plus any legacy markdown link patterns (/page/..., ./*.md) in writings/. Returns structured findings with rule_id, severity, location, occurrence, message. Designed for CI use. Per klappy://docs/oddkit/specs/oddkit-audit (DRAFT v2 — KISS).",
+      description: "Walk every klappy:// URI in markdown files within the configured scope (default: writings/) and emit findings for those that don't resolve, plus any legacy markdown link patterns (/page/..., ./*.md) in writings/. Returns structured findings with rule_id, severity, location, occurrence, message. Designed for CI use. Per klappy://docs/oddkit/specs/oddkit-audit (DRAFT v2.1).",
       action: "audit",
       schema: {
-        input: z.union([z.string(), z.object({}).passthrough()]).optional().describe("Optional scope: { paths: string[], since_commit?: string }. Default scope: writings/, canon/, odd/, docs/ (excluding docs/archive/). Pass as object or JSON string."),
+        input: z.union([z.string(), z.object({}).passthrough()]).optional().describe("Optional scope: { paths: string[], since_commit?: string }. Default scope: writings/ (the actual link-rot pain surface). Wider scope is explicit opt-in via paths. Pass as object or JSON string."),
         knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
