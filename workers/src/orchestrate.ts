@@ -1944,7 +1944,7 @@ async function runAudit(
     const lines = content.split("\n");
     // Track allowlist directives: when one appears, it suppresses the next
     // finding of the matching rule_id on the *next* link (any subsequent line).
-    let pendingSuppress: { rule: string; reason: string | null; lineSeen: number } | null = null;
+    let pendingSuppress: { rule: string; reason: string | null } | null = null;
 
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       if (truncated) break;
@@ -1956,7 +1956,6 @@ async function runAudit(
         pendingSuppress = {
           rule: allowMatch[1],
           reason: allowMatch[2] || null,
-          lineSeen: lineIdx + 1,
         };
         // Don't continue — allowlist directives may sit on a line that also
         // contains a link they are NOT meant to suppress (rare, but possible).
