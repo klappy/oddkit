@@ -193,13 +193,14 @@ async function createServer(env: Env, tracer?: RequestTracer, consumerSource?: s
 
   server.tool(
     "oddkit",
-    `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, resolve, catalog, validate, preflight, version, or cleanup_storage actions.
+    `Epistemic guide for Outcomes-Driven Development. Routes to orient, challenge, gate, encode, search, get, resolve, audit, catalog, validate, preflight, version, or cleanup_storage actions.
 
 Use when:
 - Starting work: action="orient" to assess epistemic mode
 - Policy/canon questions: action="search" with your query
 - Fetching a specific doc: action="get" with URI
 - Resolving a URI to its current canonical answer (walks supersession): action="resolve" with URI
+- Auditing canon for dead references and legacy link patterns: action="audit" (CI use)
 - Pressure-testing claims: action="challenge"
 - Checking transition readiness: action="gate"
 - Recording decisions: action="encode"
@@ -208,7 +209,7 @@ Use when:
 - Listing available docs: action="catalog"`,
     {
       action: z.enum([
-        "orient", "challenge", "gate", "encode", "search", "get", "resolve",
+        "orient", "challenge", "gate", "encode", "search", "get", "resolve", "audit",
         "catalog", "validate", "preflight", "version", "cleanup_storage",
       ]).describe("Which epistemic action to perform."),
       input: z.string().describe("Primary input — query, claim, URI, goal, or completion claim depending on action."),
@@ -347,6 +348,16 @@ Use when:
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
+      name: "oddkit_audit",
+      description: "Walk every klappy:// URI in canon markdown and emit findings for those that don't resolve, plus any legacy markdown link patterns (/page/..., ./*.md) in writings/. Returns structured findings with rule_id, severity, location, occurrence, message. Designed for CI use. Per klappy://docs/oddkit/specs/oddkit-audit (DRAFT v2 — KISS).",
+      action: "audit",
+      schema: {
+        input: z.union([z.string(), z.object({}).passthrough()]).optional().describe("Optional scope: { paths: string[], since_commit?: string }. Default scope: writings/, canon/, odd/, docs/ (excluding docs/archive/). Pass as object or JSON string."),
+        knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
       name: "oddkit_catalog",
       description: "Lists available documentation with categories, counts, and start-here suggestions. Supports temporal discovery: use sort_by='date' to get recent articles with full frontmatter metadata.",
       action: "catalog",
@@ -405,9 +416,19 @@ Use when:
       tool.schema,
       tool.annotations,
       async (args: Record<string, unknown>) => {
+        // Most tools declare `input` as a string, but oddkit_audit accepts
+        // an object scope as well. Normalize objects to a JSON string so
+        // the UnifiedParams.input: string contract holds for every action.
+        const rawInput = args.input;
+        const normalizedInput =
+          typeof rawInput === "string"
+            ? rawInput
+            : rawInput && typeof rawInput === "object"
+              ? JSON.stringify(rawInput)
+              : "";
         const result = await handleUnifiedAction({
           action: tool.action,
-          input: (args.input as string) || "",
+          input: normalizedInput,
           context: args.context as string | undefined,
           mode: args.mode as string | undefined,
           knowledge_base_url: args.knowledge_base_url as string | undefined,
