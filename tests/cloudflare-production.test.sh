@@ -494,6 +494,64 @@ else
   FAILED=$((FAILED + 1))
 fi
 
+# Test 14j: oddkit_audit — basic invocation, returns OK or FINDINGS
+# Per klappy://docs/oddkit/specs/oddkit-audit. Walks every klappy:// URI in canon
+# markdown and emits findings for those that don't resolve, plus legacy markdown
+# link patterns in writings/.
+echo ""
+echo "Test 14j: tools/call oddkit_audit (default scope)"
+RAW=$(curl -sf --max-time 120 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_audit","arguments":{}}}')
+RESULT=$(extract_json "$RAW")
+INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
+if echo "$INNER" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+r = d.get('result', {})
+status = r.get('status')
+assert status in ('OK', 'FINDINGS'), f'unexpected status: {status}'
+summary = r.get('summary', {})
+assert 'total_findings' in summary, 'missing summary.total_findings'
+assert 'by_severity' in summary, 'missing summary.by_severity'
+assert summary.get('files_scanned', 0) > 10, f'suspiciously few files scanned: {summary.get(\"files_scanned\")}'
+" 2>/dev/null; then
+  echo "PASS - audit returns OK or FINDINGS with valid summary"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - audit response shape unexpected"
+  echo "  Inner: $(echo "$INNER" | head -c 600)"
+  FAILED=$((FAILED + 1))
+fi
+
+# Test 14k: oddkit_audit — narrow scope (single path)
+echo ""
+echo "Test 14k: tools/call oddkit_audit (narrow scope: writings/ only)"
+RAW=$(curl -sf --max-time 120 "$WORKER_URL/mcp" -X POST \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oddkit_audit","arguments":{"input":{"scope":{"paths":["writings/"]}}}}}')
+RESULT=$(extract_json "$RAW")
+INNER=$(echo "$RESULT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result',{}).get('content',[{}])[0].get('text',''))" 2>/dev/null)
+if echo "$INNER" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+r = d.get('result', {})
+scope = r.get('scope', {})
+paths = scope.get('paths', [])
+assert paths == ['writings/'], f'scope echoed back unexpectedly: {paths}'
+status = r.get('status')
+assert status in ('OK', 'FINDINGS'), f'unexpected status: {status}'
+" 2>/dev/null; then
+  echo "PASS - audit honors narrow scope"
+  PASSED=$((PASSED + 1))
+else
+  echo "FAIL - audit narrow scope shape unexpected"
+  echo "  Inner: $(echo "$INNER" | head -c 600)"
+  FAILED=$((FAILED + 1))
+fi
+
 # ============================================
 # SECTION 4: Response Content Validation
 # ============================================

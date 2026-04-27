@@ -1775,6 +1775,313 @@ function deriveUrl(uri: string): string {
   return "/" + uri.slice("klappy://".length);
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// runAudit — mechanical detection of dead klappy:// references and legacy
+// markdown link patterns.
+//
+// Per klappy://docs/oddkit/specs/oddkit-audit (DRAFT v2 — KISS): walk every
+// `klappy://` URI in canon, call resolve internally on each, report findings.
+// Plus one additional rule: legacy markdown patterns `/page/...` and
+// `./*.md` in writings/ are emitted as `legacy-link-pattern` errors.
+//
+// One check, two rule_ids. Other audit checks (terminological-drift,
+// projection-staleness, epoch-gap) are deferred per
+// klappy://docs/planning/link-rot-deferred-concerns.
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface AuditFinding {
+  rule_id: "dead-reference" | "legacy-link-pattern";
+  severity: "error" | "warning";
+  location: { path: string; line: number };
+  occurrence: string;
+  message: string;
+  suppression_reason?: string;
+}
+
+interface AuditScope {
+  paths?: string[];
+  // since_commit is part of the spec but not implementable from the worker without
+  // git access. CI workflows can pass file lists via paths instead. Documented in
+  // the action's input schema; ignored here for v1.
+  since_commit?: string;
+}
+
+// Default scope is writings/ only — the actual link-rot pain surface that
+// motivated this campaign. PR-2.2 cleanup was writings-only; the April-9
+// audit classified non-writings broken refs as intentional. Authors who
+// need to audit canon/, odd/, or docs/ can pass scope.paths explicitly.
+//
+// Spec deviation from oddkit-audit DRAFT v2 (which named full-repo default
+// excluding docs/archive/): cold-cache fetching ~560 files exceeded the
+// 120s curl budget on CF Preview test 14j. v1 ships the smaller default;
+// when parallelized fetching lands or a real consumer demonstrates pain,
+// the default broadens. Spec amended to match.
+const DEFAULT_AUDIT_PATHS = ["writings/"];
+const AUDIT_EXCLUDE_PREFIXES = ["docs/archive/"];
+const MAX_AUDIT_FILES = 1000;
+const MAX_AUDIT_FINDINGS = 500;
+
+// Match [label](target) — non-greedy label, balanced-paren-naive target (good
+// enough for the link forms canon uses; nested parens in URIs are rare and
+// handled by simply taking up to the first `)`).
+const MARKDOWN_LINK_RE = /\[([^\]]*?)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+// Match the line-level allowlist directive. Captures: rule_id, optional reason.
+//   <!-- audit-allow: dead-reference reason="placeholder" -->
+const AUDIT_ALLOW_RE = /<!--\s*audit-allow:\s*([a-z-]+)(?:\s+reason="([^"]*)")?\s*-->/;
+
+async function runAudit(
+  input: AuditScope | string | undefined,
+  fetcher: KnowledgeBaseFetcher,
+  knowledgeBaseUrl?: string,
+  state?: OddkitState,
+): Promise<ActionResult> {
+  const startMs = Date.now();
+  const updatedState = state ? initState(state) : undefined;
+
+  // Normalize input: accept scope object, JSON string, or undefined (= defaults).
+  let scope: AuditScope = {};
+  if (typeof input === "string" && input.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(input);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        scope = parsed.scope || parsed;
+      }
+    } catch {
+      // Ignore — empty scope is a valid full-default audit
+    }
+  } else if (input && typeof input === "object" && !Array.isArray(input)) {
+    scope = (input as { scope?: AuditScope }).scope || (input as AuditScope);
+  }
+
+  const paths = Array.isArray(scope.paths) && scope.paths.length > 0
+    ? scope.paths
+    : DEFAULT_AUDIT_PATHS;
+
+  const index = await fetcher.getIndex(knowledgeBaseUrl);
+
+  // Build URI lookup for inline resolution. Same logic as runResolve's
+  // lookupSuccessor + initial lookup, but inlined here to avoid the overhead
+  // of constructing full ActionResult envelopes for each URI.
+  const byUri = new Map<string, IndexEntry>();
+  const byPath = new Map<string, IndexEntry>();
+  for (const entry of index.entries) {
+    if (entry.uri) byUri.set(entry.uri, entry);
+    if (entry.path) byPath.set(entry.path, entry);
+  }
+
+  // Walk a klappy:// URI through any superseded_by chain to a terminus,
+  // matching runResolve's algorithm. Returns true iff the chain reaches
+  // a stable terminus (FOUND); false on NOT_FOUND or CIRCULAR_SUPERSESSION.
+  // Only invoked from classifyLink with klappy:// URIs, so an absent entry
+  // is a definitive NOT_FOUND.
+  function uriResolves(uri: string): boolean {
+    const start = byUri.get(uri);
+    if (!start) return false;
+    let current: IndexEntry = start;
+    const visited = new Set<string>([current.uri]);
+    for (let depth = 0; depth < 16; depth++) {
+      const fm = current.frontmatter || {};
+      const next = fm.superseded_by;
+      if (typeof next !== "string" || next.length === 0) return true;
+      // Resolve next via same shape-tolerance as runResolve.lookupSuccessor
+      let nextEntry: IndexEntry | undefined = byUri.get(next) || byPath.get(next);
+      if (!nextEntry && !next.startsWith("klappy://") && !next.endsWith(".md")) {
+        nextEntry = byPath.get(next + ".md");
+      }
+      if (!nextEntry && !next.startsWith("klappy://")) {
+        const stem = next.endsWith(".md") ? next.slice(0, -".md".length) : next;
+        nextEntry = byUri.get("klappy://" + stem);
+      }
+      if (!nextEntry) {
+        // Chain points at unknown successor — runResolve treats this as FOUND
+        // with warning; the audit treats the URI as "resolves" because the
+        // last known entry is a real document.
+        return true;
+      }
+      const nextCanonical = nextEntry.uri;
+      if (visited.has(nextCanonical)) return false; // circular
+      visited.add(nextCanonical);
+      current = nextEntry;
+    }
+    // Depth-cap exhausted — match runResolve: only circular if the last
+    // entry still declares a further successor. Otherwise the chain
+    // properly terminates and the URI resolves.
+    const finalFm = current.frontmatter || {};
+    if (typeof finalFm.superseded_by === "string" && finalFm.superseded_by.length > 0) {
+      return false;
+    }
+    return true;
+  }
+
+  // Filter the index to markdown files within the configured scope.
+  const inScope = (path: string): boolean => {
+    if (!path.endsWith(".md")) return false;
+    if (AUDIT_EXCLUDE_PREFIXES.some((p) => path.startsWith(p))) return false;
+    return paths.some((p) => path.startsWith(p));
+  };
+
+  const targetPaths = index.entries
+    .filter((e) => inScope(e.path))
+    .map((e) => e.path)
+    .slice(0, MAX_AUDIT_FILES);
+
+  const findings: AuditFinding[] = [];
+  const suppressedFindings: AuditFinding[] = [];
+  let truncated = false;
+  let filesScanned = 0;
+
+  for (const path of targetPaths) {
+    if (findings.length >= MAX_AUDIT_FINDINGS) {
+      truncated = true;
+      break;
+    }
+    const content = await fetcher.getFile(path, knowledgeBaseUrl);
+    if (!content) continue;
+    filesScanned++;
+    const isWriting = path.startsWith("writings/");
+
+    const lines = content.split("\n");
+    // Track allowlist directives: when one appears, it suppresses the next
+    // finding of the matching rule_id on the *next* link (any subsequent line).
+    let pendingSuppress: { rule: string; reason: string | null; lineSeen: number } | null = null;
+
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      if (truncated) break;
+      const line = lines[lineIdx];
+
+      // Check for allowlist directive on this line
+      const allowMatch = AUDIT_ALLOW_RE.exec(line);
+      if (allowMatch) {
+        pendingSuppress = {
+          rule: allowMatch[1],
+          reason: allowMatch[2] || null,
+          lineSeen: lineIdx + 1,
+        };
+        // Don't continue — allowlist directives may sit on a line that also
+        // contains a link they are NOT meant to suppress (rare, but possible).
+        // The directive applies to the next link encountered.
+      }
+
+      // Reset link-finder regex state per line
+      MARKDOWN_LINK_RE.lastIndex = 0;
+      let linkMatch: RegExpExecArray | null;
+      while ((linkMatch = MARKDOWN_LINK_RE.exec(line)) !== null) {
+        const target = linkMatch[2];
+
+        const finding = classifyLink(target, path, lineIdx + 1, isWriting, uriResolves);
+        if (!finding) continue;
+
+        // Apply pending suppression if the rule matches
+        if (pendingSuppress && pendingSuppress.rule === finding.rule_id) {
+          if (pendingSuppress.reason) {
+            finding.suppression_reason = pendingSuppress.reason;
+          }
+          suppressedFindings.push(finding);
+          pendingSuppress = null;
+          continue;
+        }
+
+        findings.push(finding);
+        if (findings.length >= MAX_AUDIT_FINDINGS) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+  }
+
+  const errorCount = findings.filter((f) => f.severity === "error").length;
+  const warningCount = findings.filter((f) => f.severity === "warning").length;
+
+  const status: "OK" | "FINDINGS" =
+    findings.length === 0 ? "OK" : "FINDINGS";
+
+  const summaryByRule: Record<string, number> = {};
+  for (const f of findings) {
+    summaryByRule[f.rule_id] = (summaryByRule[f.rule_id] || 0) + 1;
+  }
+
+  return {
+    action: "audit",
+    result: {
+      status,
+      summary: {
+        total_findings: findings.length,
+        by_severity: { error: errorCount, warning: warningCount },
+        by_rule: summaryByRule,
+        files_scanned: filesScanned,
+        suppressed_count: suppressedFindings.length,
+        truncated,
+      },
+      findings,
+      ...(suppressedFindings.length > 0 ? { suppressed_findings: suppressedFindings } : {}),
+      scope: { paths, excluded_prefixes: AUDIT_EXCLUDE_PREFIXES },
+    },
+    state: updatedState,
+    assistant_text:
+      findings.length === 0
+        ? `Audited ${filesScanned} files. No findings.`
+        : `Audited ${filesScanned} files. ${errorCount} error${errorCount === 1 ? "" : "s"}, ${warningCount} warning${warningCount === 1 ? "" : "s"}.${suppressedFindings.length > 0 ? ` ${suppressedFindings.length} suppressed.` : ""}${truncated ? ` Truncated at ${MAX_AUDIT_FINDINGS} findings.` : ""}`,
+    debug: { duration_ms: Date.now() - startMs, generated_at: new Date().toISOString() },
+  };
+}
+
+/**
+ * Classify a single markdown link target.
+ * Returns null when the target is out of scope (external URL, anchor, valid
+ * non-klappy path outside writings) — those are not this action's job.
+ */
+function classifyLink(
+  target: string,
+  filePath: string,
+  line: number,
+  isWriting: boolean,
+  uriResolves: (uri: string) => boolean,
+): AuditFinding | null {
+  // Strip fragment for resolution check
+  const bareTarget = target.split("#")[0];
+  if (!bareTarget) return null; // pure anchor link
+
+  if (bareTarget.startsWith("klappy://")) {
+    if (!uriResolves(bareTarget)) {
+      return {
+        rule_id: "dead-reference",
+        severity: "error",
+        location: { path: filePath, line },
+        occurrence: target,
+        message: "URI does not resolve",
+      };
+    }
+    return null;
+  }
+
+  if (isWriting) {
+    if (bareTarget.startsWith("/page/")) {
+      return {
+        rule_id: "legacy-link-pattern",
+        severity: "error",
+        location: { path: filePath, line },
+        occurrence: target,
+        message: "Use a klappy:// URI instead of /page/ path",
+      };
+    }
+    if (bareTarget.startsWith("./") && bareTarget.endsWith(".md")) {
+      return {
+        rule_id: "legacy-link-pattern",
+        severity: "error",
+        location: { path: filePath, line },
+        occurrence: target,
+        message: "Use a klappy:// URI instead of relative .md path",
+      };
+    }
+  }
+
+  // Out of scope: external URLs, mailto, anchors-only, valid non-klappy paths
+  // outside writings, etc.
+  return null;
+}
+
 async function runCleanupStorage(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
@@ -2935,6 +3242,7 @@ const VALID_ACTIONS = [
   "search",
   "get",
   "resolve",
+  "audit",
   "catalog",
   "validate",
   "preflight",
@@ -2982,6 +3290,9 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         break;
       case "resolve":
         result = await runResolve(input, fetcher, knowledge_base_url, state);
+        break;
+      case "audit":
+        result = await runAudit(input, fetcher, knowledge_base_url, state);
         break;
       case "catalog":
         result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch });
