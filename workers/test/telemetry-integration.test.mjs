@@ -184,8 +184,8 @@ await test("oddkit_time tool call lands a complete telemetry record", async () =
   assert.equal(env.ODDKIT_TELEMETRY.writes.length, 1, "should write 1 data point");
   const point = env.ODDKIT_TELEMETRY.writes[0];
 
-  // Schema shape — blob9 retired, doubles 7 and 8 added
-  assert.equal(point.blobs.length, 8, `blobs should be 8 (blob9 retired), got ${point.blobs.length}`);
+  // Schema shape — blob9 repurposed for result_grouping (#150), doubles 7 and 8 added
+  assert.equal(point.blobs.length, 9, `blobs should be 9 (blob9 = result_grouping), got ${point.blobs.length}`);
   assert.equal(point.doubles.length, 8, `doubles should be 8, got ${point.doubles.length}`);
   assert.equal(point.indexes.length, 1, "indexes should be 1");
 
@@ -306,7 +306,7 @@ const {
 const TEST_BLOB_NAMES = [
   "event_type", "method", "tool_name", "consumer_label", "consumer_source",
   "knowledge_base_url", "document_uri", "worker_version",
-  // blob9 (cache_tier) retired in retire-indexsource-interpreter
+  "result_grouping", // blob9 — repurposed from retired cache_tier (#150)
 ];
 const TEST_DOUBLE_NAMES = [
   "count", "duration_ms", "bytes_in", "bytes_out", "tokens_in", "tokens_out",

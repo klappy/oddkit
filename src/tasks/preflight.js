@@ -158,10 +158,17 @@ function findPitfallDocs(docs, keywords) {
  * @param {string} options.repo - Repository root path
  * @param {string} options.baseline - Baseline override
  * @param {string} options.message - The preflight message (what the agent is about to do)
+ * @param {"merged"|"overlay_first"|"grouped"} [options.result_grouping] - Ranking policy (#150)
  * @returns {Promise<Object>}
  */
 export async function runPreflight(options) {
-  const { repo: repoRoot, baseline: baselineOverride, message } = options;
+  const { repo: repoRoot, baseline: baselineOverride, message, result_grouping } = options;
+  // Mirror the worker's conditional default (#150 validator F-1): when a
+  // baseline override is set, default to overlay_first; otherwise merged.
+  // src/core/actions.js pre-resolves this before delegating, so the public
+  // CLI/MCP paths are unaffected. This handles direct importers of
+  // runPreflight that bypass that pre-resolution.
+  const resolvedGrouping = result_grouping ?? (baselineOverride ? "overlay_first" : "merged");
 
   // Reuse catalog to get start_here, next_up, canon_by_tag, playbooks
   const catalogResult = await runCatalog({
@@ -191,10 +198,29 @@ export async function runPreflight(options) {
   const dod = findDodDoc(docs);
   const pitfalls = findPitfallDocs(docs, keywords);
 
+  // Apply result_grouping to start_here. Mirror of the worker's runPreflight:
+  // overlay_first/grouped reorder the list so overlay (local) entries come
+  // first; "grouped" additionally exposes start_here_overlay/start_here_baseline.
+  // Origin is read from the index (start_here entries don't carry origin themselves).
+  let startHere = catalogResult.start_here;
+  let overlayEntries = null;
+  let baselineEntries = null;
+  if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
+    const originByPath = new Map(docs.map((d) => [d.path, d.origin || "local"]));
+    overlayEntries = [];
+    baselineEntries = [];
+    for (const entry of startHere) {
+      const origin = originByPath.get(entry.path) || "local";
+      if (origin === "local") overlayEntries.push(entry);
+      else baselineEntries.push(entry);
+    }
+    startHere = [...overlayEntries, ...baselineEntries];
+  }
+
   const result = {
     status: "SUPPORTED",
     advisory: false,
-    start_here: catalogResult.start_here,
+    start_here: startHere,
     next_up: catalogResult.next_up,
     canon_by_tag: catalogResult.canon_by_tag,
     playbooks: catalogResult.playbooks,
@@ -212,8 +238,15 @@ export async function runPreflight(options) {
       timestamp: new Date().toISOString(),
       repo_root: repoRoot,
       keywords_extracted: keywords,
+      result_grouping: resolvedGrouping,
     },
   };
+
+  // For "grouped" mode, also expose start_here split by origin (parity with worker).
+  if (resolvedGrouping === "grouped") {
+    result.start_here_overlay = overlayEntries.slice(0, 3).map((e) => e.path);
+    result.start_here_baseline = baselineEntries.slice(0, 3).map((e) => e.path);
+  }
 
   writeLast(result);
   return result;

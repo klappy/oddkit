@@ -225,12 +225,15 @@ let cachedGatePrerequisites: GatePrerequisite[] | null = null;
 let cachedGatePrerequisitesKnowledgeBaseUrl: string | undefined = undefined;
 let cachedGatePrerequisitesSource: "knowledge_base" | "minimal" = "minimal";
 
+export type ResultGrouping = "merged" | "overlay_first" | "grouped";
+
 export interface UnifiedParams {
   action: string;
   input: string;
   context?: string;
   mode?: string;
   knowledge_base_url?: string;
+  result_grouping?: ResultGrouping;
   include_metadata?: boolean;
   section?: string;
   sort_by?: string;
@@ -1321,6 +1324,20 @@ function scoreEntries(entries: IndexEntry[], query: string): Array<IndexEntry & 
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Result grouping — stable partition by source (overlay=canon vs baseline)
+// Preserves BM25 score order within each partition. Single forward pass — no re-sort.
+// ──────────────────────────────────────────────────────────────────────────────
+
+export function partitionBySource<T extends { source: "canon" | "baseline" }>(
+  arr: T[],
+): { overlay: T[]; baseline: T[] } {
+  const overlay: T[] = [];
+  const baseline: T[] = [];
+  for (const h of arr) (h.source === "canon" ? overlay : baseline).push(h);
+  return { overlay, baseline };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Individual action handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1330,11 +1347,21 @@ async function runSearch(
   knowledgeBaseUrl?: string,
   state?: OddkitState,
   includeMetadata?: boolean,
+  resolvedGrouping: ResultGrouping = "merged",
 ): Promise<ActionResult> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const bm25 = getBM25Index(index.entries);
-  const results = searchBM25(bm25, input, 5);
+
+  // Issue #150 fix-forward: when grouping is active, retrieve a wider candidate
+  // pool from BM25 so overlay docs ranked beyond position 5 in raw BM25 are not
+  // truncated before partitioning. With the default 5-result cap, an overlay
+  // doc that scored at position 6 would be invisible even after re-ranking.
+  // 50 candidates is enough headroom for any realistic overlay; the final slice
+  // below caps the response at FINAL_LIMIT.
+  const FINAL_LIMIT = 5;
+  const candidateLimit = resolvedGrouping !== "merged" ? 50 : FINAL_LIMIT;
+  const results = searchBM25(bm25, input, candidateLimit);
 
   // Map scores back to entries
   const entryMap = new Map(index.entries.map((e) => [e.path, e]));
@@ -1346,27 +1373,46 @@ async function runSearch(
     })
     .filter(Boolean) as Array<IndexEntry & { score: number }>;
 
+  // Apply result_grouping partition (overlay_first / grouped re-order;
+  // merged preserves BM25 score order). Single forward pass — no re-sort.
+  // After partitioning the wider candidate pool, truncate to FINAL_LIMIT.
+  let orderedHits = hits.slice(0, FINAL_LIMIT);
+  let isGrouped = false;
+  if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
+    const { overlay, baseline } = partitionBySource(hits);
+    orderedHits = [...overlay, ...baseline].slice(0, FINAL_LIMIT);
+    isGrouped = resolvedGrouping === "grouped";
+  }
+
+  // Compute state from the truncated, returned hits — not the wider candidate
+  // pool — so canon_refs only tracks documents actually shown to the user.
   const updatedState = state
     ? addCanonRefs(
         initState(state),
-        hits.map((h) => h.path),
+        orderedHits.map((h) => h.path),
       )
     : undefined;
 
-  if (hits.length === 0) {
+  if (orderedHits.length === 0) {
+    const noMatchResult: Record<string, unknown> = {
+      status: "NO_MATCH",
+      docs_considered: index.entries.length,
+      hits: [],
+    };
+    if (resolvedGrouping === "grouped") {
+      noMatchResult.overlay_hits = [];
+      noMatchResult.baseline_hits = [];
+    }
     return {
       action: "search",
-      result: {
-        status: "NO_MATCH",
-        docs_considered: index.entries.length,
-        hits: [],
-      },
+      result: noMatchResult,
       state: updatedState,
       assistant_text: `Searched ${index.stats.total} documents but found no matches for "${input}". Try rephrasing or ask with action "catalog" to see available documentation.`,
       debug: {
         baseline_url: index.baseline_url,
         knowledge_base_url: knowledgeBaseUrl,
         search_index_size: bm25.N,
+        result_grouping: resolvedGrouping,
         duration_ms: Date.now() - startMs,
         generated_at: new Date().toISOString(),
       },
@@ -1376,9 +1422,9 @@ async function runSearch(
   // Cache for fetched content to avoid redundant fetches when include_metadata is enabled
   const contentCache = new Map<string, string>();
 
-  // Fetch excerpts for top results
+  // Fetch excerpts for top results (uses partitioned order)
   const evidence: Array<{ quote: string; citation: string; source: string }> = [];
-  for (const entry of hits.slice(0, 3)) {
+  for (const entry of orderedHits.slice(0, 3)) {
     const content = await fetcher.getFile(entry.path, knowledgeBaseUrl);
     if (content) {
       contentCache.set(entry.path, content);
@@ -1394,17 +1440,18 @@ async function runSearch(
   }
 
   const assistantLines = [
-    `Found ${hits.length} result(s) for: "${input}"`,
+    `Found ${orderedHits.length} result(s) for: "${input}"`,
     "",
     ...evidence.map((e) => `> ${e.quote}\n— ${e.citation} (${e.source})`),
     "",
     "Results:",
-    ...hits.map((r) => `- \`${r.path}\` — ${r.title} (score: ${r.score.toFixed(2)}, ${r.source})`),
+    ...orderedHits.map((r) => `- \`${r.path}\` — ${r.title} (score: ${r.score.toFixed(2)}, ${r.source})`),
   ];
 
-  // When include_metadata is requested, fetch and parse frontmatter for each hit
+  // When include_metadata is requested, fetch and parse frontmatter for each hit.
+  // Iterates orderedHits so metadata-enriched array preserves the partitioned order.
   const hitsWithMetadata: Array<Record<string, unknown>> = [];
-  for (const h of hits) {
+  for (const h of orderedHits) {
     const hit: Record<string, unknown> = {
       uri: h.uri,
       path: h.path,
@@ -1425,20 +1472,34 @@ async function runSearch(
     hitsWithMetadata.push(hit);
   }
 
+  // Build result object — add overlay_hits / baseline_hits for "grouped" mode
+  const resultObj: Record<string, unknown> = {
+    status: "FOUND",
+    hits: hitsWithMetadata,
+    evidence,
+    docs_considered: index.entries.length,
+  };
+
+  if (isGrouped) {
+    const overlayHits: Record<string, unknown>[] = [];
+    const baselineHits: Record<string, unknown>[] = [];
+    for (const h of hitsWithMetadata) {
+      (h.source === "canon" ? overlayHits : baselineHits).push(h);
+    }
+    resultObj.overlay_hits = overlayHits;
+    resultObj.baseline_hits = baselineHits;
+  }
+
   return {
     action: "search",
-    result: {
-      status: "FOUND",
-      hits: hitsWithMetadata,
-      evidence,
-      docs_considered: index.entries.length,
-    },
+    result: resultObj,
     state: updatedState,
     assistant_text: assistantLines.join("\n").trim(),
     debug: {
       baseline_url: index.baseline_url,
       knowledge_base_url: knowledgeBaseUrl,
       search_index_size: bm25.N,
+      result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
@@ -2327,22 +2388,32 @@ async function runPreflight(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
   state?: OddkitState,
+  resolvedGrouping: ResultGrouping = "merged",
 ): Promise<ActionResult> {
   const startMs = Date.now();
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const topic = message.replace(/^preflight:\s*/i, "").trim();
-  const results = scoreEntries(index.entries, topic).slice(0, 5);
+
+  // Score all entries, then apply partition before slicing
+  const allScored = scoreEntries(index.entries, topic);
+  let orderedScored = allScored;
+  if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
+    const { overlay, baseline } = partitionBySource(allScored);
+    orderedScored = [...overlay, ...baseline];
+  }
+  const results = orderedScored.slice(0, 5);
 
   const dodEntry = index.entries.find((e) => e.path.toLowerCase().includes("definition-of-done"));
   const constraints = index.entries
     .filter((e) => e.path.includes("constraint") || e.authority_band === "governing")
     .slice(0, 3);
 
+  const startHere = results.slice(0, 3);
   const assistantText = [
     `Preflight: ${topic}`,
     ``,
     `Start here:`,
-    ...results.slice(0, 3).map((r) => `- \`${r.path}\` — ${r.title}`),
+    ...startHere.map((r) => `- \`${r.path}\` — ${r.title}`),
     ``,
     `Definition of Done:`,
     dodEntry ? `- \`${dodEntry.path}\`` : "- Check canon/definition-of-done.md",
@@ -2358,20 +2429,31 @@ async function runPreflight(
     .join("\n")
     .trim();
 
+  // Build result object
+  const resultObj: Record<string, unknown> = {
+    topic,
+    start_here: startHere.map((r) => r.path),
+    dod: dodEntry?.path,
+    constraints: constraints.map((c) => c.path),
+    docs_available: index.stats.total,
+  };
+
+  // For "grouped" mode, split start_here into overlay and baseline arrays (each capped at 3)
+  if (resolvedGrouping === "grouped") {
+    const { overlay, baseline } = partitionBySource(startHere);
+    resultObj.start_here_overlay = overlay.slice(0, 3).map((r) => r.path);
+    resultObj.start_here_baseline = baseline.slice(0, 3).map((r) => r.path);
+  }
+
   return {
     action: "preflight",
-    result: {
-      topic,
-      start_here: results.slice(0, 3).map((r) => r.path),
-      dod: dodEntry?.path,
-      constraints: constraints.map((c) => c.path),
-      docs_available: index.stats.total,
-    },
+    result: resultObj,
     state: state ? initState(state) : undefined,
     assistant_text: assistantText,
     debug: {
       docs_considered: index.entries.length,
       knowledge_base_url: knowledgeBaseUrl,
+      result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
@@ -3251,7 +3333,13 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, knowledge_base_url, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
+  const { action, input, context, mode, knowledge_base_url, result_grouping, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
+
+  // Conditional default: when knowledge_base_url is set and caller didn't
+  // specify result_grouping, default to "overlay_first" (the fix for #150).
+  // When KB is unset, default to "merged" (no behavior change).
+  const resolvedGrouping: ResultGrouping =
+    result_grouping ?? (knowledge_base_url ? "overlay_first" : "merged");
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -3283,7 +3371,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runEncodeAction(input, context, fetcher, knowledge_base_url, state);
         break;
       case "search":
-        result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata);
+        result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata, resolvedGrouping);
         break;
       case "get":
         result = await runGet(input, fetcher, knowledge_base_url, state, include_metadata, section);
@@ -3301,7 +3389,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runValidate(input, state);
         break;
       case "preflight":
-        result = await runPreflight(input, fetcher, knowledge_base_url, state);
+        result = await runPreflight(input, fetcher, knowledge_base_url, state, resolvedGrouping);
         break;
       case "version":
         result = runVersion(env);
@@ -3310,7 +3398,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runCleanupStorage(fetcher, knowledge_base_url);
         break;
       default:
-        result = await runSearch(input, fetcher, knowledge_base_url, state);
+        result = await runSearch(input, fetcher, knowledge_base_url, state, undefined, resolvedGrouping);
     }
 
     // Inject trace into debug envelope (E0008.1)
