@@ -163,7 +163,12 @@ function findPitfallDocs(docs, keywords) {
  */
 export async function runPreflight(options) {
   const { repo: repoRoot, baseline: baselineOverride, message, result_grouping } = options;
-  const resolvedGrouping = result_grouping ?? "merged";
+  // Mirror the worker's conditional default (#150 validator F-1): when a
+  // baseline override is set, default to overlay_first; otherwise merged.
+  // src/core/actions.js pre-resolves this before delegating, so the public
+  // CLI/MCP paths are unaffected. This handles direct importers of
+  // runPreflight that bypass that pre-resolution.
+  const resolvedGrouping = result_grouping ?? (baselineOverride ? "overlay_first" : "merged");
 
   // Reuse catalog to get start_here, next_up, canon_by_tag, playbooks
   const catalogResult = await runCatalog({
