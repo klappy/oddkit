@@ -1412,6 +1412,7 @@ async function runSearch(
         baseline_url: index.baseline_url,
         knowledge_base_url: knowledgeBaseUrl,
         search_index_size: bm25.N,
+        result_grouping: resolvedGrouping,
         duration_ms: Date.now() - startMs,
         generated_at: new Date().toISOString(),
       },
@@ -1498,6 +1499,7 @@ async function runSearch(
       baseline_url: index.baseline_url,
       knowledge_base_url: knowledgeBaseUrl,
       search_index_size: bm25.N,
+      result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
@@ -2451,6 +2453,7 @@ async function runPreflight(
     debug: {
       docs_considered: index.entries.length,
       knowledge_base_url: knowledgeBaseUrl,
+      result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
