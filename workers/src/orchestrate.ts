@@ -1373,14 +1373,27 @@ async function runSearch(
     })
     .filter(Boolean) as Array<IndexEntry & { score: number }>;
 
+  // Apply result_grouping partition (overlay_first / grouped re-order;
+  // merged preserves BM25 score order). Single forward pass — no re-sort.
+  // After partitioning the wider candidate pool, truncate to FINAL_LIMIT.
+  let orderedHits = hits.slice(0, FINAL_LIMIT);
+  let isGrouped = false;
+  if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
+    const { overlay, baseline } = partitionBySource(hits);
+    orderedHits = [...overlay, ...baseline].slice(0, FINAL_LIMIT);
+    isGrouped = resolvedGrouping === "grouped";
+  }
+
+  // Compute state from the truncated, returned hits — not the wider candidate
+  // pool — so canon_refs only tracks documents actually shown to the user.
   const updatedState = state
     ? addCanonRefs(
         initState(state),
-        hits.map((h) => h.path),
+        orderedHits.map((h) => h.path),
       )
     : undefined;
 
-  if (hits.length === 0) {
+  if (orderedHits.length === 0) {
     const noMatchResult: Record<string, unknown> = {
       status: "NO_MATCH",
       docs_considered: index.entries.length,
@@ -1403,17 +1416,6 @@ async function runSearch(
         generated_at: new Date().toISOString(),
       },
     };
-  }
-
-  // Apply result_grouping partition (overlay_first / grouped re-order;
-  // merged preserves BM25 score order). Single forward pass — no re-sort.
-  // After partitioning the wider candidate pool, truncate to FINAL_LIMIT.
-  let orderedHits = hits;
-  let isGrouped = false;
-  if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
-    const { overlay, baseline } = partitionBySource(hits);
-    orderedHits = [...overlay, ...baseline].slice(0, FINAL_LIMIT);
-    isGrouped = resolvedGrouping === "grouped";
   }
 
   // Cache for fetched content to avoid redundant fetches when include_metadata is enabled
@@ -2436,7 +2438,7 @@ async function runPreflight(
 
   // For "grouped" mode, split start_here into overlay and baseline arrays (each capped at 3)
   if (resolvedGrouping === "grouped") {
-    const { overlay, baseline } = partitionBySource(allScored);
+    const { overlay, baseline } = partitionBySource(startHere);
     resultObj.start_here_overlay = overlay.slice(0, 3).map((r) => r.path);
     resultObj.start_here_baseline = baseline.slice(0, 3).map((r) => r.path);
   }
