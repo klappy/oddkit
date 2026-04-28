@@ -484,6 +484,7 @@ export async function handleAction(params) {
           repoRoot,
           baseline,
           action: "preflight",
+          result_grouping: resolvedGrouping,
         });
         return {
           action: "preflight",
