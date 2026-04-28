@@ -1321,6 +1321,42 @@ function scoreEntries(entries: IndexEntry[], query: string): Array<IndexEntry & 
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Overlay-first re-ranking (Option D1 from issue #150)
+//
+// When a caller provides knowledge_base_url, the search index merges two
+// corpora: the project KB overlay (source: "canon") and the klappy.dev
+// baseline (source: "baseline"). The baseline is large (~566 docs) relative
+// to typical project overlays (~20 docs), so plain BM25 ranking lets baseline
+// content monopolize the top of the result list — the contamination shape
+// klappy://canon/principles/scoped-truth names as the anti-pattern.
+//
+// Fix: when knowledge_base_url is set, re-rank so all overlay hits sort
+// above all baseline hits. BM25 still orders within each tier, so a baseline
+// doc that uniquely matches the query still surfaces — just below the
+// overlay's hits. When knowledge_base_url is NOT set (default canon only),
+// every entry has source: "canon" and this is a no-op.
+//
+// This is purely a ranking-layer change; the index itself is unchanged.
+// No cache key changes. No new required-baseline classification. No epoch
+// bump per governance-change-discipline. See issue #150 §4 Option D1.
+// ──────────────────────────────────────────────────────────────────────────────
+
+function rerankOverlayFirst(
+  results: Array<{ id: string; score: number }>,
+  entryMap: Map<string, IndexEntry>,
+): Array<{ id: string; score: number }> {
+  return [...results].sort((a, b) => {
+    const aSource = entryMap.get(a.id)?.source ?? "baseline";
+    const bSource = entryMap.get(b.id)?.source ?? "baseline";
+    if (aSource !== bSource) {
+      // Overlay (canon) wins ties on tier; preserve BM25 order within tier.
+      return aSource === "canon" ? -1 : 1;
+    }
+    return b.score - a.score;
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Individual action handlers
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1334,10 +1370,24 @@ async function runSearch(
   const startMs = Date.now();
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const bm25 = getBM25Index(index.entries);
-  const results = searchBM25(bm25, input, 5);
+
+  // Issue #150 Option D1: when a project KB overlay is present, retrieve a
+  // larger candidate pool from BM25 then re-rank to put overlay (source:
+  // "canon") hits above baseline. With the default 5-result cap, an overlay
+  // doc that scored at position 6 would be invisible even after re-ranking.
+  // Pulling 50 candidates is enough headroom for any realistic overlay
+  // without indexing the entire corpus.
+  const FINAL_LIMIT = 5;
+  const candidateLimit = knowledgeBaseUrl ? 50 : FINAL_LIMIT;
+  const rawResults = searchBM25(bm25, input, candidateLimit);
 
   // Map scores back to entries
   const entryMap = new Map(index.entries.map((e) => [e.path, e]));
+
+  const results = knowledgeBaseUrl
+    ? rerankOverlayFirst(rawResults, entryMap).slice(0, FINAL_LIMIT)
+    : rawResults.slice(0, FINAL_LIMIT);
+
   const hits = results
     .map((r) => {
       const entry = entryMap.get(r.id);
@@ -1345,6 +1395,10 @@ async function runSearch(
       return { ...entry, score: r.score };
     })
     .filter(Boolean) as Array<IndexEntry & { score: number }>;
+
+  // Per-tier counts for telemetry / debug observability (issue #150 §5.4).
+  const overlayHitsInTopN = hits.filter((h) => h.source === "canon").length;
+  const baselineHitsInTopN = hits.filter((h) => h.source === "baseline").length;
 
   const updatedState = state
     ? addCanonRefs(
@@ -1439,6 +1493,11 @@ async function runSearch(
       baseline_url: index.baseline_url,
       knowledge_base_url: knowledgeBaseUrl,
       search_index_size: bm25.N,
+      overlay_doc_count: index.stats.canon,
+      baseline_doc_count: index.stats.baseline,
+      overlay_hits_in_top_n: overlayHitsInTopN,
+      baseline_hits_in_top_n: baselineHitsInTopN,
+      result_grouping: knowledgeBaseUrl ? "overlay_first" : "default",
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },
@@ -2331,12 +2390,38 @@ async function runPreflight(
   const startMs = Date.now();
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const topic = message.replace(/^preflight:\s*/i, "").trim();
-  const results = scoreEntries(index.entries, topic).slice(0, 5);
+  const scored = scoreEntries(index.entries, topic);
+
+  // Issue #150 Option D1: when an overlay is present, surface project KB
+  // start-here docs above baseline. Stable sort preserves the heuristic
+  // ranking within each tier.
+  const orderedScored = knowledgeBaseUrl
+    ? [...scored].sort((a, b) => {
+        if (a.source !== b.source) return a.source === "canon" ? -1 : 1;
+        return b.score - a.score;
+      })
+    : scored;
+  const results = orderedScored.slice(0, 5);
+
+  // Constraints: prefer overlay constraint docs when an overlay is present —
+  // otherwise the baseline's generic constraints (ai-voice-cliches,
+  // author-identity-language, etc.) crowd out project-specific governance.
+  const allConstraints = index.entries.filter(
+    (e) => e.path.includes("constraint") || e.authority_band === "governing",
+  );
+  const orderedConstraints = knowledgeBaseUrl
+    ? [...allConstraints].sort((a, b) => {
+        if (a.source !== b.source) return a.source === "canon" ? -1 : 1;
+        return 0;
+      })
+    : allConstraints;
+  const constraints = orderedConstraints.slice(0, 3);
+
+  // Issue #150 §5.4 — per-tier counts for telemetry/debug observability.
+  const overlayHitsInTopN = results.filter((r) => r.source === "canon").length;
+  const baselineHitsInTopN = results.filter((r) => r.source === "baseline").length;
 
   const dodEntry = index.entries.find((e) => e.path.toLowerCase().includes("definition-of-done"));
-  const constraints = index.entries
-    .filter((e) => e.path.includes("constraint") || e.authority_band === "governing")
-    .slice(0, 3);
 
   const assistantText = [
     `Preflight: ${topic}`,
@@ -2372,6 +2457,11 @@ async function runPreflight(
     debug: {
       docs_considered: index.entries.length,
       knowledge_base_url: knowledgeBaseUrl,
+      overlay_doc_count: index.stats.canon,
+      baseline_doc_count: index.stats.baseline,
+      overlay_hits_in_top_n: overlayHitsInTopN,
+      baseline_hits_in_top_n: baselineHitsInTopN,
+      result_grouping: knowledgeBaseUrl ? "overlay_first" : "default",
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
     },

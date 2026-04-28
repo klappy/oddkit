@@ -286,9 +286,31 @@ export async function handleAction(params) {
         }
 
         const bm25 = getBM25Index(index.documents, baselineSha);
-        const results = searchBM25(bm25, input, 5);
 
+        // Issue #150 Option D1: when the index merges local overlay + remote
+        // baseline docs, baseline volume drowns out the local KB in BM25
+        // ranking. Pull a larger candidate pool, then re-rank so origin:
+        // "local" hits sort above origin: "baseline" hits. BM25 still
+        // orders within each tier. When the index has only one origin
+        // (e.g. baseline-only canon_url with no local docs), this is a
+        // no-op.
+        const FINAL_LIMIT = 5;
         const docMap = new Map(index.documents.map((d) => [d.path, d]));
+        const hasMixedOrigins =
+          index.documents.some((d) => d.origin === "local") &&
+          index.documents.some((d) => d.origin === "baseline");
+        const candidateLimit = hasMixedOrigins ? 50 : FINAL_LIMIT;
+        const rawResults = searchBM25(bm25, input, candidateLimit);
+        const orderedResults = hasMixedOrigins
+          ? [...rawResults].sort((a, b) => {
+              const ao = docMap.get(a.id)?.origin || "local";
+              const bo = docMap.get(b.id)?.origin || "local";
+              if (ao !== bo) return ao === "local" ? -1 : 1;
+              return b.score - a.score;
+            })
+          : rawResults;
+        const results = orderedResults.slice(0, FINAL_LIMIT);
+
         const hits = results
           .map((r) => {
             const doc = docMap.get(r.id);
@@ -296,6 +318,9 @@ export async function handleAction(params) {
             return { ...doc, score: r.score };
           })
           .filter(Boolean);
+
+        const overlayHitsInTopN = hits.filter((h) => h.origin === "local").length;
+        const baselineHitsInTopN = hits.filter((h) => h.origin === "baseline").length;
 
         const updatedState = state ? addCanonRefs(initState(state), hits.map((h) => h.path)) : undefined;
 
@@ -305,7 +330,12 @@ export async function handleAction(params) {
             result: { status: "NO_MATCH", docs_considered: index.documents.length, hits: [] },
             state: updatedState,
             assistant_text: `Searched ${index.documents.length} documents but found no matches for "${input}". Try rephrasing or use action "catalog".`,
-            debug: makeDebug({ search_index_size: bm25.N }),
+            debug: makeDebug({
+              search_index_size: bm25.N,
+              overlay_hits_in_top_n: 0,
+              baseline_hits_in_top_n: 0,
+              result_grouping: hasMixedOrigins ? "overlay_first" : "default",
+            }),
           };
         }
 
@@ -358,7 +388,12 @@ export async function handleAction(params) {
           },
           state: updatedState,
           assistant_text: assistantLines.join("\n").trim(),
-          debug: makeDebug({ search_index_size: bm25.N }),
+          debug: makeDebug({
+            search_index_size: bm25.N,
+            overlay_hits_in_top_n: overlayHitsInTopN,
+            baseline_hits_in_top_n: baselineHitsInTopN,
+            result_grouping: hasMixedOrigins ? "overlay_first" : "default",
+          }),
         };
       }
 
