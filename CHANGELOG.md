@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`result_grouping` parameter for search and preflight** — when `knowledge_base_url` is set, overlay (knowledge-base) docs are ranked above baseline docs by default (`"overlay_first"`). Callers can explicitly choose `"merged"` (pure BM25 score order, the previous default), `"overlay_first"` (overlay before baseline, preserving score order within each partition), or `"grouped"` (separate `overlay_hits`/`baseline_hits` arrays in search, `start_here_overlay`/`start_here_baseline` in preflight). Conditional default: `knowledge_base_url` unset → `"merged"` (no behavior change); `knowledge_base_url` set → `"overlay_first"`. Telemetry records the caller-specified value in blob9 (`result_grouping`). Closes #150.
+- **`result_grouping` mirrored in Node CLI (`src/core/actions.js`)** — same conditional default and partition logic for parity with the Cloudflare Worker. CLI uses `origin: "local" | "baseline"` (its existing field) where the worker uses `source: "canon" | "baseline"`. Without this, CLI users would see baseline-contaminated rankings even though the worker is fixed.
+
+### Fixed
+
+- **Candidate-pool widening for grouping** — when `result_grouping !== "merged"`, both worker `runSearch` and CLI `search` now retrieve 50 BM25 candidates instead of 5, partition, then truncate to the response cap of 5. The original implementation truncated to 5 *before* partitioning, which made overlay docs ranked at BM25 position 6+ invisible to the partition logic. Two regression tests added (`partition surfaces overlay even when overlay is mostly low-score`, `widened pool: 50 candidates partition correctly without losing overlay`).
 
 ## [0.26.0] - 2026-04-26
 

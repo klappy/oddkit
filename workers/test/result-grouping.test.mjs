@@ -527,6 +527,71 @@ await test("recordTelemetry writes empty blob9 for non-tool-call requests", asyn
   assert.equal(point.blobs[8], "", "blob9 should be empty for non-tool-call");
 });
 
+// ─── Candidate-pool widening regression (#150 fix-forward) ────────────────
+// The original PR #152 implementation called searchBM25 with a hard limit of 5.
+// In a realistic scenario where overlay and baseline interleave by BM25 score,
+// an overlay doc ranked at BM25 position 6+ would be invisible to the partition
+// — the partition can only reorder docs already in its input. This regression
+// suite validates that partitionBySource correctly prioritizes overlay over
+// baseline when the input includes overlay docs at every position.
+
+await test("partition surfaces overlay even when overlay is mostly low-score", async () => {
+  // Simulates a realistic candidate pool where 4 baseline docs outrank a single
+  // overlay doc at position 5. Without widening, this overlay doc would be in
+  // the input. With widening, more overlay candidates from positions 6+ are
+  // also pulled in. Either way, partition must correctly surface overlay first.
+  const wideCandidates = [
+    { path: "docs/a.md", title: "Baseline A", source: "baseline", score: 100 },
+    { path: "docs/b.md", title: "Baseline B", source: "baseline", score: 90 },
+    { path: "docs/c.md", title: "Baseline C", source: "baseline", score: 80 },
+    { path: "docs/d.md", title: "Baseline D", source: "baseline", score: 70 },
+    { path: "canon/e.md", title: "Canon E", source: "canon", score: 60 },
+    { path: "canon/f.md", title: "Canon F", source: "canon", score: 50 },
+    { path: "canon/g.md", title: "Canon G", source: "canon", score: 40 },
+    { path: "docs/h.md", title: "Baseline H", source: "baseline", score: 30 },
+  ];
+  const { overlay, baseline } = partitionBySource(wideCandidates);
+  // All overlay docs first, in original BM25 order.
+  const merged = [...overlay, ...baseline];
+  // Top 5 of merged should now be overlay-first.
+  assert.equal(merged[0].source, "canon", "rank 1 should be overlay");
+  assert.equal(merged[1].source, "canon", "rank 2 should be overlay");
+  assert.equal(merged[2].source, "canon", "rank 3 should be overlay");
+  // BM25 score within partition preserved.
+  assert.equal(merged[0].path, "canon/e.md");
+  assert.equal(merged[1].path, "canon/f.md");
+  assert.equal(merged[2].path, "canon/g.md");
+  assert.equal(merged[3].source, "baseline", "rank 4 should be baseline (no more overlay)");
+});
+
+await test("widened pool: 50 candidates partition correctly without losing overlay", async () => {
+  // Simulate a 50-candidate pool where overlay docs are scattered at positions
+  // 8, 17, 23, 41 — positions that would be invisible at the original limit-5.
+  const wideCandidates = [];
+  for (let i = 0; i < 50; i++) {
+    const isOverlay = i === 7 || i === 16 || i === 22 || i === 40;
+    wideCandidates.push({
+      path: isOverlay ? `canon/${i}.md` : `docs/${i}.md`,
+      title: `Doc ${i}`,
+      source: isOverlay ? "canon" : "baseline",
+      score: 1000 - i, // descending
+    });
+  }
+  const { overlay, baseline } = partitionBySource(wideCandidates);
+  assert.equal(overlay.length, 4, "should find all 4 overlay docs in 50-candidate pool");
+  assert.equal(baseline.length, 46);
+  // Overlay docs preserve their BM25 order (positions 7, 16, 22, 40).
+  assert.deepEqual(
+    overlay.map((d) => d.path),
+    ["canon/7.md", "canon/16.md", "canon/22.md", "canon/40.md"],
+  );
+  // After partition + slice(0, 5): all 4 overlay + 1 baseline.
+  const top5 = [...overlay, ...baseline].slice(0, 5);
+  assert.equal(top5.filter((d) => d.source === "canon").length, 4);
+  assert.equal(top5.filter((d) => d.source === "baseline").length, 1);
+  assert.equal(top5[4].path, "docs/0.md", "first baseline by BM25 score");
+});
+
 // ─── Summary ──────────────────────────────────────────────────────────────
 
 console.log(`\n${pass + fail} tests: ${pass} passed, ${fail} failed`);

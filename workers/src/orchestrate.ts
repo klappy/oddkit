@@ -1352,7 +1352,16 @@ async function runSearch(
   const startMs = Date.now();
   const index = await fetcher.getIndex(knowledgeBaseUrl);
   const bm25 = getBM25Index(index.entries);
-  const results = searchBM25(bm25, input, 5);
+
+  // Issue #150 fix-forward: when grouping is active, retrieve a wider candidate
+  // pool from BM25 so overlay docs ranked beyond position 5 in raw BM25 are not
+  // truncated before partitioning. With the default 5-result cap, an overlay
+  // doc that scored at position 6 would be invisible even after re-ranking.
+  // 50 candidates is enough headroom for any realistic overlay; the final slice
+  // below caps the response at FINAL_LIMIT.
+  const FINAL_LIMIT = 5;
+  const candidateLimit = resolvedGrouping !== "merged" ? 50 : FINAL_LIMIT;
+  const results = searchBM25(bm25, input, candidateLimit);
 
   // Map scores back to entries
   const entryMap = new Map(index.entries.map((e) => [e.path, e]));
@@ -1398,11 +1407,12 @@ async function runSearch(
 
   // Apply result_grouping partition (overlay_first / grouped re-order;
   // merged preserves BM25 score order). Single forward pass — no re-sort.
+  // After partitioning the wider candidate pool, truncate to FINAL_LIMIT.
   let orderedHits = hits;
   let isGrouped = false;
   if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
     const { overlay, baseline } = partitionBySource(hits);
-    orderedHits = [...overlay, ...baseline];
+    orderedHits = [...overlay, ...baseline].slice(0, FINAL_LIMIT);
     isGrouped = resolvedGrouping === "grouped";
   }
 
