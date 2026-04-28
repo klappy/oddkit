@@ -163,7 +163,7 @@ function findPitfallDocs(docs, keywords) {
  */
 export async function runPreflight(options) {
   const { repo: repoRoot, baseline: baselineOverride, message, result_grouping } = options;
-  const resolvedGrouping = result_grouping || "merged";
+  const resolvedGrouping = result_grouping ?? "merged";
 
   // Reuse catalog to get start_here, next_up, canon_by_tag, playbooks
   const catalogResult = await runCatalog({
@@ -198,16 +198,18 @@ export async function runPreflight(options) {
   // first; "grouped" additionally exposes start_here_overlay/start_here_baseline.
   // Origin is read from the index (start_here entries don't carry origin themselves).
   let startHere = catalogResult.start_here;
+  let overlayEntries = null;
+  let baselineEntries = null;
   if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
     const originByPath = new Map(docs.map((d) => [d.path, d.origin || "local"]));
-    const overlay = [];
-    const baselineHits = [];
+    overlayEntries = [];
+    baselineEntries = [];
     for (const entry of startHere) {
       const origin = originByPath.get(entry.path) || "local";
-      if (origin === "local") overlay.push(entry);
-      else baselineHits.push(entry);
+      if (origin === "local") overlayEntries.push(entry);
+      else baselineEntries.push(entry);
     }
-    startHere = [...overlay, ...baselineHits];
+    startHere = [...overlayEntries, ...baselineEntries];
   }
 
   const result = {
@@ -237,16 +239,8 @@ export async function runPreflight(options) {
 
   // For "grouped" mode, also expose start_here split by origin (parity with worker).
   if (resolvedGrouping === "grouped") {
-    const originByPath = new Map(docs.map((d) => [d.path, d.origin || "local"]));
-    const overlay = [];
-    const baselineHits = [];
-    for (const entry of startHere) {
-      const origin = originByPath.get(entry.path) || "local";
-      if (origin === "local") overlay.push(entry.path);
-      else baselineHits.push(entry.path);
-    }
-    result.start_here_overlay = overlay.slice(0, 3);
-    result.start_here_baseline = baselineHits.slice(0, 3);
+    result.start_here_overlay = overlayEntries.slice(0, 3).map((e) => e.path);
+    result.start_here_baseline = baselineEntries.slice(0, 3).map((e) => e.path);
   }
 
   writeLast(result);
