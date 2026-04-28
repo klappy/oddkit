@@ -1372,13 +1372,18 @@ async function runSearch(
     : undefined;
 
   if (hits.length === 0) {
+    const noMatchResult: Record<string, unknown> = {
+      status: "NO_MATCH",
+      docs_considered: index.entries.length,
+      hits: [],
+    };
+    if (resolvedGrouping === "grouped") {
+      noMatchResult.overlay_hits = [];
+      noMatchResult.baseline_hits = [];
+    }
     return {
       action: "search",
-      result: {
-        status: "NO_MATCH",
-        docs_considered: index.entries.length,
-        hits: [],
-      },
+      result: noMatchResult,
       state: updatedState,
       assistant_text: `Searched ${index.stats.total} documents but found no matches for "${input}". Try rephrasing or ask with action "catalog" to see available documentation.`,
       debug: {
