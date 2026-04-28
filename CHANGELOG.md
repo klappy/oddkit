@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`result_grouping` parameter for search and preflight** — when `knowledge_base_url` is set, overlay (knowledge-base) docs are ranked above baseline docs by default (`"overlay_first"`). Callers can explicitly choose `"merged"` (pure BM25 score order, the previous default), `"overlay_first"` (overlay before baseline, preserving score order within each partition), or `"grouped"` (separate `overlay_hits`/`baseline_hits` arrays in search, `start_here_overlay`/`start_here_baseline` in preflight). Conditional default: `knowledge_base_url` unset → `"merged"` (no behavior change); `knowledge_base_url` set → `"overlay_first"`. Telemetry records the caller-specified value in blob9 (`result_grouping`). Closes #150.
+
 ## [0.26.0] - 2026-04-26
 
 ### Added
