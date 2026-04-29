@@ -89,6 +89,22 @@ function getBM25Index(docs, baselineSha) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Result grouping — stable partition by origin (local vs baseline). The Node CLI
+// mirror of the worker's partitionBySource (which keys on `source`). See
+// klappy/oddkit issue #150.
+// ──────────────────────────────────────────────────────────────────────────────
+
+function partitionByOrigin(arr) {
+  const overlay = [];
+  const baselineHits = [];
+  for (const h of arr) {
+    if ((h.origin || "local") === "local") overlay.push(h);
+    else baselineHits.push(h);
+  }
+  return { overlay, baseline: baselineHits };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Response text builders
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -160,13 +176,19 @@ export function buildEncodeResponse(taskResult) {
  * @param {string} [params.baseline] - Baseline override (canon_url takes precedence)
  * @param {string} [params.repoRoot] - Repository root (defaults to cwd)
  * @param {Object} [params.state] - Optional state for threading (MCP orchestrator)
+ * @param {"merged"|"overlay_first"|"grouped"} [params.result_grouping] - Search ranking policy (#150)
  * @returns {Object} { action, result, assistant_text, debug, state? }
  */
 export async function handleAction(params) {
-  const { action, input, context, mode, canon_url, state, include_metadata, section, reference, compare } = params;
+  const { action, input, context, mode, canon_url, state, include_metadata, section, reference, compare, result_grouping } = params;
   const repoRoot = params.repoRoot || process.cwd();
   const baseline = canon_url || params.baseline;
   const startMs = Date.now();
+
+  // Issue #150: when an overlay (custom canon_url/baseline) is set, default to
+  // overlay_first so local docs rank above baseline. With no overlay,
+  // every doc has origin: "local" and the partition is a no-op anyway.
+  const resolvedGrouping = result_grouping ?? (baseline ? "overlay_first" : "merged");
 
   // Helper: enrich debug output with baseline SHA for observability
   function makeDebug(extra = {}) {
@@ -286,10 +308,16 @@ export async function handleAction(params) {
         }
 
         const bm25 = getBM25Index(index.documents, baselineSha);
-        const results = searchBM25(bm25, input, 5);
+
+        // Issue #150 fix-forward: when grouping is active, retrieve a wider
+        // candidate pool from BM25 so overlay (local) docs ranked beyond
+        // position 5 in raw BM25 are not truncated before partitioning.
+        const FINAL_LIMIT = 5;
+        const candidateLimit = resolvedGrouping !== "merged" ? 50 : FINAL_LIMIT;
+        const results = searchBM25(bm25, input, candidateLimit);
 
         const docMap = new Map(index.documents.map((d) => [d.path, d]));
-        const hits = results
+        const rawHits = results
           .map((r) => {
             const doc = docMap.get(r.id);
             if (!doc) return null;
@@ -297,15 +325,32 @@ export async function handleAction(params) {
           })
           .filter(Boolean);
 
+        // Apply result_grouping partition. Single forward pass — no re-sort.
+        // After partitioning the wider candidate pool, truncate to FINAL_LIMIT.
+        let hits = rawHits;
+        let isGrouped = false;
+        if (resolvedGrouping === "overlay_first" || resolvedGrouping === "grouped") {
+          const { overlay, baseline: baselineHits } = partitionByOrigin(rawHits);
+          hits = [...overlay, ...baselineHits].slice(0, FINAL_LIMIT);
+          isGrouped = resolvedGrouping === "grouped";
+        } else {
+          hits = rawHits.slice(0, FINAL_LIMIT);
+        }
+
         const updatedState = state ? addCanonRefs(initState(state), hits.map((h) => h.path)) : undefined;
 
         if (hits.length === 0) {
+          const noMatchResult = { status: "NO_MATCH", docs_considered: index.documents.length, hits: [] };
+          if (isGrouped) {
+            noMatchResult.overlay_hits = [];
+            noMatchResult.baseline_hits = [];
+          }
           return {
             action: "search",
-            result: { status: "NO_MATCH", docs_considered: index.documents.length, hits: [] },
+            result: noMatchResult,
             state: updatedState,
             assistant_text: `Searched ${index.documents.length} documents but found no matches for "${input}". Try rephrasing or use action "catalog".`,
-            debug: makeDebug({ search_index_size: bm25.N }),
+            debug: makeDebug({ search_index_size: bm25.N, result_grouping: resolvedGrouping }),
           };
         }
 
@@ -322,43 +367,58 @@ export async function handleAction(params) {
           ...hits.map((r) => `- \`${r.path}\` — ${r.title || "(untitled)"} (score: ${r.score.toFixed(2)})`),
         ];
 
+        const hitObjects = hits.map((h) => {
+          const hit = {
+            uri: h.uri,
+            path: h.path,
+            title: h.title,
+            tags: h.tags,
+            score: h.score,
+            snippet: (h.contentPreview || "").slice(0, 200),
+            source: h.origin || "local",
+          };
+          if (include_metadata) {
+            if (h.frontmatter) {
+              hit.metadata = h.frontmatter;
+            } else if (h.absolutePath && existsSync(h.absolutePath)) {
+              // Fallback: index predates frontmatter storage — parse from file
+              try {
+                const { data } = matter(readFileSync(h.absolutePath, "utf-8"));
+                if (data && Object.keys(data).length > 0) {
+                  hit.metadata = data;
+                }
+              } catch {
+                // File not readable — omit metadata for this hit
+              }
+            }
+          }
+          return hit;
+        });
+
+        const foundResult = {
+          status: "FOUND",
+          hits: hitObjects,
+          evidence,
+          docs_considered: index.documents.length,
+        };
+
+        if (isGrouped) {
+          const overlayHits = [];
+          const baselineHits = [];
+          for (const h of hitObjects) {
+            if (h.source === "local") overlayHits.push(h);
+            else baselineHits.push(h);
+          }
+          foundResult.overlay_hits = overlayHits;
+          foundResult.baseline_hits = baselineHits;
+        }
+
         return {
           action: "search",
-          result: {
-            status: "FOUND",
-            hits: hits.map((h) => {
-              const hit = {
-                uri: h.uri,
-                path: h.path,
-                title: h.title,
-                tags: h.tags,
-                score: h.score,
-                snippet: (h.contentPreview || "").slice(0, 200),
-                source: h.origin || "local",
-              };
-              if (include_metadata) {
-                if (h.frontmatter) {
-                  hit.metadata = h.frontmatter;
-                } else if (h.absolutePath && existsSync(h.absolutePath)) {
-                  // Fallback: index predates frontmatter storage — parse from file
-                  try {
-                    const { data } = matter(readFileSync(h.absolutePath, "utf-8"));
-                    if (data && Object.keys(data).length > 0) {
-                      hit.metadata = data;
-                    }
-                  } catch {
-                    // File not readable — omit metadata for this hit
-                  }
-                }
-              }
-              return hit;
-            }),
-            evidence,
-            docs_considered: index.documents.length,
-          },
+          result: foundResult,
           state: updatedState,
           assistant_text: assistantLines.join("\n").trim(),
-          debug: makeDebug({ search_index_size: bm25.N }),
+          debug: makeDebug({ search_index_size: bm25.N, result_grouping: resolvedGrouping }),
         };
       }
 
@@ -424,6 +484,7 @@ export async function handleAction(params) {
           repoRoot,
           baseline,
           action: "preflight",
+          result_grouping: resolvedGrouping,
         });
         return {
           action: "preflight",

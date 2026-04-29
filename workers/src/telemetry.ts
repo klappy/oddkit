@@ -185,6 +185,7 @@ export function parseToolCall(payload: unknown): {
   toolName: string;
   documentUri: string;
   knowledgeBaseUrl: string;
+  resultGrouping: string;
 } | null {
   if (typeof payload !== "object" || payload === null || !("method" in payload)) {
     return null;
@@ -197,7 +198,7 @@ export function parseToolCall(payload: unknown): {
 
   const params = msg.params;
   if (typeof params !== "object" || params === null) {
-    return { method, toolName: "", documentUri: "", knowledgeBaseUrl: "" };
+    return { method, toolName: "", documentUri: "", knowledgeBaseUrl: "", resultGrouping: "" };
   }
 
   const p = params as Record<string, unknown>;
@@ -206,6 +207,7 @@ export function parseToolCall(payload: unknown): {
   // Extract details from tool arguments
   let documentUri = "";
   let knowledgeBaseUrl = "";
+  let resultGrouping = "";
   const args = p.arguments;
   if (typeof args === "object" && args !== null) {
     const a = args as Record<string, unknown>;
@@ -217,9 +219,13 @@ export function parseToolCall(payload: unknown): {
     if (typeof a.knowledge_base_url === "string" && a.knowledge_base_url) {
       knowledgeBaseUrl = a.knowledge_base_url;
     }
+    // Extract result_grouping from tool arguments (#150)
+    if (typeof a.result_grouping === "string" && a.result_grouping) {
+      resultGrouping = a.result_grouping;
+    }
   }
 
-  return { method, toolName, documentUri, knowledgeBaseUrl };
+  return { method, toolName, documentUri, knowledgeBaseUrl, resultGrouping };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -297,9 +303,10 @@ export function recordTelemetry(
         toolCall?.knowledgeBaseUrl || env.DEFAULT_KNOWLEDGE_BASE_URL || "",
         documentUri,
         env.ODDKIT_VERSION || BUILD_VERSION,
-        // blob9 retired (was cache_tier). Slot stays free per the
-        // "no deprecation, nobody uses them yet" rule. Cache effectiveness
-        // moved to double7/double8.
+        // blob9: result_grouping (#150). Was retired (cache_tier).
+        // Repurposed for the caller-specified grouping value; empty string
+        // when not applicable (non-search/preflight actions).
+        toolCall?.resultGrouping ?? "",
       ],
       doubles: [
         1,                // double1: count
@@ -354,9 +361,7 @@ const BASELINE_BLOB_SEMANTIC_NAMES = [
   "knowledge_base_url", // blob6
   "document_uri",     // blob7
   "worker_version",   // blob8
-  // blob9 retired (was cache_tier). Slot stays free per the
-  // "no deprecation, nobody uses them yet" rule. Hit-rate moved to
-  // double7/double8.
+  "result_grouping",  // blob9 — repurposed from retired cache_tier (#150)
 ] as const;
 
 /**

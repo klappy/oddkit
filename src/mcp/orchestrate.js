@@ -291,6 +291,7 @@ export function detectAction(message) {
  * @param {string} [options.baseline_root] - For instruction_sync: filesystem mode baseline path
  * @param {Object} [options.registry_payload] - For instruction_sync: payload mode registry object
  * @param {Object} [options.state_payload] - For instruction_sync: payload mode state object
+ * @param {"merged"|"overlay_first"|"grouped"} [options.result_grouping] - Ranking policy (#150)
  * @returns {Object} { action, assistant_text, result, debug, suggest_orient }
  */
 export async function runOrchestrate(options) {
@@ -303,6 +304,7 @@ export async function runOrchestrate(options) {
     baseline_root,
     registry_payload,
     state_payload,
+    result_grouping,
   } = options;
 
   // Runtime validation (schema is permissive, runtime enforces)
@@ -409,6 +411,7 @@ export async function runOrchestrate(options) {
           repo: repoRoot || process.cwd(),
           baseline,
           message,
+          result_grouping,
         });
         result.result = taskResult;
         result.assistant_text = buildPreflightAssistantText(taskResult);

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://klappy.dev/canon/constraints/core-governance-baseline",
+  "comment": "Required-baseline manifest. The six files every knowledge-base-driven oddkit tool needs to function. Canon source: klappy://canon/constraints/core-governance-baseline §'Required in Baseline'. When knowledge_base_url is set and include_full_baseline is unset/false, the search corpus indexes the project KB plus only these files from the default baseline.",
+  "version": 1,
+  "epoch": "E0008.5",
+  "canon_uri": "klappy://canon/constraints/core-governance-baseline",
+  "required_paths": [
+    "canon/values/orientation.md",
+    "canon/values/axioms.md",
+    "canon/meta/writing-canon.md",
+    "canon/constraints/definition-of-done.md",
+    "canon/constraints/telemetry-governance.md",
+    "odd/challenge/stakes-calibration.md"
+  ]
+}
