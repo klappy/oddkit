@@ -717,6 +717,99 @@ async function run() {
     typeof catalogResult.debug?.index_built_at === "string",
     `got: ${catalogResult.debug?.index_built_at}`);
 
+  // ── Search-Corpus Boundary (E0008.5) ───────────────────────────────────────
+  // Asserts that when knowledge_base_url is set, the default scope filters the
+  // baseline to required-baseline only; that include_full_baseline=true
+  // restores the merged corpus; and that envelope fields surface scope.
+  // Authority: klappy://canon/constraints/core-governance-baseline §"Search-Corpus Boundary"
+  console.log(`\n─── Search-Corpus Boundary: catalog default scope ───`);
+  const PTXPRINT_KB = "https://github.com/klappy/ptxprint-mcp";
+  const scopedCatalog = await callTool("oddkit_catalog", { knowledge_base_url: PTXPRINT_KB });
+  expectFullEnvelope("oddkit_catalog (scoped)", scopedCatalog);
+
+  ok(`scoped catalog: debug.search_scope === "kb_with_required_baseline"`,
+    scopedCatalog.debug?.search_scope === "kb_with_required_baseline",
+    `got: ${scopedCatalog.debug?.search_scope}`);
+  ok(`scoped catalog: debug.overlay_doc_count present and > 0`,
+    typeof scopedCatalog.debug?.overlay_doc_count === "number" && scopedCatalog.debug.overlay_doc_count > 0,
+    `got: ${scopedCatalog.debug?.overlay_doc_count}`);
+  ok(`scoped catalog: debug.baseline_doc_count <= 6 (required-baseline ceiling)`,
+    typeof scopedCatalog.debug?.baseline_doc_count === "number" && scopedCatalog.debug.baseline_doc_count <= 6,
+    `got: ${scopedCatalog.debug?.baseline_doc_count}`);
+  ok(`scoped catalog: result.baseline reflects scoped count (= debug.baseline_doc_count)`,
+    typeof scopedCatalog.result?.baseline === "number" &&
+      scopedCatalog.result.baseline === scopedCatalog.debug?.baseline_doc_count,
+    `result.baseline=${scopedCatalog.result?.baseline} debug.baseline_doc_count=${scopedCatalog.debug?.baseline_doc_count}`);
+  ok(`scoped catalog: result.baseline_total >= result.baseline (full repo count disclosed)`,
+    typeof scopedCatalog.result?.baseline_total === "number" &&
+      scopedCatalog.result.baseline_total >= scopedCatalog.result.baseline,
+    `baseline_total=${scopedCatalog.result?.baseline_total} baseline=${scopedCatalog.result?.baseline}`);
+
+  console.log(`\n─── Search-Corpus Boundary: catalog include_full_baseline opt-in ───`);
+  const mergedCatalog = await callTool("oddkit_catalog", {
+    knowledge_base_url: PTXPRINT_KB,
+    include_full_baseline: true,
+  });
+  expectFullEnvelope("oddkit_catalog (merged)", mergedCatalog);
+
+  ok(`merged catalog: debug.search_scope === "merged"`,
+    mergedCatalog.debug?.search_scope === "merged",
+    `got: ${mergedCatalog.debug?.search_scope}`);
+  ok(`merged catalog: baseline_doc_count is full baseline (much greater than scoped)`,
+    typeof mergedCatalog.debug?.baseline_doc_count === "number" &&
+      mergedCatalog.debug.baseline_doc_count > (scopedCatalog.debug?.baseline_doc_count ?? 0) + 50,
+    `merged=${mergedCatalog.debug?.baseline_doc_count} scoped=${scopedCatalog.debug?.baseline_doc_count}`);
+
+  console.log(`\n─── Search-Corpus Boundary: search default scope ───`);
+  // Negative-control query: this term lives only in klappy.dev's canon, not
+  // ptxprint-mcp's. Under scoped default, klappy.dev hits must NOT surface.
+  const scopedSearch = await callTool("oddkit_search", {
+    input: "release validation gate Bugbot Sonnet validator",
+    knowledge_base_url: PTXPRINT_KB,
+  });
+  expectFullEnvelope("oddkit_search (scoped, klappy.dev-only term)", scopedSearch);
+
+  ok(`scoped search: debug.search_scope === "kb_with_required_baseline"`,
+    scopedSearch.debug?.search_scope === "kb_with_required_baseline",
+    `got: ${scopedSearch.debug?.search_scope}`);
+  ok(`scoped search: debug.search_index_size <= overlay_count + 6`,
+    typeof scopedSearch.debug?.search_index_size === "number" &&
+      typeof scopedSearch.debug?.overlay_doc_count === "number" &&
+      scopedSearch.debug.search_index_size <= scopedSearch.debug.overlay_doc_count + 6,
+    `index_size=${scopedSearch.debug?.search_index_size} overlay=${scopedSearch.debug?.overlay_doc_count}`);
+  // Klappy.dev release-validation-gate doc must NOT appear in scoped hits.
+  const scopedHitPaths = (scopedSearch.result?.hits || []).map((h) => h.path || "");
+  const leakedReleaseGate = scopedHitPaths.some((p) =>
+    p.includes("canon/constraints/release-validation-gate"),
+  );
+  ok(`scoped search: klappy.dev-only doc 'release-validation-gate' does NOT leak into hits`,
+    !leakedReleaseGate,
+    `leak detected in: ${scopedHitPaths.join(", ")}`);
+
+  console.log(`\n─── Search-Corpus Boundary: search include_full_baseline opt-in ───`);
+  const mergedSearch = await callTool("oddkit_search", {
+    input: "release validation gate Bugbot Sonnet validator",
+    knowledge_base_url: PTXPRINT_KB,
+    include_full_baseline: true,
+  });
+  expectFullEnvelope("oddkit_search (merged)", mergedSearch);
+
+  ok(`merged search: debug.search_scope === "merged"`,
+    mergedSearch.debug?.search_scope === "merged",
+    `got: ${mergedSearch.debug?.search_scope}`);
+  ok(`merged search: search_index_size strictly greater than scoped`,
+    typeof mergedSearch.debug?.search_index_size === "number" &&
+      mergedSearch.debug.search_index_size > (scopedSearch.debug?.search_index_size ?? 0),
+    `merged=${mergedSearch.debug?.search_index_size} scoped=${scopedSearch.debug?.search_index_size}`);
+
+  console.log(`\n─── Search-Corpus Boundary: search no-KB is no-op ───`);
+  // When knowledge_base_url is unset, the parameter must be a no-op and scope
+  // must be "merged" (the baseline IS the canon).
+  const defaultSearch = await callTool("oddkit_search", { input: "axioms" });
+  ok(`default search (no KB): debug.search_scope === "merged"`,
+    defaultSearch.debug?.search_scope === "merged",
+    `got: ${defaultSearch.debug?.search_scope}`);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }

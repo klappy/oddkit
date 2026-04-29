@@ -29,6 +29,35 @@ import { RequestTracer } from "./tracing";
 // old code persists until the repo's commit SHA changes.
 const INDEX_VERSION = "2.4"; // 2.4: Cache API migration, KV removal, x-ray tracing (E0008)
 
+/**
+ * Search corpus scope (E0008.5 — Search-Corpus Boundary).
+ *
+ *   "merged"                    — overlay + full baseline (legacy default; default
+ *                                 when knowledge_base_url is unset).
+ *   "kb_with_required_baseline" — overlay + only the required-baseline manifest
+ *                                 paths from the default baseline. Default when
+ *                                 knowledge_base_url is set and the caller has
+ *                                 not opted in via include_full_baseline=true.
+ *
+ * Canon authority for the boundary and the required-baseline list:
+ *   klappy://canon/constraints/core-governance-baseline §"Search-Corpus Boundary"
+ *
+ * Manifest source of truth (ships in workers/baseline/MANIFEST.json):
+ *   The six paths below MUST stay in sync with workers/baseline/MANIFEST.json.
+ *   The manifest is the canon-anchored record; this const is the runtime filter
+ *   used by the worker to avoid a JSON resolution step on the hot path.
+ */
+export type SearchScope = "merged" | "kb_with_required_baseline";
+
+export const REQUIRED_BASELINE_PATHS: ReadonlySet<string> = new Set([
+  "canon/values/orientation.md",
+  "canon/values/axioms.md",
+  "canon/meta/writing-canon.md",
+  "canon/constraints/definition-of-done.md",
+  "canon/constraints/telemetry-governance.md",
+  "odd/challenge/stakes-calibration.md",
+]);
+
 export interface Env {
   DEFAULT_KNOWLEDGE_BASE_URL: string;
   ODDKIT_VERSION: string;
@@ -93,8 +122,20 @@ export interface BaselineIndex {
   stats: {
     total: number;
     canon: number;
+    /** Total baseline files discovered in the default baseline repo. */
     baseline: number;
+    /**
+     * Baseline files actually included in the search index, after scope filtering.
+     * Equal to `baseline` when scope is "merged"; equal to the number of
+     * required-baseline paths present when scope is "kb_with_required_baseline".
+     */
+    baseline_indexed?: number;
   };
+  /**
+   * Search corpus scope under which this index was built (E0008.5).
+   * Absent on indexes built before the field was introduced.
+   */
+  search_scope?: SearchScope;
   commit_sha?: string;
   canon_commit_sha?: string;
 }
@@ -881,11 +922,16 @@ export class KnowledgeBaseFetcher {
    * removing one KV read). Content-addressed by SHA — no TTL needed
    * for correctness. Module cache uses 5-min TTL for freshness.
    */
-  async getIndex(knowledgeBaseUrl?: string): Promise<BaselineIndex> {
+  async getIndex(knowledgeBaseUrl?: string, scope: SearchScope = "merged"): Promise<BaselineIndex> {
     const baselineRepoUrl = "https://github.com/klappy/klappy.dev";
 
+    // Effective scope: scoping only matters when an overlay is set.
+    // When no knowledge_base_url, the baseline IS the canon — there is
+    // nothing to scope away — so force "merged" regardless of caller intent.
+    const effectiveScope: SearchScope = knowledgeBaseUrl ? scope : "merged";
+
     // Step 0: Module-level memory cache (0ms, 5-min TTL)
-    const expectedKey = `v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}`;
+    const expectedKey = `v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}_scope-${effectiveScope}`;
     if (cachedIndex && cachedIndexKey === expectedKey && Date.now() - indexCachedAt < MODULE_CACHE_TTL_MS) {
       this.tracer?.recordFetch({ url: `memory://index/${expectedKey}`, duration_ms: 0, cached: true });
       return cachedIndex;
@@ -896,8 +942,10 @@ export class KnowledgeBaseFetcher {
     const canonRef = knowledgeBaseUrl ? extractBranchRef(knowledgeBaseUrl) : undefined;
     const canonSha = knowledgeBaseUrl ? await this.getLatestCommitSha(knowledgeBaseUrl, canonRef) : undefined;
 
-    // Content-addressed cache key: SHA + version
-    const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}`;
+    // Content-addressed cache key: SHA + version + scope.
+    // Scope is part of the key so a scoped index and a merged index against
+    // the same KB do not poison each other's cached form.
+    const shaKey = `${baselineSha || "unknown"}_${canonSha || "none"}_${effectiveScope}`;
     const cacheKey = `index/v${INDEX_VERSION}/${getCacheKey(knowledgeBaseUrl || "default")}_${shaKey}`;
 
     // Step 2: Cache API (~1ms edge read) — cacheGet records the cf-cache:// fetch.
@@ -973,8 +1021,19 @@ export class KnowledgeBaseFetcher {
       canonEntries = await this.buildIndexFromRepo(knowledgeBaseUrl, "canon", skipCache);
     }
 
+    // Search-Corpus Boundary (E0008.5): when scoped, restrict baseline entries
+    // to only the required-baseline manifest before arbitration. Per
+    // klappy://canon/constraints/core-governance-baseline §"Search-Corpus
+    // Boundary", this preserves required-baseline as the floor while excluding
+    // co-located canon-only content (writings/, apocrypha/, odd/ledger/, etc.)
+    // that would otherwise outrank the project KB's own canon in BM25.
+    const scopedBaselineEntries =
+      effectiveScope === "kb_with_required_baseline"
+        ? baselineEntries.filter((e) => REQUIRED_BASELINE_PATHS.has(e.path))
+        : baselineEntries;
+
     // Arbitrate — canon overrides baseline
-    const allEntries = this.arbitrateEntries(canonEntries, baselineEntries);
+    const allEntries = this.arbitrateEntries(canonEntries, scopedBaselineEntries);
 
     const index: BaselineIndex = {
       version: INDEX_VERSION,
@@ -986,7 +1045,9 @@ export class KnowledgeBaseFetcher {
         total: allEntries.length,
         canon: canonEntries.length,
         baseline: baselineEntries.length,
+        baseline_indexed: scopedBaselineEntries.length,
       },
+      search_scope: effectiveScope,
       commit_sha: baselineSha || undefined,
       canon_commit_sha: canonSha || undefined,
     };
