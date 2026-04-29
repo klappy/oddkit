@@ -15,6 +15,7 @@ import {
   type Env,
   type BaselineIndex,
   type IndexEntry,
+  type SearchScope,
   type SectionResult,
 } from "./zip-baseline-fetcher";
 import { buildBM25Index, searchBM25, tokenize, type BM25Index } from "./bm25";
@@ -235,6 +236,14 @@ export interface UnifiedParams {
   knowledge_base_url?: string;
   result_grouping?: ResultGrouping;
   include_metadata?: boolean;
+  /**
+   * Search-Corpus Boundary opt-in (E0008.5). When `knowledge_base_url` is set,
+   * the search corpus defaults to overlay + required-baseline-manifest only.
+   * Set this to true to restore the legacy merged corpus (overlay + full
+   * baseline). When `knowledge_base_url` is unset, this parameter is a no-op.
+   * Authority: klappy://canon/constraints/core-governance-baseline §"Search-Corpus Boundary".
+   */
+  include_full_baseline?: boolean;
   section?: string;
   sort_by?: string;
   limit?: number;
@@ -1348,9 +1357,10 @@ async function runSearch(
   state?: OddkitState,
   includeMetadata?: boolean,
   resolvedGrouping: ResultGrouping = "merged",
+  searchScope: SearchScope = "merged",
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(knowledgeBaseUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl, searchScope);
   const bm25 = getBM25Index(index.entries);
 
   // Issue #150 fix-forward: when grouping is active, retrieve a wider candidate
@@ -1412,6 +1422,9 @@ async function runSearch(
         baseline_url: index.baseline_url,
         knowledge_base_url: knowledgeBaseUrl,
         search_index_size: bm25.N,
+        search_scope: index.search_scope,
+        overlay_doc_count: index.stats.canon,
+        baseline_doc_count: index.stats.baseline_indexed ?? index.stats.baseline,
         result_grouping: resolvedGrouping,
         duration_ms: Date.now() - startMs,
         generated_at: new Date().toISOString(),
@@ -1499,6 +1512,9 @@ async function runSearch(
       baseline_url: index.baseline_url,
       knowledge_base_url: knowledgeBaseUrl,
       search_index_size: bm25.N,
+      search_scope: index.search_scope,
+      overlay_doc_count: index.stats.canon,
+      baseline_doc_count: index.stats.baseline_indexed ?? index.stats.baseline,
       result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
@@ -2247,9 +2263,10 @@ async function runCatalog(
   knowledgeBaseUrl?: string,
   state?: OddkitState,
   options?: { sort_by?: string; limit?: number; offset?: number; filter_epoch?: string },
+  searchScope: SearchScope = "merged",
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(knowledgeBaseUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl, searchScope);
   const { sort_by, limit: rawLimit, offset: rawOffset, filter_epoch } = options || {};
   const effectiveLimit = Math.min(Math.max(rawLimit || 10, 1), 500);
   const effectiveOffset = Math.max(rawOffset || 0, 0);
@@ -2315,10 +2332,16 @@ async function runCatalog(
     }));
   }
 
+  const baselineCount = index.stats.baseline_indexed ?? index.stats.baseline;
+  const scopeNote =
+    index.search_scope === "kb_with_required_baseline"
+      ? ` [scoped: required-baseline only; pass include_full_baseline=true to merge]`
+      : "";
+
   const assistantTextParts = [
     `ODD Documentation Catalog`,
     ``,
-    `Total: ${index.stats.total} docs (${index.stats.canon} canon, ${index.stats.baseline} baseline)`,
+    `Total: ${index.stats.total} docs (${index.stats.canon} canon, ${baselineCount} baseline)${scopeNote}`,
     knowledgeBaseUrl ? `Canon override: ${knowledgeBaseUrl}` : "",
     ``,
     `Start here:`,
@@ -2352,7 +2375,8 @@ async function runCatalog(
   const result: Record<string, unknown> = {
     total: index.stats.total,
     canon: index.stats.canon,
-    baseline: index.stats.baseline,
+    baseline: baselineCount,
+    baseline_total: index.stats.baseline,
     categories: Object.keys(byTag),
     start_here: startHere.map((e) => e.path),
   };
@@ -2376,6 +2400,9 @@ async function runCatalog(
     debug: {
       knowledge_base_url: knowledgeBaseUrl,
       baseline_url: index.baseline_url,
+      search_scope: index.search_scope,
+      overlay_doc_count: index.stats.canon,
+      baseline_doc_count: index.stats.baseline_indexed ?? index.stats.baseline,
       generated_at: new Date().toISOString(),   // response time — consistent with all other handlers
       index_built_at: index.generated_at,       // preserve cache-freshness diagnostic under accurate name
       duration_ms: Date.now() - startMs,
@@ -2389,9 +2416,10 @@ async function runPreflight(
   knowledgeBaseUrl?: string,
   state?: OddkitState,
   resolvedGrouping: ResultGrouping = "merged",
+  searchScope: SearchScope = "merged",
 ): Promise<ActionResult> {
   const startMs = Date.now();
-  const index = await fetcher.getIndex(knowledgeBaseUrl);
+  const index = await fetcher.getIndex(knowledgeBaseUrl, searchScope);
   const topic = message.replace(/^preflight:\s*/i, "").trim();
 
   // Score all entries, then apply partition before slicing
@@ -2453,6 +2481,9 @@ async function runPreflight(
     debug: {
       docs_considered: index.entries.length,
       knowledge_base_url: knowledgeBaseUrl,
+      search_scope: index.search_scope,
+      overlay_doc_count: index.stats.canon,
+      baseline_doc_count: index.stats.baseline_indexed ?? index.stats.baseline,
       result_grouping: resolvedGrouping,
       duration_ms: Date.now() - startMs,
       generated_at: new Date().toISOString(),
@@ -3333,13 +3364,23 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, knowledge_base_url, result_grouping, include_metadata, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
+  const { action, input, context, mode, knowledge_base_url, result_grouping, include_metadata, include_full_baseline, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
 
   // Conditional default: when knowledge_base_url is set and caller didn't
   // specify result_grouping, default to "overlay_first" (the fix for #150).
   // When KB is unset, default to "merged" (no behavior change).
   const resolvedGrouping: ResultGrouping =
     result_grouping ?? (knowledge_base_url ? "overlay_first" : "merged");
+
+  // Search-Corpus Boundary (E0008.5): when knowledge_base_url is set, the
+  // search corpus defaults to overlay + required-baseline only. Callers opt
+  // in to the legacy merged corpus via include_full_baseline=true. When
+  // knowledge_base_url is unset, the parameter is a no-op and scope is
+  // forced to "merged" (the baseline IS the canon — there is nothing to
+  // scope away). Authority: klappy://canon/constraints/core-governance-baseline
+  // §"Search-Corpus Boundary".
+  const resolvedScope: SearchScope =
+    knowledge_base_url && !include_full_baseline ? "kb_with_required_baseline" : "merged";
 
   if (!VALID_ACTIONS.includes(action as (typeof VALID_ACTIONS)[number])) {
     return {
@@ -3371,7 +3412,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runEncodeAction(input, context, fetcher, knowledge_base_url, state);
         break;
       case "search":
-        result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata, resolvedGrouping);
+        result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata, resolvedGrouping, resolvedScope);
         break;
       case "get":
         result = await runGet(input, fetcher, knowledge_base_url, state, include_metadata, section);
@@ -3383,13 +3424,13 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runAudit(input, fetcher, knowledge_base_url, state);
         break;
       case "catalog":
-        result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch });
+        result = await runCatalog(fetcher, knowledge_base_url, state, { sort_by, limit, offset, filter_epoch }, resolvedScope);
         break;
       case "validate":
         result = await runValidate(input, state);
         break;
       case "preflight":
-        result = await runPreflight(input, fetcher, knowledge_base_url, state, resolvedGrouping);
+        result = await runPreflight(input, fetcher, knowledge_base_url, state, resolvedGrouping, resolvedScope);
         break;
       case "version":
         result = runVersion(env);
@@ -3398,7 +3439,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runCleanupStorage(fetcher, knowledge_base_url);
         break;
       default:
-        result = await runSearch(input, fetcher, knowledge_base_url, state, undefined, resolvedGrouping);
+        result = await runSearch(input, fetcher, knowledge_base_url, state, undefined, resolvedGrouping, resolvedScope);
     }
 
     // Inject trace into debug envelope (E0008.1)
