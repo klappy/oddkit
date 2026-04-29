@@ -303,8 +303,8 @@ export async function handleAction(params) {
         const rawResults = searchBM25(bm25, input, candidateLimit);
         const orderedResults = hasMixedOrigins
           ? [...rawResults].sort((a, b) => {
-              const ao = docMap.get(a.id)?.origin || "local";
-              const bo = docMap.get(b.id)?.origin || "local";
+              const ao = docMap.get(a.id)?.origin || "baseline";
+              const bo = docMap.get(b.id)?.origin || "baseline";
               if (ao !== bo) return ao === "local" ? -1 : 1;
               return b.score - a.score;
             })
