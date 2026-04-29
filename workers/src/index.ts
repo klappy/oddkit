@@ -394,6 +394,7 @@ Use when:
         input: z.string().describe("Description of what you're about to implement."),
         knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
         result_grouping: z.enum(["merged", "overlay_first", "grouped"]).optional().describe("Controls how overlay (knowledge_base) and baseline start_here results are ordered. 'merged' = pure score order (default when knowledge_base_url unset). 'overlay_first' = overlay docs ranked above baseline (default when knowledge_base_url set). 'grouped' = separate start_here_overlay/start_here_baseline arrays."),
+        include_full_baseline: z.boolean().optional().describe("Search-Corpus Boundary opt-in (E0008.5). When knowledge_base_url is set, the preflight corpus defaults to overlay + required-baseline only. Pass true to restore the legacy merged corpus (overlay + full baseline). When knowledge_base_url is unset, this is a no-op. Authority: klappy://canon/constraints/core-governance-baseline §'Search-Corpus Boundary'."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
