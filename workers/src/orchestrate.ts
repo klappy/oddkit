@@ -71,10 +71,27 @@ type ActionResult = Omit<OddkitEnvelope, "server_time">;
 // match triggers on every English paragraph.
 interface EncodingTypeDef {
   letter: string;
+  // DOLCHEO facet — distinguishes peer types that share a letter (e.g. closed
+  // Observation has no facet or facet="closed"; Open is letter "O" facet="open").
+  // Parsed from the Type Identity table's optional `Facet` row in the source
+  // article, not from frontmatter. Dedup is by (letter, facet) pair so both
+  // entries survive — the pre-#173 dedup-by-letter dropped Open's quality
+  // criteria silently. See E0008.4 Phase 2 handoff.
+  facet?: string;
   name: string;
   triggerWords: string[];
   stemmedPhrases: string[][];
   qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }>;
+  // Source article URI — populated when this type was discovered from canon
+  // (knowledge_base path) and used to build the encode action's
+  // governance_uris envelope. Absent on inline-fallback types.
+  sourceUri?: string;
+  // Recommended field schema parsed from the article's `## Field Schema`
+  // section (the table that begins with `| Field | Recommended | Description |`).
+  // Surfaced via the optional governance_extended payload (Item 4 / Gap 4 close)
+  // so the model can self-teach the input format from a single encode call
+  // without separate oddkit_get fetches per article.
+  fieldSchema?: Array<{ field: string; recommended: string; description: string }>;
 }
 
 interface ParsedArtifact {
@@ -249,6 +266,16 @@ export interface UnifiedParams {
   limit?: number;
   offset?: number;
   filter_epoch?: string;
+  /**
+   * Optional self-teaching surface for action='encode' (E0008.4 Phase 2 Item 4).
+   * When true, the encode response includes a `governance_extended` payload
+   * carrying the parsed Field Schema, Quality Criteria, trigger words, and
+   * facet for every discovered encoding type, plus URIs for the meta
+   * serialization-format and how-to-write articles. Off by default to avoid
+   * token bloat for callers that already know the format. No-op for other
+   * actions. Authority: klappy://odd/handoffs/2026-04-30-encode-vodka-refactor-alternative-d-revised.
+   */
+  include_governance_details?: boolean;
   state?: OddkitState;
   env: Env;
   tracer?: RequestTracer;
@@ -448,9 +475,17 @@ async function discoverEncodingTypes(
 
       const identityMatch = content.match(/\|\s*Letter\s*\|\s*([A-Z])\s*\|/);
       const nameMatch = content.match(/\|\s*Name\s*\|\s*([^|]+)\s*\|/);
+      // Facet is optional — peer types that share a letter use it to
+      // disambiguate (Open is letter "O" facet="open"; closed Observation
+      // has no facet row, treated as facet=undefined). Parsed from the same
+      // Type Identity table format as Letter/Name. Per E0008.4 Phase 2
+      // handoff Item 2 — fixes the dedup-by-letter bug that silently dropped
+      // Open's 5 quality criteria in favor of Observation's 4.
+      const facetMatch = content.match(/\|\s*Facet\s*\|\s*([^|]+)\s*\|/);
       if (!identityMatch) continue;
 
       const letter = identityMatch[1];
+      const facet = facetMatch ? facetMatch[1].trim() : undefined;
       const name = nameMatch ? nameMatch[1].trim() : letter;
 
       const triggerSection = content.match(
@@ -499,22 +534,62 @@ async function discoverEncodingTypes(
         }
       }
 
-      types.push({ letter, name, triggerWords, stemmedPhrases, qualityCriteria });
+      // Field Schema for Item 4 (governance_extended self-teaching surface).
+      // The Field Schema section in each encoding-type article carries a
+      // table headed `| Field | Recommended | Description |` (the column the
+      // model populates when authoring a row of this type). Parsed once here
+      // so the runtime can surface it via the governance_extended payload
+      // when callers opt in via include_governance_details. Optional —
+      // articles without the section just leave fieldSchema undefined.
+      const fieldSchemaSection = content.match(
+        /## Field Schema[\s\S]*?\| Field \| Recommended \| Description \|[\s\S]*?\|[-|\s]+\|\n([\s\S]*?)(?=\n\n|\n##|$)/,
+      );
+      const fieldSchema: Array<{ field: string; recommended: string; description: string }> = [];
+      if (fieldSchemaSection) {
+        for (const row of fieldSchemaSection[1].split("\n").filter((r: string) => r.includes("|"))) {
+          const cols = parseTableRow(row);
+          if (cols.length >= 3) {
+            fieldSchema.push({
+              field: cols[0],
+              recommended: cols[1],
+              description: cols[2].replace(/^"|"$/g, ""),
+            });
+          }
+        }
+      }
+
+      const td: EncodingTypeDef = {
+        letter,
+        name,
+        triggerWords,
+        stemmedPhrases,
+        qualityCriteria,
+        sourceUri: article.uri,
+      };
+      if (facet) td.facet = facet;
+      if (fieldSchema.length > 0) td.fieldSchema = fieldSchema;
+      types.push(td);
     } catch {
       continue;
     }
   }
 
-  // Deduplicate by letter: per DOLCHEO, both closed Observation and Open share
-  // letter "O" (with Open distinguished by facet, not letter). If canon contains
-  // multiple `encoding-type`-tagged docs with the same letter (e.g. observation.md
-  // and open.md), keep the first one discovered — the letter registry is
-  // single-character-per-entry.
+  // Deduplicate by (letter, facet) pair — peer types share a letter and are
+  // disambiguated by facet (closed Observation: letter "O", facet undefined;
+  // Open: letter "O", facet "open"). Pre-#173 dedup was by letter alone, so
+  // alphabetical-by-path ordering kept observation.md and silently dropped
+  // open.md — Open was registered in name only and scored against
+  // Observation's 4 criteria instead of its own 5. Verified live on prod
+  // 0.27.0: `[O-open P1] body` returned quality.score 4 / maxScore 4. The
+  // pair-keyed dedup keeps both entries; the scorer in runEncodeAction
+  // selects criteria by the artifact's parsed (type, facet) pair, matching
+  // the facet that parsePrefixedBatchInput already sets on each artifact.
   const deduped: EncodingTypeDef[] = [];
   const seen = new Set<string>();
   for (const t of types) {
-    if (seen.has(t.letter)) continue;
-    seen.add(t.letter);
+    const key = `${t.letter}::${t.facet ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     deduped.push(t);
   }
 
@@ -524,28 +599,35 @@ async function discoverEncodingTypes(
     resolved = deduped;
     source = "knowledge_base";
   } else {
-    // Minimal DOLCHEO fallback — six letters per canon/definitions/dolcheo-vocabulary.
-    // Open is a facet of O, not a separate letter; the prefix parser surfaces
-    // it via the [O-open] tag. Upgraded from the pre-DOLCHEO 5-letter OLDC+H.
-    const defaults: Array<[string, string, string[]]> = [
-      ["D", "Decision",    ["decided", "decision", "chose", "committed to", "going with"]],
-      ["O", "Observation", ["observed", "noticed", "found", "measured", "detected"]],
-      ["L", "Learning",    ["learned", "realized", "discovered", "turns out", "insight"]],
-      ["C", "Constraint",  ["must", "must not", "never", "always", "constraint", "cannot"]],
-      ["H", "Handoff",     ["next session", "next step", "todo", "follow up", "blocked by"]],
-      ["E", "Encode",      ["encoded", "captured", "crystallized", "persisted", "artifact"]],
+    // Minimal DOLCHEO fallback — seven entries per canon/definitions/dolcheo-vocabulary
+    // and odd/encoding-types/open.md. Letter "O" appears twice (closed
+    // Observation + Open facet); the (letter, facet) dedup above keeps both.
+    // Pre-#173 fallback was six entries (D, O, L, C, H, E) and lost Open
+    // entirely when canon was unreachable — the prefix parser's [O-open] tag
+    // fell through to the Observation handler in that case. Per E0008.4
+    // Phase 2 Item 3.
+    const defaults: Array<[string, string | undefined, string, string[]]> = [
+      ["D", undefined, "Decision",    ["decided", "decision", "chose", "committed to", "going with"]],
+      ["O", undefined, "Observation", ["observed", "noticed", "found", "measured", "detected"]],
+      ["O", "open",    "Open",        ["open item", "still need to", "haven't decided", "unresolved", "pending", "awaiting", "todo", "followup", "next up", "parked", "holding", "in flight"]],
+      ["L", undefined, "Learning",    ["learned", "realized", "discovered", "turns out", "insight"]],
+      ["C", undefined, "Constraint",  ["must", "must not", "never", "always", "constraint", "cannot"]],
+      ["H", undefined, "Handoff",     ["next session", "next step", "todo", "follow up", "blocked by"]],
+      ["E", undefined, "Encode",      ["encoded", "captured", "crystallized", "persisted", "artifact"]],
     ];
-    resolved = defaults.map(([letter, name, words]) => {
+    resolved = defaults.map(([letter, facet, name, words]) => {
       const stemmedPhrases: string[][] = [];
       for (const word of words) {
         const stems = tokenize(word, new Set());
         if (stems.length > 0) stemmedPhrases.push(stems);
       }
-      return {
+      const td: EncodingTypeDef = {
         letter, name, triggerWords: words,
         stemmedPhrases,
         qualityCriteria: [],
       };
+      if (facet) td.facet = facet;
+      return td;
     });
     source = "minimal";
   }
@@ -1148,7 +1230,16 @@ function matchesStemmedPhrases(phrases: string[][], input: Set<string>): boolean
 }
 
 function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
-  const typeMap = new Map(types.map((t) => [t.letter, t.name]));
+  // Build a (letter, facet) lookup so peer types that share a letter (closed
+  // Observation vs Open) resolve to their own canon article. Pre-#173 the
+  // map was letter → name only, so [O-open] artifacts surfaced as
+  // "Observation (Open)" in typeName and were scored against Observation's
+  // criteria even after dedup-by-letter was fixed downstream. Per E0008.4
+  // Phase 2 Item 2.
+  const typeByPair = new Map<string, EncodingTypeDef>();
+  for (const t of types) {
+    typeByPair.set(`${t.letter}::${t.facet ?? ""}`, t);
+  }
   const paragraphs = input.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
   const artifacts: ParsedArtifact[] = [];
 
@@ -1165,8 +1256,16 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
       const title = first.split(/\s+/).length <= 12
         ? first
         : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-      const baseName = typeMap.get(letter) || letter;
-      const typeName = facet === "open" ? `${baseName} (Open)` : baseName;
+      // Resolve by (letter, facet) pair first; fall back to letter-only when
+      // no facet entry exists (e.g. canon registers facet but the request
+      // uses bare [O], or vice versa). Keeps "Observation (Open)" framing
+      // out of the typeName when Open is a separately-registered type — its
+      // own name from canon now wins.
+      const matchedType =
+        typeByPair.get(`${letter}::${facet ?? ""}`) ??
+        typeByPair.get(`${letter}::`) ??
+        types.find((t) => t.letter === letter);
+      const typeName = matchedType?.name ?? letter;
       const artifact: ParsedArtifact = {
         type: letter,
         typeName,
@@ -1197,13 +1296,15 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
       const title = first.split(/\s+/).length <= 12
         ? first
         : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-      artifacts.push({
+      const untagged: ParsedArtifact = {
         type: pick.letter,
         typeName: pick.name,
         fields: [pick.letter, title, para],
         title,
         body: para,
-      });
+      };
+      if (pick.facet) untagged.facet = pick.facet;
+      artifacts.push(untagged);
     }
   }
 
@@ -1211,7 +1312,17 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
 }
 
 function parseStructuredInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
-  const typeMap = new Map(types.map((t) => [t.letter, t.name]));
+  // TSV has no facet column, so a bare letter must resolve to the no-facet
+  // peer (closed Observation for "O"). A naive letter→name Map collides when
+  // peers share a letter (Observation + Open both letter "O") — last-write
+  // wins under alphabetical canon ordering put "Open" on the "O" key. Prefer
+  // the no-facet entry; fall back to the first registered name when no
+  // no-facet entry exists. Per E0008.4 Phase 2 Item 2.
+  const typeMap = new Map<string, string>();
+  for (const t of types) {
+    const existing = typeMap.get(t.letter);
+    if (existing === undefined || !t.facet) typeMap.set(t.letter, t.name);
+  }
   return input.split("\n").filter((l) => l.trim().length > 0).map((line) => {
     const fields = line.split("\t");
     const letter = fields[0]?.trim() || "D";
@@ -1242,7 +1353,9 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
       if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) {
         const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-        artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
+        const a: ParsedArtifact = { type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() };
+        if (t.facet) a.facet = t.facet;
+        artifacts.push(a);
         matched = true;
       }
     }
@@ -1250,7 +1363,9 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
       const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
       const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
       const fallback = types[0] || { letter: "D", name: "Decision" };
-      artifacts.push({ type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() });
+      const a: ParsedArtifact = { type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() };
+      if (fallback.facet) a.facet = fallback.facet;
+      artifacts.push(a);
     }
   }
   return artifacts;
@@ -3238,6 +3353,7 @@ async function runEncodeAction(
   fetcher: KnowledgeBaseFetcher,
   knowledgeBaseUrl?: string,
   state?: OddkitState,
+  includeGovernanceDetails?: boolean,
 ): Promise<ActionResult> {
   const startMs = Date.now();
   // Governance: input generates artifacts; context only informs quality scoring.
@@ -3260,11 +3376,20 @@ async function runEncodeAction(
     : parseUnstructuredInput(input, types);
 
   // Score each artifact using its type's quality criteria.
+  // Look up by (letter, facet) pair, not letter alone — peer types share a
+  // letter (closed Observation: O / undefined; Open: O / "open") and were
+  // silently scored against Observation's 4 criteria pre-#173. Falls back to
+  // letter-only lookup for artifacts that lack a facet (TSV path, prose
+  // path), preserving the prior behavior on those surfaces. Per E0008.4
+  // Phase 2 Item 2.
   // When context is provided, append it to the artifact's body for scoring
   // so background information (rationale, alternatives, evidence) counts
   // toward the artifact's quality without becoming separate artifacts.
   const scoredArtifacts = artifacts.map((a) => {
-    const typeDef = types.find((t) => t.letter === a.type);
+    const typeDef =
+      types.find((t) => t.letter === a.type && (t.facet ?? undefined) === (a.facet ?? undefined)) ??
+      types.find((t) => t.letter === a.type && !t.facet) ??
+      types.find((t) => t.letter === a.type);
     const criteria = typeDef ? typeDef.qualityCriteria : [];
     const scoringText = context ? `${a.body}\n${context}` : undefined;
     const quality = scoreArtifactQuality(a, criteria, scoringText);
@@ -3319,20 +3444,83 @@ async function runEncodeAction(
   lines.push("---");
   lines.push("**Encoding types (governance):**");
   for (const t of types) {
-    lines.push(`- **${t.letter}** — ${t.name}`);
+    const label = t.facet ? `${t.letter} (${t.facet})` : t.letter;
+    lines.push(`- **${label}** — ${t.name}`);
+  }
+
+  // Item 1 — governance_uris plural array, alphabetical by URI. Aligns the
+  // encode action's envelope with the challenge (P1.3.1) and gate (P1.3.2)
+  // canaries, both of which declare governance_uris. Encode's array is
+  // dynamic per request: every encoding-type article actually fetched
+  // (those that yielded a Letter row, plus the meta serialization-format
+  // article which is also tagged encoding-type), plus the how-to-write
+  // meta article (tagged encoding-type-meta and so not in typeArticles).
+  // Deduped + sorted so the array is stable across requests with the same
+  // canon. Per E0008.4 Phase 2 Item 1.
+  const consultedUris = new Set<string>();
+  for (const t of types) {
+    if (t.sourceUri) consultedUris.add(t.sourceUri);
+  }
+  consultedUris.add("klappy://odd/encoding-types/serialization-format");
+  consultedUris.add("klappy://odd/encoding-types/how-to-write-encoding-types");
+  const governanceUris = Array.from(consultedUris).sort();
+
+  // Item 4 — optional self-teaching payload. Closes Gap 4 from the original
+  // architecture brief: pre-#173 the envelope returned only [{ letter, name }]
+  // per type, so a model wanting to learn the input format or scoring rubric
+  // had to issue a separate oddkit_get per article. Gated by request param to
+  // avoid token bloat for callers who already know the format. When opted in,
+  // the payload carries the parsed Field Schema, Quality Criteria, trigger
+  // words, and facet for each type plus URIs for the two meta articles.
+  const result: Record<string, unknown> = {
+    status: "ENCODED",
+    artifacts: scoredArtifacts,
+    governance: types.map((t) => {
+      const g: { letter: string; facet?: string; name: string } = {
+        letter: t.letter, name: t.name,
+      };
+      if (t.facet) g.facet = t.facet;
+      return g;
+    }),
+    governance_source: governanceSource,
+    governance_uris: governanceUris,
+    // Deprecation alias retained for one minor (0.28.0). Removed in 0.29.0.
+    // Consumers that read governance_uri[0] today should migrate to
+    // governance_uris[0]; the singular continues to point to the DOLCHEO
+    // umbrella vocabulary, which is the conceptual anchor (the dynamic
+    // articles are its expressions).
+    governance_uri: "klappy://canon/definitions/dolcheo-vocabulary",
+    persist_required: true,
+    next_action: "Save these artifacts to storage. Encode does NOT persist.",
+  };
+  if (includeGovernanceDetails) {
+    result.governance_extended = {
+      types: types.map((t) => {
+        const ext: {
+          letter: string; facet?: string; name: string;
+          fieldSchema?: Array<{ field: string; recommended: string; description: string }>;
+          qualityCriteria: Array<{ criterion: string; check: string; gapMessage: string }>;
+          triggerWords: string[];
+          sourceUri?: string;
+        } = {
+          letter: t.letter,
+          name: t.name,
+          qualityCriteria: t.qualityCriteria,
+          triggerWords: t.triggerWords,
+        };
+        if (t.facet) ext.facet = t.facet;
+        if (t.fieldSchema) ext.fieldSchema = t.fieldSchema;
+        if (t.sourceUri) ext.sourceUri = t.sourceUri;
+        return ext;
+      }),
+      serializationFormatUri: "klappy://odd/encoding-types/serialization-format",
+      howToWriteUri: "klappy://odd/encoding-types/how-to-write-encoding-types",
+    };
   }
 
   return {
     action: "encode",
-    result: {
-      status: "ENCODED",
-      artifacts: scoredArtifacts,
-      governance: types.map((t) => ({ letter: t.letter, name: t.name })),
-      governance_source: governanceSource,
-      governance_uri: "klappy://canon/definitions/dolcheo-vocabulary",
-      persist_required: true,
-      next_action: "Save these artifacts to storage. Encode does NOT persist.",
-    },
+    result,
     state: updatedState,
     assistant_text: lines.join("\n").trim(),
     debug: {
@@ -3364,7 +3552,7 @@ const VALID_ACTIONS = [
 ] as const;
 
 export async function handleUnifiedAction(params: UnifiedParams): Promise<OddkitEnvelope> {
-  const { action, input, context, mode, knowledge_base_url, result_grouping, include_metadata, include_full_baseline, section, sort_by, limit, offset, filter_epoch, state, env, tracer } = params;
+  const { action, input, context, mode, knowledge_base_url, result_grouping, include_metadata, include_full_baseline, section, sort_by, limit, offset, filter_epoch, include_governance_details, state, env, tracer } = params;
 
   // Conditional default: when knowledge_base_url is set and caller didn't
   // specify result_grouping, default to "overlay_first" (the fix for #150).
@@ -3409,7 +3597,7 @@ export async function handleUnifiedAction(params: UnifiedParams): Promise<Oddkit
         result = await runGateAction(input, context, fetcher, knowledge_base_url, state);
         break;
       case "encode":
-        result = await runEncodeAction(input, context, fetcher, knowledge_base_url, state);
+        result = await runEncodeAction(input, context, fetcher, knowledge_base_url, state, include_governance_details);
         break;
       case "search":
         result = await runSearch(input, fetcher, knowledge_base_url, state, include_metadata, resolvedGrouping, resolvedScope);

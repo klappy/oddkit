@@ -228,6 +228,7 @@ Use when:
       limit: z.number().min(1).max(500).optional().describe("For action='catalog': max articles to return when sort_by is provided. Default: 10, max: 500."),
       offset: z.number().min(0).optional().describe("For action='catalog': skip this many articles before returning results. Use with limit for pagination. Default: 0."),
       filter_epoch: z.string().optional().describe("For action='catalog': filter to articles with this epoch value in frontmatter (e.g. 'E0007')."),
+      include_governance_details: z.boolean().optional().describe("For action='encode': when true, the response includes a `governance_extended` payload carrying the parsed Field Schema, Quality Criteria, trigger words, and facet for every discovered encoding type, plus URIs for the meta serialization-format and how-to-write articles. Off by default to avoid token bloat for callers that already know the format. Per E0008.4 Phase 2 / klappy://odd/handoffs/2026-04-30-encode-vodka-refactor-alternative-d-revised."),
       state: z.record(z.string(), z.unknown()).optional().describe("Optional client-side conversation state, passed back and forth."),
     },
     {
@@ -251,6 +252,7 @@ Use when:
         limit: args.limit,
         offset: args.offset,
         filter_epoch: args.filter_epoch,
+        include_governance_details: args.include_governance_details,
         state: args.state as any,
         env,
         tracer,
@@ -309,12 +311,13 @@ Use when:
     },
     {
       name: "oddkit_encode",
-      description: "Structure decisions, insights, or boundaries as DOLCHEO artifacts (canon/definitions/dolcheo-vocabulary) — Decisions (D), Observations closed (O), Learnings (L), Constraints (C), Handoffs (H), Encodes (E), Opens (O-open, facet of O). IMPORTANT: does NOT persist — caller must save output to storage. Batch mode: paragraph-split input with optional prefix tags like '[D] body', '[O] body', '[O-open P1] body' returns a per-artifact array. Unprefixed input uses trigger-word classification (back-compat). Response envelope declares governance_source (knowledge_base|minimal) per canon/constraints/core-governance-baseline. Accepts knowledge_base_url to read the encoding-type vocabulary from an alternate knowledge base.",
+      description: "Structure decisions, insights, or boundaries as DOLCHEO artifacts (canon/definitions/dolcheo-vocabulary) — Decisions (D), Observations closed (O), Learnings (L), Constraints (C), Handoffs (H), Encodes (E), Opens (O-open, peer of Observation sharing letter O via facet='open'). IMPORTANT: does NOT persist — caller must save output to storage. Batch mode: paragraph-split input with optional prefix tags like '[D] body', '[O] body', '[O-open P1] body' returns a per-artifact array. Unprefixed input uses trigger-word classification (back-compat). Response envelope declares governance_source (knowledge_base|minimal) and governance_uris (plural array, alphabetical, dynamic per request — every encoding-type article actually consulted plus the meta serialization-format and how-to-write articles) per canon/constraints/core-governance-baseline; governance_uri (singular) is retained as a deprecation alias for one minor and removed in 0.29.0. Pass include_governance_details=true to receive a governance_extended payload with parsed Field Schema, Quality Criteria, trigger words, and facet per type — single-call self-teaching surface for the input format and scoring rubric. Accepts knowledge_base_url to read the encoding-type vocabulary from an alternate knowledge base.",
       action: "encode",
       schema: {
         input: z.string().describe("A decision, insight, or boundary to capture."),
-        context: z.string().optional().describe("Optional supporting context."),
+        context: z.string().optional().describe("Optional supporting context — informs quality scoring without becoming separate artifacts."),
         knowledge_base_url: z.string().optional().describe("Optional: GitHub repo URL for your knowledge base. When set, strict mode is automatic: missing files fall through to the bundled governance tier."),
+        include_governance_details: z.boolean().optional().describe("When true, the response includes a `governance_extended` payload with parsed Field Schema, Quality Criteria, trigger words, and facet for every discovered encoding type, plus URIs for the meta serialization-format and how-to-write articles. Off by default to avoid token bloat for callers that already know the format."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -449,6 +452,7 @@ Use when:
           limit: args.limit as number | undefined,
           offset: args.offset as number | undefined,
           filter_epoch: args.filter_epoch as string | undefined,
+          include_governance_details: args.include_governance_details as boolean | undefined,
           env,
           tracer,
         });
