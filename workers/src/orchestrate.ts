@@ -1296,13 +1296,15 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
       const title = first.split(/\s+/).length <= 12
         ? first
         : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-      artifacts.push({
+      const untagged: ParsedArtifact = {
         type: pick.letter,
         typeName: pick.name,
         fields: [pick.letter, title, para],
         title,
         body: para,
-      });
+      };
+      if (pick.facet) untagged.facet = pick.facet;
+      artifacts.push(untagged);
     }
   }
 
@@ -1310,7 +1312,17 @@ function parsePrefixedBatchInput(input: string, types: EncodingTypeDef[]): Parse
 }
 
 function parseStructuredInput(input: string, types: EncodingTypeDef[]): ParsedArtifact[] {
-  const typeMap = new Map(types.map((t) => [t.letter, t.name]));
+  // TSV has no facet column, so a bare letter must resolve to the no-facet
+  // peer (closed Observation for "O"). A naive letter→name Map collides when
+  // peers share a letter (Observation + Open both letter "O") — last-write
+  // wins under alphabetical canon ordering put "Open" on the "O" key. Prefer
+  // the no-facet entry; fall back to the first registered name when no
+  // no-facet entry exists. Per E0008.4 Phase 2 Item 2.
+  const typeMap = new Map<string, string>();
+  for (const t of types) {
+    const existing = typeMap.get(t.letter);
+    if (existing === undefined || !t.facet) typeMap.set(t.letter, t.name);
+  }
   return input.split("\n").filter((l) => l.trim().length > 0).map((line) => {
     const fields = line.split("\t");
     const letter = fields[0]?.trim() || "D";
@@ -1341,7 +1353,9 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
       if (matchesStemmedPhrases(t.stemmedPhrases, inputStems)) {
         const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
         const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
-        artifacts.push({ type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() });
+        const a: ParsedArtifact = { type: t.letter, typeName: t.name, fields: [t.letter, title, para.trim()], title, body: para.trim() };
+        if (t.facet) a.facet = t.facet;
+        artifacts.push(a);
         matched = true;
       }
     }
@@ -1349,7 +1363,9 @@ function parseUnstructuredInput(input: string, types: EncodingTypeDef[]): Parsed
       const first = para.split(/[.!?\n]/)[0]?.trim() || para.slice(0, 60);
       const title = first.split(/\s+/).length <= 12 ? first : first.split(/\s+/).slice(0, 8).join(" ") + "...";
       const fallback = types[0] || { letter: "D", name: "Decision" };
-      artifacts.push({ type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() });
+      const a: ParsedArtifact = { type: fallback.letter, typeName: fallback.name, fields: [fallback.letter, title, para.trim()], title, body: para.trim() };
+      if (fallback.facet) a.facet = fallback.facet;
+      artifacts.push(a);
     }
   }
   return artifacts;
